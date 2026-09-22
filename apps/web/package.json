@@ -6,25 +6,31 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "clean": "rm -rf .next .turbo"
   },
   "dependencies": {
     "@niveshbook/core": "workspace:*",
+    "@niveshbook/db": "workspace:*",
     "@niveshbook/types": "workspace:*",
     "@niveshbook/ui": "workspace:*",
-    "next": "^14.2.15",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "argon2": "^0.45.1",
+    "drizzle-orm": "^0.45.3",
+    "next": "16.2.10",
+    "postgres": "^3.4.9",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
     "@niveshbook/config": "workspace:*",
     "@types/node": "^22.7.5",
-    "@types/react": "^18.3.11",
-    "@types/react-dom": "^18.3.0",
-    "eslint": "^8.57.1",
-    "eslint-config-next": "^14.2.15",
-    "typescript": "^5.6.3"
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "eslint": "^9.9.1",
+    "eslint-config-next": "16.2.10",
+    "typescript": "^5.6.3",
+    "vitest": "^5.0.1"
   }
 }

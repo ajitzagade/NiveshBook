@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: niveshbook
+      POSTGRES_PASSWORD: niveshbook_dev
+      POSTGRES_DB: niveshbook
+    ports:
+      # Host port 5433 (not 5432) to avoid colliding with any Postgres
+      # already running natively on the host.
+      - "5433:5432"
+    volumes:
+      - niveshbook_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U niveshbook -d niveshbook"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  niveshbook_postgres_data:

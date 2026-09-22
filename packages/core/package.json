@@ -5,16 +5,20 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@niveshbook/types": "workspace:*"
+    "@niveshbook/types": "workspace:*",
+    "argon2": "^0.45.1"
   },
   "devDependencies": {
     "@niveshbook/config": "workspace:*",
-    "typescript": "^5.6.3"
+    "@types/node": "^22.7.5",
+    "typescript": "^5.6.3",
+    "vitest": "^5.0.1"
   }
 }

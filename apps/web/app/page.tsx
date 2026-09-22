@@ -1,32 +1,29 @@
-import { PortfolioSummaryCard } from "@niveshbook/ui";
-import { absoluteReturnPercent, totalCurrentValue } from "@niveshbook/core";
-import type { Portfolio } from "@niveshbook/types";
+import { cookies } from "next/headers";
+import { getSession } from "@niveshbook/core";
+import { createSessionPort } from "@niveshbook/db";
+import { SESSION_COOKIE_NAME } from "@/lib/session";
+import { LoginForm } from "./LoginForm";
+import { LogoutButton } from "./LogoutButton";
 
-const demoPortfolio: Portfolio = {
-  id: "demo",
-  ownerId: "demo-user",
-  name: "Demo Portfolio",
-  investments: [
-    {
-      id: "inv-1",
-      name: "Nifty 50 Index Fund",
-      category: "mutual_fund",
-      investedValue: { amount: 100000, currency: "INR" },
-      currentValue: { amount: 118500, currency: "INR" },
-      purchaseDate: "2024-01-15",
-    },
-  ],
-};
+// Session state depends on the request's cookie — never statically cached.
+export const dynamic = "force-dynamic";
 
-export default function HomePage() {
+export default async function HomePage() {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+  const session = await getSession(token, { sessions: createSessionPort() });
+
   return (
     <main style={{ padding: 32, fontFamily: "system-ui, sans-serif" }}>
       <h1>NiveshBook</h1>
-      <PortfolioSummaryCard
-        name={demoPortfolio.name}
-        currentValue={totalCurrentValue(demoPortfolio)}
-        returnPercent={absoluteReturnPercent(demoPortfolio)}
-      />
+      {session ? (
+        <>
+          <p>You&apos;re logged in.</p>
+          <LogoutButton />
+        </>
+      ) : (
+        <LoginForm />
+      )}
     </main>
   );
 }
