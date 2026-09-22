@@ -221,6 +221,8 @@ So that **I can securely access my own data and end my session when I'm done**.
 
 ### Story 1.2: Forgot & Reset Password
 
+*(Skipped for now by explicit user directive, 2026-09-23 — no reset/forgot-password flow will be built at this time. FR2 stays recorded here for whenever it's picked back up; sprint-status.yaml note added accordingly. Story 1.3 has no dependency on this one and is unaffected.)*
+
 As a **user who forgot their password**,
 I want **to request a reset link and set a new password**,
 So that **I can regain access without anyone else being able to do it for me**.
