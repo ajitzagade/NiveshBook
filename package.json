@@ -10,6 +10,7 @@
     "dev": "turbo run dev",
     "lint": "turbo run lint && pnpm lint:boundaries",
     "lint:boundaries": "depcruise apps packages --config .dependency-cruiser.cjs",
+    "audit": "pnpm audit",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
     "clean": "turbo run clean && rm -rf node_modules",
