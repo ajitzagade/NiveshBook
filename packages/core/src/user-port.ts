@@ -16,4 +16,12 @@ export interface UserPort {
    * throwing.
    */
   setUserActive(id: string, active: boolean): Promise<User | null>;
+  /**
+   * Toggles a user's Extra Withdrawal approval-authority grant (FR45, Story
+   * 1.7). Returns the updated user, or `null` if `id` doesn't match any row.
+   * Performs no role validation of its own — `packages/core`'s
+   * `setApprovalAuthority` domain function confirms the target is
+   * `owner_admin` before ever calling this.
+   */
+  setApprovalAuthority(id: string, granted: boolean): Promise<User | null>;
 }

@@ -44,6 +44,15 @@ function createFakePorts(users: User[]) {
       userStore.set(existing.email, updated);
       return updated;
     },
+    async setApprovalAuthority(id, granted) {
+      const existing = [...userStore.values()].find((u) => u.id === id);
+      if (!existing) {
+        return null;
+      }
+      const updated = { ...existing, canApproveExtraWithdrawal: granted };
+      userStore.set(existing.email, updated);
+      return updated;
+    },
   };
 
   const sessionPort: SessionPort = {
@@ -116,6 +125,7 @@ describe("auth", () => {
         passwordHash,
         role: "owner_admin",
         active: true,
+        canApproveExtraWithdrawal: true,
         createdAt: new Date().toISOString(),
       },
       {
@@ -124,6 +134,7 @@ describe("auth", () => {
         passwordHash,
         role: "partner",
         active: true,
+        canApproveExtraWithdrawal: false,
         createdAt: new Date().toISOString(),
       },
       {
@@ -132,6 +143,7 @@ describe("auth", () => {
         passwordHash,
         role: "partner",
         active: false,
+        canApproveExtraWithdrawal: false,
         createdAt: new Date().toISOString(),
       },
     ];

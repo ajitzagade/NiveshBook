@@ -11,6 +11,11 @@ export const users = pgTable("users", {
   passwordHash: text("password_hash").notNull(),
   role: text("role").notNull(),
   active: boolean("active").notNull().default(true),
+  // Story 1.7 (FR45): Extra Withdrawal approval authority — a distinct,
+  // revocable grant, only meaningful for owner_admin. Defaults to true so
+  // every existing/seeded owner_admin keeps their current de-facto full
+  // authority; nothing changes in practice until Epic 4 enforces it.
+  canApproveExtraWithdrawal: boolean("can_approve_extra_withdrawal").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

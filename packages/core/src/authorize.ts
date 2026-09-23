@@ -9,7 +9,12 @@ export type Role = UserRole;
  * user directory). Later epics extend this union as Project/Partner-scoped
  * actions arrive — the gate mechanism itself doesn't change.
  */
-export type Action = "users:list" | "users:view" | "users:update-status";
+export type Action =
+  | "users:list"
+  | "users:view"
+  | "users:update-status"
+  | "permissions:view"
+  | "permissions:manage";
 
 /**
  * Role -> allowed-actions permission table. All actions here are
@@ -21,6 +26,11 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   "users:list": new Set(["owner_admin"]),
   "users:view": new Set(["owner_admin"]),
   "users:update-status": new Set(["owner_admin"]),
+  // Story 1.7 (FR45): the Permissions area (role-usage view + Extra
+  // Withdrawal approval-authority grants). Owner/Admin-only, matching
+  // users:update-status — no self-access override either.
+  "permissions:view": new Set(["owner_admin"]),
+  "permissions:manage": new Set(["owner_admin"]),
 };
 
 /**

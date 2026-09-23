@@ -29,3 +29,15 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-6-owner-admin-activates-or-deactivates-a-user.md`
   summary: `setUserActiveStatus`'s `setUserActive` write and `deleteAllSessionsForUser` bulk-delete are two sequential, non-transactional operations; a login racing a deactivation PATCH could create a new session after the bulk-delete step, which `getSession()` would still accept (it never re-checks `users.active`).
   evidence: `packages/core/src/auth.ts`'s `setUserActiveStatus` awaits `deps.users.setUserActive` then, only on a true→false transition, `deps.sessions.deleteAllSessionsForUser` — no transaction wraps the two. This narrows (but doesn't fully close) the pre-existing "`getSession()` never checks `active`" gap tracked above: existing sessions at the moment of deactivation are now correctly wiped, but a session created by a concurrently in-flight login is not. Closing it needs either a cross-port DB transaction (an AD-9 port-composition question) or a live `active` check in `login()`/`getSession()` — both larger than a trivial patch.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-7-owner-admin-manages-role-level-permissions.md`
+  summary: No audit trail (who/when) for granting/revoking Extra Withdrawal approval authority via `PATCH /api/permissions/[userId]`.
+  evidence: a financially-sensitive permission (FR25/FR45) recording no actor/timestamp anywhere. Same pre-existing pattern as Story 1.6's deactivation-audit gap — no story has built audit logging yet.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-7-owner-admin-manages-role-level-permissions.md`
+  summary: Generated migration `packages/db/drizzle/0002_misty_warpath.sql` (adds `can_approve_extra_withdrawal`) has not been applied to any live database.
+  evidence: no project Postgres instance was reachable (docker/colima not running) during implementation or review. Run `pnpm --filter @niveshbook/db db:migrate` against every environment with real data before this ships.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-7-owner-admin-manages-role-level-permissions.md`
+  summary: No guard against revoking the last remaining Extra Withdrawal approver, or an Owner/Admin revoking their own grant — could leave zero users able to approve once Epic 4 enforces it.
+  evidence: `packages/core/src/permissions.ts`'s `setApprovalAuthority` performs no such check; re-confirmed with the human as an accepted risk during Story 1.7's review, consistent with Story 1.6's identical self-lockout precedent. No functional consequence today since Epic 4 (the only consumer) doesn't exist yet — revisit if/when it's built.

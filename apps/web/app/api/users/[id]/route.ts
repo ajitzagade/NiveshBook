@@ -3,15 +3,11 @@ import { getSession, authorize, setUserActiveStatus } from "@niveshbook/core";
 import { createSessionPort, createUserPort } from "@niveshbook/db";
 import { readSessionToken } from "@/lib/session";
 import { sanitizeUser, UNAUTHENTICATED_MESSAGE, FORBIDDEN_MESSAGE } from "@/lib/users";
+import { UUID_PATTERN } from "@/lib/ids";
 
 const NOT_FOUND_MESSAGE = "User not found.";
 const INVALID_REQUEST_MESSAGE = "Request body must be valid JSON";
 const INVALID_ACTIVE_MESSAGE = "`active` must be a boolean.";
-
-// User ids are UUIDs (v7) — a malformed id can never match a row, so once
-// the caller is authorized it gets the same 404 as an id that simply
-// doesn't exist, without ever reaching the DB.
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface RouteContext {
   params: Promise<{ id: string }>;

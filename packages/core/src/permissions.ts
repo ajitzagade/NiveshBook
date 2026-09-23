@@ -1,0 +1,97 @@
+import type { User } from "@niveshbook/types";
+import type { UserPort } from "./user-port";
+
+export interface PermissionsDeps {
+  users: UserPort;
+}
+
+/** The shape of one Owner/Admin's approval-authority grant, as surfaced by the Permissions area. */
+export interface ApproverSummary {
+  id: string;
+  email: string;
+  canApproveExtraWithdrawal: boolean;
+}
+
+export interface PermissionsOverview {
+  /**
+   * Which roles are "in use" for this deployment — computed read-only from
+   * actual active users, never a stored toggle. Story 1.8's later per-client
+   * enable/disable is a separate, independent concern; this view never
+   * caches the result (AD-1) so it always reflects the current row set.
+   */
+  enabledRoles: { project_admin: boolean };
+  /** Every `owner_admin` user and their current Extra Withdrawal approval-authority grant. */
+  approvers: ApproverSummary[];
+}
+
+function toApproverSummary(user: User): ApproverSummary {
+  return {
+    id: user.id,
+    email: user.email,
+    canApproveExtraWithdrawal: user.canApproveExtraWithdrawal,
+  };
+}
+
+/**
+ * Builds the Owner/Admin Permissions overview (FR45): which roles are
+ * enabled (in use) for this deployment, and who currently holds Extra
+ * Withdrawal approval authority. Always re-reads live data via
+ * `listAllUsers()` — never cached (AD-1) — so a role/active change, or a
+ * grant toggled by `setApprovalAuthority`, is visible on the very next call.
+ */
+export async function getPermissionsOverview(deps: PermissionsDeps): Promise<PermissionsOverview> {
+  const allUsers = await deps.users.listAllUsers();
+
+  const projectAdminInUse = allUsers.some((user) => user.role === "project_admin" && user.active);
+
+  const approvers = allUsers
+    .filter((user) => user.role === "owner_admin" && user.active)
+    .map(toApproverSummary);
+
+  return {
+    enabledRoles: { project_admin: projectAdminInUse },
+    approvers,
+  };
+}
+
+/**
+ * Thrown by `setApprovalAuthority` when the target user isn't `owner_admin`
+ * — `canApproveExtraWithdrawal` only ever means something for that role, so
+ * attempting to set it on any other role is a caller error. Callers (the
+ * `PATCH /api/permissions/[userId]` route) catch this and surface a 400,
+ * making no change.
+ */
+export class InvalidApprovalAuthorityTargetError extends Error {
+  constructor() {
+    super("canApproveExtraWithdrawal only applies to owner_admin users.");
+    this.name = "InvalidApprovalAuthorityTargetError";
+  }
+}
+
+/**
+ * Grants/revokes one Owner/Admin's Extra Withdrawal approval authority
+ * (FR45). Callers must run `authorize()` for `"permissions:manage"` before
+ * calling this — it performs no permission check of its own.
+ *
+ * Resolves to `null` if `userId` doesn't match any user, so callers can
+ * surface a 404. Throws `InvalidApprovalAuthorityTargetError` (a caller
+ * error, surfaced as 400) if the target exists but isn't `owner_admin` —
+ * no change is made in that case.
+ */
+export async function setApprovalAuthority(
+  userId: string,
+  granted: boolean,
+  deps: PermissionsDeps,
+): Promise<User | null> {
+  const target = await deps.users.findUserById(userId);
+
+  if (!target) {
+    return null;
+  }
+
+  if (target.role !== "owner_admin") {
+    throw new InvalidApprovalAuthorityTargetError();
+  }
+
+  return deps.users.setApprovalAuthority(userId, granted);
+}

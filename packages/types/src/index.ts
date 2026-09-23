@@ -6,6 +6,13 @@ export interface User {
   passwordHash: string;
   role: UserRole;
   active: boolean;
+  /**
+   * Grants Extra Withdrawal approval authority (FR25/FR45, Story 1.7). Only
+   * meaningful for `owner_admin` — a distinct, revocable grant, not merely
+   * "is this user `owner_admin`". Not yet enforced anywhere (Epic 4's Extra
+   * Withdrawal flow is its first consumer).
+   */
+  canApproveExtraWithdrawal: boolean;
   /** ISO 8601 timestamp */
   createdAt: string;
 }

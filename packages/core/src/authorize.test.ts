@@ -10,6 +10,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     passwordHash: "irrelevant",
     role: "partner",
     active: true,
+    canApproveExtraWithdrawal: false,
     createdAt: new Date().toISOString(),
     ...overrides,
   };
@@ -29,6 +30,13 @@ function createFakeUserPort(users: User[]): UserPort {
     },
     async listAllUsers() {
       return [...store.values()];
+    },
+    async setApprovalAuthority(id: string, granted: boolean) {
+      const existing = store.get(id);
+      if (!existing) return null;
+      const updated = { ...existing, canApproveExtraWithdrawal: granted };
+      store.set(id, updated);
+      return updated;
     },
     setRole(id: string, role: User["role"]) {
       const existing = store.get(id);

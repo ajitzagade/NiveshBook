@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "can_approve_extra_withdrawal" boolean DEFAULT true NOT NULL;

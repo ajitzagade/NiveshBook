@@ -37,6 +37,7 @@ describe("POST /api/auth/login", () => {
       passwordHash: await argon2.hash("correct-password"),
       role: "owner_admin",
       active: true,
+      canApproveExtraWithdrawal: true,
       createdAt: new Date().toISOString(),
     };
     findUserByEmail.mockResolvedValue(user);

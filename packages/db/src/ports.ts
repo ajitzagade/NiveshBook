@@ -13,6 +13,7 @@ function toUser(row: UserRow): User {
     passwordHash: row.passwordHash,
     role: row.role as UserRole,
     active: row.active,
+    canApproveExtraWithdrawal: row.canApproveExtraWithdrawal,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -53,6 +54,14 @@ export function createUserPort(database: Database = getDb()): UserPort {
       const [row] = await database
         .update(users)
         .set({ active })
+        .where(eq(users.id, id))
+        .returning();
+      return row ? toUser(row) : null;
+    },
+    async setApprovalAuthority(id, granted) {
+      const [row] = await database
+        .update(users)
+        .set({ canApproveExtraWithdrawal: granted })
         .where(eq(users.id, id))
         .returning();
       return row ? toUser(row) : null;

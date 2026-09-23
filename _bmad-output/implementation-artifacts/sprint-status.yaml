@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-23-2026 00:28
-last_updated: 09-23-2026 11:09
+last_updated: 09-23-2026 12:59
 project: NiveshBook
 project_key: NOKEY
 tracking_system: file-system
@@ -42,7 +42,7 @@ development_status:
   1-4-session-timeout-owner-admin-revocation: review
   1-5-roles-the-server-side-authorization-gate: done
   1-6-owner-admin-activates-or-deactivates-a-user: review
-  1-7-owner-admin-manages-role-level-permissions: backlog
+  1-7-owner-admin-manages-role-level-permissions: review
   1-8-per-client-configuration: backlog
   epic-1-retrospective: optional
 

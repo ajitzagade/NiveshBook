@@ -71,6 +71,7 @@ const OWNER_USER = {
   passwordHash: "hash-should-never-leave-server",
   role: "owner_admin" as const,
   active: true,
+  canApproveExtraWithdrawal: true,
   createdAt: new Date().toISOString(),
 };
 
@@ -80,6 +81,7 @@ const PARTNER_USER = {
   passwordHash: "hash-should-never-leave-server",
   role: "partner" as const,
   active: true,
+  canApproveExtraWithdrawal: false,
   createdAt: new Date().toISOString(),
 };
 
@@ -89,6 +91,7 @@ const OTHER_PARTNER_USER = {
   passwordHash: "hash-should-never-leave-server",
   role: "partner" as const,
   active: true,
+  canApproveExtraWithdrawal: false,
   createdAt: new Date().toISOString(),
 };
 
