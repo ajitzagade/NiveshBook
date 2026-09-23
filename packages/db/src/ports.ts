@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, gt } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
 import type { UserPort, SessionPort, CreateSessionInput } from "@niveshbook/core";
 import type { User, Session, UserRole } from "@niveshbook/types";
@@ -72,6 +72,28 @@ export function createSessionPort(database: Database = getDb()): SessionPort {
         .limit(1);
       const row = rows[0];
       return row ? toSession(row) : null;
+    },
+    async touchSession(tokenHash, expiresAt) {
+      const updatedRows = await database
+        .update(sessions)
+        .set({ expiresAt: new Date(expiresAt) })
+        .where(eq(sessions.tokenHash, tokenHash))
+        .returning({ id: sessions.id });
+      return updatedRows.length;
+    },
+    async listSessionsByUser(userId) {
+      const rows = await database
+        .select()
+        .from(sessions)
+        .where(and(eq(sessions.userId, userId), gt(sessions.expiresAt, new Date())));
+      return rows.map(toSession);
+    },
+    async deleteSessionById(id, userId) {
+      const deletedRows = await database
+        .delete(sessions)
+        .where(and(eq(sessions.id, id), eq(sessions.userId, userId)))
+        .returning({ id: sessions.id });
+      return deletedRows.length;
     },
   };
 }

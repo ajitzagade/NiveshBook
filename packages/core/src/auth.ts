@@ -78,6 +78,10 @@ export async function logout(tokenHash: string, deps: Pick<AuthDeps, "sessions">
  * Resolves a bearer session token to a live, unexpired session. Missing,
  * garbage, unknown, or expired tokens are all treated as unauthenticated
  * (returns `null`) rather than throwing.
+ *
+ * Every successful resolution renews the session's `expiresAt` by another
+ * `SESSION_TTL_MS` (sliding window, FR5) — a continuously-active user is
+ * never logged out mid-session, only genuine inactivity expires it.
  */
 export async function getSession(
   token: string | null | undefined,
@@ -87,7 +91,8 @@ export async function getSession(
     return null;
   }
 
-  const session = await deps.sessions.findSessionByTokenHash(hashToken(token));
+  const tokenHash = hashToken(token);
+  const session = await deps.sessions.findSessionByTokenHash(tokenHash);
 
   if (!session) {
     return null;
@@ -97,5 +102,42 @@ export async function getSession(
     return null;
   }
 
-  return session;
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
+  const touchedCount = await deps.sessions.touchSession(tokenHash, expiresAt);
+
+  // TOCTOU guard: if the session was revoked between the read above and
+  // this write, the update matched no row — treat that as unauthenticated
+  // rather than returning the now-stale session we already read.
+  if (touchedCount === 0) {
+    return null;
+  }
+
+  return { ...session, expiresAt };
+}
+
+/**
+ * Lists a user's own active sessions. Scoped to `userId` at the port level
+ * so it can never return another user's session rows.
+ */
+export async function listSessions(
+  userId: string,
+  deps: Pick<AuthDeps, "sessions">,
+): Promise<Session[]> {
+  return deps.sessions.listSessionsByUser(userId);
+}
+
+/**
+ * Revokes a session by id, scoped to the owning user — deletes the row
+ * immediately (AD-8) so the very next request using that token is rejected.
+ * If `sessionId` belongs to a different user (or doesn't exist), nothing is
+ * deleted and this resolves to `false`; callers should surface that as a
+ * plain 404, not a 403 that would hint the id exists elsewhere.
+ */
+export async function revokeSession(
+  sessionId: string,
+  userId: string,
+  deps: Pick<AuthDeps, "sessions">,
+): Promise<boolean> {
+  const deletedCount = await deps.sessions.deleteSessionById(sessionId, userId);
+  return deletedCount > 0;
 }

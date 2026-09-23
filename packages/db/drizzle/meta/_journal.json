@@ -8,6 +8,13 @@
       "when": 1790105764963,
       "tag": "0000_silky_alex_wilder",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790124154208,
+      "tag": "0001_add_sessions_user_id_index",
+      "breakpoints": true
     }
   ]
 }
