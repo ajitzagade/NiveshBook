@@ -214,4 +214,38 @@
     font-size: 12px;
     color: var(--color-ink-soft);
   }
+
+  /*
+   * Toast types. EXPERIENCE.md: explicit plain-language confirmations,
+   * never a bare "Success" -- so styling exists for all four sonner types
+   * that carry real product meaning. Mapped to DESIGN.md's status colors;
+   * "warning" borrows amber since it's otherwise unused outside the trail.
+   */
+  .nb-toast {
+    border-radius: var(--radius-el) !important;
+    border: 1px solid var(--color-border) !important;
+    box-shadow: var(--shadow-card) !important;
+    font-family: var(--font-sans) !important;
+    font-size: 13px !important;
+  }
+  .nb-toast-success {
+    background: var(--color-success-soft) !important;
+    color: var(--color-success) !important;
+    border-color: var(--color-success-soft) !important;
+  }
+  .nb-toast-error {
+    background: var(--color-danger-soft) !important;
+    color: var(--color-danger) !important;
+    border-color: var(--color-danger-soft) !important;
+  }
+  .nb-toast-info {
+    background: var(--color-info-soft) !important;
+    color: var(--color-info) !important;
+    border-color: var(--color-info-soft) !important;
+  }
+  .nb-toast-warning {
+    background: var(--color-amber-soft) !important;
+    color: var(--color-amber) !important;
+    border-color: var(--color-amber-soft) !important;
+  }
 }

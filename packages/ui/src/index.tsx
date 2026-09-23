@@ -19,3 +19,4 @@ export * from "./components/helper";
 export * from "./components/dialog";
 export * from "./components/popover";
 export * from "./components/dropdown-menu";
+export * from "./components/toast";
