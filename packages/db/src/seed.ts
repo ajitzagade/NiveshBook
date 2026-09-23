@@ -1,9 +1,9 @@
 import path from "node:path";
 import { config } from "dotenv";
 import * as argon2 from "argon2";
-import { uuidv7 } from "uuidv7";
 import { getDb, closeDb } from "./client";
 import { users } from "./schema";
+import { buildSeedUserRecord } from "./seed-user";
 
 config({ path: path.resolve(process.cwd(), "../../.env") });
 
@@ -21,13 +21,7 @@ async function main() {
 
   await db
     .insert(users)
-    .values({
-      id: uuidv7(),
-      email,
-      passwordHash,
-      role: "owner_admin",
-      active: true,
-    })
+    .values(buildSeedUserRecord(email, passwordHash))
     .onConflictDoNothing({ target: users.email });
 
   // eslint-disable-next-line no-console

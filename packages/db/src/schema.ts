@@ -2,8 +2,8 @@ import { boolean, index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-c
 
 /**
  * `users` and `sessions` are the only tables this epic creates (further
- * entities belong to later epics). `role` exists but is unused until
- * Story 1.5's authorization gate.
+ * entities belong to later epics). `role` gates access via `packages/core`'s
+ * `authorize()`/`authorizeScope()` (Story 1.5).
  */
 export const users = pgTable("users", {
   id: uuid("id").primaryKey(),

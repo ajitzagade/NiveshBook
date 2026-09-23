@@ -1,6 +1,6 @@
 import { randomBytes, createHash } from "node:crypto";
 import * as argon2 from "argon2";
-import type { Session } from "@niveshbook/types";
+import type { Session, User } from "@niveshbook/types";
 import type { UserPort } from "./user-port";
 import type { SessionPort } from "./session-port";
 
@@ -140,4 +140,42 @@ export async function revokeSession(
 ): Promise<boolean> {
   const deletedCount = await deps.sessions.deleteSessionById(sessionId, userId);
   return deletedCount > 0;
+}
+
+/**
+ * Sets a user's `active` flag (Story 1.6). Callers must run `authorize()`
+ * for `"users:update-status"` before calling this — it performs no
+ * permission check of its own.
+ *
+ * A true -> false transition also deletes every one of the target's
+ * `sessions` rows (AD-8), so access ends on their very next request rather
+ * than merely at next login. Every other case — reactivating (false ->
+ * true), or setting the same value again (idempotent no-op) — never touches
+ * sessions: reactivating never restores/recreates a session.
+ *
+ * Returns `null` if `userId` doesn't match any user, so callers can surface
+ * a 404.
+ */
+export async function setUserActiveStatus(
+  userId: string,
+  active: boolean,
+  deps: Pick<AuthDeps, "users" | "sessions">,
+): Promise<User | null> {
+  const before = await deps.users.findUserById(userId);
+
+  if (!before) {
+    return null;
+  }
+
+  const updated = await deps.users.setUserActive(userId, active);
+
+  if (!updated) {
+    return null;
+  }
+
+  if (before.active && !active) {
+    await deps.sessions.deleteAllSessionsForUser(userId);
+  }
+
+  return updated;
 }

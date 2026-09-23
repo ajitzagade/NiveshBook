@@ -7,6 +7,7 @@ import {
   getSession,
   listSessions,
   revokeSession,
+  setUserActiveStatus,
   hashToken,
   SESSION_TTL_MS,
   type AuthDeps,
@@ -27,6 +28,21 @@ function createFakePorts(users: User[]) {
   const userPort: UserPort = {
     async findUserByEmail(email) {
       return userStore.get(email) ?? null;
+    },
+    async findUserById(id) {
+      return [...userStore.values()].find((u) => u.id === id) ?? null;
+    },
+    async listAllUsers() {
+      return [...userStore.values()];
+    },
+    async setUserActive(id, active) {
+      const existing = [...userStore.values()].find((u) => u.id === id);
+      if (!existing) {
+        return null;
+      }
+      const updated = { ...existing, active };
+      userStore.set(existing.email, updated);
+      return updated;
     },
   };
 
@@ -71,6 +87,16 @@ function createFakePorts(users: User[]) {
       }
       sessionStore.delete(match.tokenHash);
       return 1;
+    },
+    async deleteAllSessionsForUser(userId) {
+      let deleted = 0;
+      for (const [tokenHash, s] of sessionStore.entries()) {
+        if (s.userId === userId) {
+          sessionStore.delete(tokenHash);
+          deleted += 1;
+        }
+      }
+      return deleted;
     },
   };
 
@@ -284,6 +310,9 @@ describe("auth", () => {
           async deleteSessionById() {
             return 0;
           },
+          async deleteAllSessionsForUser() {
+            return 0;
+          },
         },
       };
 
@@ -379,6 +408,73 @@ describe("auth", () => {
       const revoked = await revokeSession("no-such-session-id", loginResult.userId, deps);
 
       expect(revoked).toBe(false);
+    });
+  });
+
+  describe("setUserActiveStatus", () => {
+    it("deactivating an active user flips active to false and deletes every one of their sessions", async () => {
+      const first = await login(ACTIVE_EMAIL, CORRECT_PASSWORD, deps);
+      const second = await login(ACTIVE_EMAIL, CORRECT_PASSWORD, deps);
+      if (!first.ok || !second.ok) throw new Error("expected logins to succeed");
+
+      const updated = await setUserActiveStatus("user-active", false, deps);
+
+      expect(updated?.active).toBe(false);
+      expect(await getSession(first.token, deps)).toBeNull();
+      expect(await getSession(second.token, deps)).toBeNull();
+      expect(await listSessions("user-active", deps)).toHaveLength(0);
+    });
+
+    it("deactivating a user does not delete another user's sessions", async () => {
+      const mine = await login(OTHER_ACTIVE_EMAIL, CORRECT_PASSWORD, deps);
+      const theirs = await login(ACTIVE_EMAIL, CORRECT_PASSWORD, deps);
+      if (!mine.ok || !theirs.ok) throw new Error("expected logins to succeed");
+
+      await setUserActiveStatus("user-active", false, deps);
+
+      expect(await getSession(mine.token, deps)).not.toBeNull();
+    });
+
+    it("reactivating an inactive user flips active to true without touching (creating/restoring) sessions", async () => {
+      const deleteAllSpy = vi.spyOn(deps.sessions, "deleteAllSessionsForUser");
+
+      const updated = await setUserActiveStatus("user-inactive", true, deps);
+
+      expect(updated?.active).toBe(true);
+      expect(deleteAllSpy).not.toHaveBeenCalled();
+      expect(sessionStore.size).toBe(0);
+    });
+
+    it("is idempotent: deactivating an already-inactive user makes no session-deletion call", async () => {
+      const deleteAllSpy = vi.spyOn(deps.sessions, "deleteAllSessionsForUser");
+
+      const updated = await setUserActiveStatus("user-inactive", false, deps);
+
+      expect(updated?.active).toBe(false);
+      expect(deleteAllSpy).not.toHaveBeenCalled();
+    });
+
+    it("is idempotent: reactivating an already-active user makes no session-deletion call and leaves sessions intact", async () => {
+      const loginResult = await login(ACTIVE_EMAIL, CORRECT_PASSWORD, deps);
+      if (!loginResult.ok) throw new Error("expected login to succeed");
+      const deleteAllSpy = vi.spyOn(deps.sessions, "deleteAllSessionsForUser");
+
+      const updated = await setUserActiveStatus("user-active", true, deps);
+
+      expect(updated?.active).toBe(true);
+      expect(deleteAllSpy).not.toHaveBeenCalled();
+      expect(await getSession(loginResult.token, deps)).not.toBeNull();
+    });
+
+    it("returns null for an unknown user id and never calls setUserActive/deleteAllSessionsForUser", async () => {
+      const setActiveSpy = vi.spyOn(deps.users, "setUserActive");
+      const deleteAllSpy = vi.spyOn(deps.sessions, "deleteAllSessionsForUser");
+
+      const updated = await setUserActiveStatus("no-such-user", false, deps);
+
+      expect(updated).toBeNull();
+      expect(setActiveSpy).not.toHaveBeenCalled();
+      expect(deleteAllSpy).not.toHaveBeenCalled();
     });
   });
 });

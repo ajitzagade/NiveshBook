@@ -40,6 +40,23 @@ export function createUserPort(database: Database = getDb()): UserPort {
       const row = rows[0];
       return row ? toUser(row) : null;
     },
+    async findUserById(id) {
+      const rows = await database.select().from(users).where(eq(users.id, id)).limit(1);
+      const row = rows[0];
+      return row ? toUser(row) : null;
+    },
+    async listAllUsers() {
+      const rows = await database.select().from(users);
+      return rows.map(toUser);
+    },
+    async setUserActive(id, active) {
+      const [row] = await database
+        .update(users)
+        .set({ active })
+        .where(eq(users.id, id))
+        .returning();
+      return row ? toUser(row) : null;
+    },
   };
 }
 
@@ -92,6 +109,13 @@ export function createSessionPort(database: Database = getDb()): SessionPort {
       const deletedRows = await database
         .delete(sessions)
         .where(and(eq(sessions.id, id), eq(sessions.userId, userId)))
+        .returning({ id: sessions.id });
+      return deletedRows.length;
+    },
+    async deleteAllSessionsForUser(userId) {
+      const deletedRows = await database
+        .delete(sessions)
+        .where(eq(sessions.userId, userId))
         .returning({ id: sessions.id });
       return deletedRows.length;
     },

@@ -34,4 +34,13 @@ export interface SessionPort {
    * from the caller's side — both delete nothing rather than throwing.
    */
   deleteSessionById(id: string, userId: string): Promise<number>;
+  /**
+   * Admin-scoped bulk delete: removes every session row belonging to
+   * `userId`, regardless of who is calling. Unlike the caller-scoped methods
+   * above, this is only ever invoked after `authorize()` has already granted
+   * an Owner/Admin-only action (e.g. deactivating a user) — it does not
+   * itself check who is asking. Returns the number of rows deleted so a
+   * caller can distinguish "deleted N sessions" from "deleted 0".
+   */
+  deleteAllSessionsForUser(userId: string): Promise<number>;
 }

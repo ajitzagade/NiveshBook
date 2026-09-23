@@ -3,12 +3,12 @@
   evidence: n/a — kept for history only.
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-1-user-login-and-logout.md`
-  summary: A user deactivated after logging in keeps their authenticated session until natural expiry.
-  evidence: `getSession()` never re-checks `users.active`. Deactivation itself (Story 1.6) doesn't exist yet in the codebase; Story 1.6 or 1.4-successor work should make deactivation invalidate live sessions.
+  summary: ~~A user deactivated after logging in keeps their authenticated session until natural expiry.~~ **Resolved by Story 1.6** — `PATCH /api/users/[id]` (`setUserActiveStatus`) deletes every one of the target's `sessions` rows on a true→false transition, so `getSession()` still never re-checks `users.active`, but there's no live session left for it to resolve.
+  evidence: n/a — kept for history only.
 
-- source_spec: `_bmad-output/implementation-artifacts/spec-1-1-user-login-and-logout.md`, `_bmad-output/implementation-artifacts/spec-1-4-session-timeout-owner-admin-revocation.md`
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-1-user-login-and-logout.md`, `_bmad-output/implementation-artifacts/spec-1-4-session-timeout-owner-admin-revocation.md`, `_bmad-output/implementation-artifacts/spec-1-5-roles-the-server-side-authorization-gate.md`, `_bmad-output/implementation-artifacts/spec-1-6-owner-admin-activates-or-deactivates-a-user.md`
   summary: `packages/db/src/ports.ts` (the Drizzle-backed port implementations) has zero test coverage against a real database.
-  evidence: only `packages/core/src/auth.ts` is unit-tested, against in-memory fake ports; every `apps/web` route test mocks `@niveshbook/db` away entirely. Story 1.4 added three more untested methods (`touchSession`, `listSessionsByUser`, `deleteSessionById`) on top of Story 1.1's three — six methods now unverified against a real database, including `deleteSessionById`'s security-relevant `userId` scoping. A correct DB-integration test needs a test-infra decision (e.g. testcontainers) beyond a trivial patch.
+  evidence: only `packages/core/src/auth.ts` is unit-tested, against in-memory fake ports; every `apps/web` route test mocks `@niveshbook/db` away entirely. Story 1.4 added three more untested methods (`touchSession`, `listSessionsByUser`, `deleteSessionById`) on top of Story 1.1's three; Story 1.5 added two more (`findUserById`, `listAllUsers`); Story 1.6 added two more (`setUserActive`, `deleteAllSessionsForUser`) — ten methods now unverified against a real database, including `deleteSessionById`'s and `deleteAllSessionsForUser`'s security-relevant `userId` scoping. A correct DB-integration test needs a test-infra decision (e.g. testcontainers) beyond a trivial patch.
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-1-user-login-and-logout.md`
   summary: Expired `sessions` rows are never purged from the database — unbounded table growth over time.
@@ -21,3 +21,11 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-1-user-login-and-logout.md`
   summary: AD-9's dependency-direction boundary is true by inspection only — no dependency-cruiser (or equivalent) tooling is installed to enforce it.
   evidence: `epic-1-context.md` claimed it was "lint-enforced via dependency-cruiser"; no such config/dependency exists anywhere in the repo. Recommend wiring this during Story 1.5, the authorization-gate story, when the package boundaries start carrying real security weight.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-6-owner-admin-activates-or-deactivates-a-user.md`
+  summary: No audit trail (who/when) for `PATCH /api/users/[id]` activating/deactivating a user.
+  evidence: this is a security-sensitive admin action recording no actor/timestamp anywhere in the schema or code. Pre-existing pattern — no story has built audit logging yet; epics.md's nav list names a future "Audit History" area as a separate, later concern.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-6-owner-admin-activates-or-deactivates-a-user.md`
+  summary: `setUserActiveStatus`'s `setUserActive` write and `deleteAllSessionsForUser` bulk-delete are two sequential, non-transactional operations; a login racing a deactivation PATCH could create a new session after the bulk-delete step, which `getSession()` would still accept (it never re-checks `users.active`).
+  evidence: `packages/core/src/auth.ts`'s `setUserActiveStatus` awaits `deps.users.setUserActive` then, only on a true→false transition, `deps.sessions.deleteAllSessionsForUser` — no transaction wraps the two. This narrows (but doesn't fully close) the pre-existing "`getSession()` never checks `active`" gap tracked above: existing sessions at the moment of deactivation are now correctly wiped, but a session created by a concurrently in-flight login is not. Closing it needs either a cross-port DB transaction (an AD-9 port-composition question) or a live `active` check in `login()`/`getSession()` — both larger than a trivial patch.
