@@ -75,3 +75,34 @@ export interface PartnerShare {
   /** ISO 8601 timestamp */
   createdAt: string;
 }
+
+/**
+ * A Sub-partner's Share % on a Project (Epic 2, Story 2.3) -- mirrors
+ * `PartnerShare` exactly, one level down. One row per *version* of a
+ * Sub-partner's share -- `sharePercent` is immutable once set (AD-3): every
+ * edit creates a new row with a new `id`/`effectiveFrom`, sharing the same
+ * stable `subPartnerId`. There is no separate `subpartners` table -- a
+ * Sub-partner exists only as a row (or row-history) here, keyed by
+ * `subPartnerId`, scoped to its parent Partner via `partnerId`.
+ *
+ * `sharePercent` is always a percentage of the *full Project* -- never a
+ * percentage of the parent Partner's own `sharePercent` -- so it reads
+ * identically to `PartnerShare.sharePercent` everywhere it's displayed.
+ * Reduce all version rows for a Partner down to the latest `effectiveFrom`
+ * per `subPartnerId` to get the *current* Sub-partner Shares
+ * (`packages/core`'s `listCurrentSubPartnerShares`).
+ */
+export interface SubPartnerShare {
+  id: string;
+  /** Stable across every version row for the same Sub-partner -- distinct from this row's own `id`. */
+  subPartnerId: string;
+  /** The parent Partner's stable `partnerId` (from `partner_shares`) this Sub-partner's allocation is scoped to. */
+  partnerId: string;
+  projectId: string;
+  name: string;
+  sharePercent: Percent;
+  /** ISO 8601 timestamp -- when this version took effect. */
+  effectiveFrom: string;
+  /** ISO 8601 timestamp */
+  createdAt: string;
+}

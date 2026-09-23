@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { users, projects, partnerShares } from "./schema";
+import { users, projects, partnerShares, subpartnerShares } from "./schema";
 
 describe("users table schema (FR6)", () => {
   it("marks role NOT NULL — the DB itself rejects a null/missing role", () => {
@@ -58,5 +58,35 @@ describe("partner_shares table schema (Story 2.2)", () => {
     expect(partnerShares.effectiveFrom.hasDefault).toBe(true);
     expect(partnerShares.createdAt.notNull).toBe(true);
     expect(partnerShares.createdAt.hasDefault).toBe(true);
+  });
+});
+
+describe("subpartner_shares table schema (Story 2.3)", () => {
+  it("marks subPartnerId/partnerId/projectId/name/sharePercent NOT NULL", () => {
+    expect(subpartnerShares.subPartnerId.notNull).toBe(true);
+    expect(subpartnerShares.partnerId.notNull).toBe(true);
+    expect(subpartnerShares.projectId.notNull).toBe(true);
+    expect(subpartnerShares.name.notNull).toBe(true);
+    expect(subpartnerShares.sharePercent.notNull).toBe(true);
+  });
+
+  it("gives id no implicit default -- application code (uuidv7) always supplies one, both for the first version and every later one", () => {
+    expect(subpartnerShares.id.hasDefault).toBe(false);
+  });
+
+  it("gives subPartnerId no implicit default -- the domain layer generates it once and reuses it across every version row", () => {
+    expect(subpartnerShares.subPartnerId.hasDefault).toBe(false);
+  });
+
+  it("stores sharePercent as numeric(7,4) -- up to 4 decimal places, no float storage (AD-2)", () => {
+    expect(subpartnerShares.sharePercent.columnType).toBe("PgNumeric");
+    expect(subpartnerShares.sharePercent.getSQLType()).toBe("numeric(7, 4)");
+  });
+
+  it("marks effectiveFrom/createdAt NOT NULL with a DB-side default", () => {
+    expect(subpartnerShares.effectiveFrom.notNull).toBe(true);
+    expect(subpartnerShares.effectiveFrom.hasDefault).toBe(true);
+    expect(subpartnerShares.createdAt.notNull).toBe(true);
+    expect(subpartnerShares.createdAt.hasDefault).toBe(true);
   });
 });

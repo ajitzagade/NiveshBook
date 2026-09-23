@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-23-2026 00:28
-last_updated: 09-23-2026 17:35
+last_updated: 09-23-2026 23:47
 project: NiveshBook
 project_key: NOKEY
 tracking_system: file-system
@@ -49,7 +49,7 @@ development_status:
   epic-2: in-progress
   2-1-create-and-edit-a-project: review
   2-2-add-edit-partner-shares-with-100-validation: review
-  2-3-sub-partner-allocation-as-of-full-project: backlog
+  2-3-sub-partner-allocation-as-of-full-project: done
   2-4-co-partner-privacy-boundary: backlog
   2-5-sub-partner-own-data-visibility: backlog
   2-6-optional-partner-sub-partner-visibility-grant: backlog

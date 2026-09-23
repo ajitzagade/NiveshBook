@@ -8,3 +8,5 @@ export * from "./project-port";
 export * from "./decimal-math";
 export * from "./partner-share";
 export * from "./partner-share-port";
+export * from "./subpartner-share";
+export * from "./subpartner-share-port";

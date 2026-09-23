@@ -36,6 +36,13 @@
       "when": 1790174361867,
       "tag": "0004_wooden_champions",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790181570707,
+      "tag": "0005_ancient_demogoblin",
+      "breakpoints": true
     }
   ]
 }
