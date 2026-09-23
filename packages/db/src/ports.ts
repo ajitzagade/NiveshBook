@@ -76,6 +76,7 @@ function toPartnerShare(row: PartnerShareRow): PartnerShare {
     projectId: row.projectId,
     name: row.name,
     sharePercent: row.sharePercent as Percent,
+    userId: row.userId,
     effectiveFrom: row.effectiveFrom.toISOString(),
     createdAt: row.createdAt.toISOString(),
   };
@@ -95,6 +96,7 @@ function toSubPartnerShare(row: SubPartnerShareRow): SubPartnerShare {
     projectId: row.projectId,
     name: row.name,
     sharePercent: row.sharePercent as Percent,
+    userId: row.userId,
     effectiveFrom: row.effectiveFrom.toISOString(),
     createdAt: row.createdAt.toISOString(),
   };
@@ -258,6 +260,7 @@ export function createPartnerSharePort(database: Database = getDb()): PartnerSha
           projectId: input.projectId,
           name: input.name,
           sharePercent: input.sharePercent,
+          userId: input.userId,
         })
         .returning();
       if (!row) {
@@ -305,6 +308,7 @@ export function createSubPartnerSharePort(database: Database = getDb()): SubPart
           projectId: input.projectId,
           name: input.name,
           sharePercent: input.sharePercent,
+          userId: input.userId,
         })
         .returning();
       if (!row) {

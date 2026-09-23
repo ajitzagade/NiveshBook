@@ -59,6 +59,14 @@ describe("partner_shares table schema (Story 2.2)", () => {
     expect(partnerShares.createdAt.notNull).toBe(true);
     expect(partnerShares.createdAt.hasDefault).toBe(true);
   });
+
+  it("leaves userId nullable -- Story 2.4's User<->Partner link is optional", () => {
+    expect(partnerShares.userId.notNull).toBe(false);
+  });
+
+  it("gives userId no implicit default", () => {
+    expect(partnerShares.userId.hasDefault).toBe(false);
+  });
 });
 
 describe("subpartner_shares table schema (Story 2.3)", () => {
@@ -88,5 +96,13 @@ describe("subpartner_shares table schema (Story 2.3)", () => {
     expect(subpartnerShares.effectiveFrom.hasDefault).toBe(true);
     expect(subpartnerShares.createdAt.notNull).toBe(true);
     expect(subpartnerShares.createdAt.hasDefault).toBe(true);
+  });
+
+  it("leaves userId nullable -- Story 2.4's User<->Sub-partner link is optional", () => {
+    expect(subpartnerShares.userId.notNull).toBe(false);
+  });
+
+  it("gives userId no implicit default", () => {
+    expect(subpartnerShares.userId.hasDefault).toBe(false);
   });
 });

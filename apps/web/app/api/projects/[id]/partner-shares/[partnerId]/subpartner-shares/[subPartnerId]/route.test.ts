@@ -6,6 +6,7 @@ import { SESSION_COOKIE_NAME } from "@/lib/session";
 const findSessionByTokenHash = vi.fn();
 const touchSession = vi.fn();
 const findUserById = vi.fn();
+const findUserByEmail = vi.fn();
 const findLatestByPartnerId = vi.fn();
 const createSubPartnerShare = vi.fn();
 const findLatestBySubPartnerId = vi.fn();
@@ -21,7 +22,7 @@ vi.mock("@niveshbook/db", () => ({
     deleteSessionById: vi.fn(),
   }),
   createUserPort: () => ({
-    findUserByEmail: vi.fn(),
+    findUserByEmail,
     findUserById,
     listAllUsers: vi.fn(),
   }),
@@ -94,6 +95,16 @@ const PARTNER_USER = {
   createdAt: new Date().toISOString(),
 };
 
+const SUB_PARTNER_USER = {
+  id: "sub-partner-user-1",
+  email: "subpartner@niveshbook.test",
+  passwordHash: "hash-should-never-leave-server",
+  role: "sub_partner" as const,
+  active: true,
+  canApproveExtraWithdrawal: false,
+  createdAt: new Date().toISOString(),
+};
+
 function makePartnerShare(overrides: Record<string, unknown> = {}) {
   const now = new Date().toISOString();
   return {
@@ -102,6 +113,7 @@ function makePartnerShare(overrides: Record<string, unknown> = {}) {
     projectId: PROJECT_ID,
     name: "Partner A",
     sharePercent: "50",
+    userId: null,
     effectiveFrom: now,
     createdAt: now,
     ...overrides,
@@ -117,6 +129,7 @@ function makeSubShare(overrides: Record<string, unknown> = {}) {
     projectId: PROJECT_ID,
     name: "Sub1",
     sharePercent: "12.5",
+    userId: null,
     effectiveFrom: now,
     createdAt: now,
     ...overrides,
@@ -128,6 +141,7 @@ function resetMocks() {
   touchSession.mockReset();
   touchSession.mockResolvedValue(1);
   findUserById.mockReset();
+  findUserByEmail.mockReset();
   findLatestByPartnerId.mockReset();
   findLatestByPartnerId.mockResolvedValue(makePartnerShare());
   createSubPartnerShare.mockReset();
@@ -159,7 +173,7 @@ describe("PATCH .../subpartner-shares/[subPartnerId]", () => {
     const response = await PATCH(
       makePatchRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Sub1", sharePercent: "20" },
+        body: { name: "Sub1", sharePercent: "20", linkedUserEmail: "" },
       }),
       makeContext(),
     );
@@ -173,8 +187,73 @@ describe("PATCH .../subpartner-shares/[subPartnerId]", () => {
         partnerId: PARTNER_ID,
         projectId: PROJECT_ID,
         sharePercent: "20",
+        userId: null,
       }),
     );
+  });
+
+  it("unlinks an already-linked Sub-partner Share -- 200, new versioned row with userId null", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    const existing = makeSubShare({ id: "row-1", sharePercent: "12.5", userId: SUB_PARTNER_USER.id });
+    findLatestBySubPartnerId.mockResolvedValue(existing);
+    createSubPartnerShare.mockResolvedValue(
+      makeSubShare({ id: "row-2", sharePercent: "12.5", userId: null }),
+    );
+
+    const response = await PATCH(
+      makePatchRequest({
+        cookie: `${SESSION_COOKIE_NAME}=some-token`,
+        body: { name: "Sub1", sharePercent: "12.5", linkedUserEmail: "" },
+      }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.userId).toBeNull();
+  });
+
+  it("links a Sub-partner Share to a user via email on edit -- 200, userId set", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    findUserByEmail.mockResolvedValue(SUB_PARTNER_USER);
+    findLatestBySubPartnerId.mockResolvedValue(makeSubShare({ id: "row-1" }));
+    createSubPartnerShare.mockResolvedValue(
+      makeSubShare({ id: "row-2", userId: SUB_PARTNER_USER.id }),
+    );
+
+    const response = await PATCH(
+      makePatchRequest({
+        cookie: `${SESSION_COOKIE_NAME}=some-token`,
+        body: { name: "Sub1", sharePercent: "12.5", linkedUserEmail: SUB_PARTNER_USER.email },
+      }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.userId).toBe(SUB_PARTNER_USER.id);
+  });
+
+  it("blocks a linkedUserEmail that resolves to a non-sub_partner role on edit -- 400 validation_error, no new version created", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    findUserByEmail.mockResolvedValue(PARTNER_USER);
+    findLatestBySubPartnerId.mockResolvedValue(makeSubShare());
+
+    const response = await PATCH(
+      makePatchRequest({
+        cookie: `${SESSION_COOKIE_NAME}=some-token`,
+        body: { name: "Sub1", sharePercent: "12.5", linkedUserEmail: PARTNER_USER.email },
+      }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.code).toBe("validation_error");
+    expect(createSubPartnerShare).not.toHaveBeenCalled();
   });
 
   it("returns 404 for a nonexistent subPartnerId", async () => {
@@ -185,7 +264,7 @@ describe("PATCH .../subpartner-shares/[subPartnerId]", () => {
     const response = await PATCH(
       makePatchRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Sub1", sharePercent: "20" },
+        body: { name: "Sub1", sharePercent: "20", linkedUserEmail: "" },
       }),
       makeContext(UNKNOWN_SUBPARTNER_ID),
     );
@@ -203,7 +282,7 @@ describe("PATCH .../subpartner-shares/[subPartnerId]", () => {
     const response = await PATCH(
       makePatchRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Sub1", sharePercent: "20" },
+        body: { name: "Sub1", sharePercent: "20", linkedUserEmail: "" },
       }),
       makeContext("not-a-uuid"),
     );
@@ -219,7 +298,7 @@ describe("PATCH .../subpartner-shares/[subPartnerId]", () => {
     const response = await PATCH(
       makePatchRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Sub1", sharePercent: "20" },
+        body: { name: "Sub1", sharePercent: "20", linkedUserEmail: "" },
       }),
       makeContext(SUBPARTNER_ID, "not-a-uuid"),
     );
@@ -236,7 +315,7 @@ describe("PATCH .../subpartner-shares/[subPartnerId]", () => {
     const response = await PATCH(
       makePatchRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Sub1", sharePercent: "20" },
+        body: { name: "Sub1", sharePercent: "20", linkedUserEmail: "" },
       }),
       makeContext(SUBPARTNER_ID, PARTNER_ID, "not-a-uuid"),
     );
@@ -254,7 +333,7 @@ describe("PATCH .../subpartner-shares/[subPartnerId]", () => {
     const response = await PATCH(
       makePatchRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Sub1", sharePercent: "20" },
+        body: { name: "Sub1", sharePercent: "20", linkedUserEmail: "" },
       }),
       makeContext(SUBPARTNER_ID, PARTNER_ID, PROJECT_ID),
     );
@@ -277,7 +356,7 @@ describe("PATCH .../subpartner-shares/[subPartnerId]", () => {
     const response = await PATCH(
       makePatchRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Sub1", sharePercent: "20" },
+        body: { name: "Sub1", sharePercent: "20", linkedUserEmail: "" },
       }),
       makeContext(SUBPARTNER_ID, PARTNER_ID, PROJECT_ID),
     );
@@ -295,7 +374,7 @@ describe("PATCH .../subpartner-shares/[subPartnerId]", () => {
     const response = await PATCH(
       makePatchRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Sub1", sharePercent: "20" },
+        body: { name: "Sub1", sharePercent: "20", linkedUserEmail: "" },
       }),
       makeContext(),
     );
@@ -328,7 +407,7 @@ describe("PATCH .../subpartner-shares/[subPartnerId]", () => {
     const response = await PATCH(
       makePatchRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Sub1", sharePercent: "150" },
+        body: { name: "Sub1", sharePercent: "150", linkedUserEmail: "" },
       }),
       makeContext(),
     );

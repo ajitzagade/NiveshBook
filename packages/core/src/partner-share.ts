@@ -10,6 +10,14 @@ export interface PartnerShareDeps {
 export interface PartnerShareInput {
   name: string;
   sharePercent: string;
+  /**
+   * The `users.id` this Partner is linked to, or `null` -- already resolved
+   * and role-validated by the route layer (Story 2.4's Decisions: email
+   * resolution happens in `apps/web`, never here). Always explicitly
+   * provided, full-overwrite, no "carry forward from the previous version"
+   * branch -- matches `name`/`sharePercent`'s existing convention.
+   */
+  userId: string | null;
 }
 
 /**
@@ -77,7 +85,13 @@ export async function addPartnerShare(
   const sharePercent = normalizeSharePercent(input.sharePercent);
   const partnerId = uuidv7();
 
-  return deps.partnerShares.createPartnerShare({ partnerId, projectId, name, sharePercent });
+  return deps.partnerShares.createPartnerShare({
+    partnerId,
+    projectId,
+    name,
+    sharePercent,
+    userId: input.userId,
+  });
 }
 
 /**
@@ -110,6 +124,7 @@ export async function updatePartnerShare(
     projectId: existing.projectId,
     name,
     sharePercent,
+    userId: input.userId,
   });
 }
 

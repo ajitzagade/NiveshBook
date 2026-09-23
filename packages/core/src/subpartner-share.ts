@@ -10,6 +10,13 @@ export interface SubPartnerShareDeps {
 export interface SubPartnerShareInput {
   name: string;
   sharePercent: string;
+  /**
+   * The `users.id` this Sub-partner is linked to, or `null` -- already
+   * resolved and role-validated by the route layer (Story 2.4's Decisions),
+   * mirroring `PartnerShareInput.userId`. Always explicitly provided,
+   * full-overwrite, no "carry forward" branch.
+   */
+  userId: string | null;
 }
 
 /**
@@ -94,6 +101,7 @@ export async function addSubPartnerShare(
     projectId,
     name,
     sharePercent,
+    userId: input.userId,
   });
 }
 
@@ -131,6 +139,7 @@ export async function updateSubPartnerShare(
     projectId: existing.projectId,
     name,
     sharePercent,
+    userId: input.userId,
   });
 }
 

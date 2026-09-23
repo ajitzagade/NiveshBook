@@ -6,8 +6,10 @@ import { SESSION_COOKIE_NAME } from "@/lib/session";
 const findSessionByTokenHash = vi.fn();
 const touchSession = vi.fn();
 const findUserById = vi.fn();
+const findUserByEmail = vi.fn();
 const findProjectById = vi.fn();
 const findLatestByPartnerId = vi.fn();
+const listByProjectId = vi.fn();
 const createSubPartnerShare = vi.fn();
 const findLatestBySubPartnerId = vi.fn();
 const listByPartnerId = vi.fn();
@@ -22,7 +24,7 @@ vi.mock("@niveshbook/db", () => ({
     deleteSessionById: vi.fn(),
   }),
   createUserPort: () => ({
-    findUserByEmail: vi.fn(),
+    findUserByEmail,
     findUserById,
     listAllUsers: vi.fn(),
   }),
@@ -35,7 +37,7 @@ vi.mock("@niveshbook/db", () => ({
   createPartnerSharePort: () => ({
     createPartnerShare: vi.fn(),
     findLatestByPartnerId,
-    listByProjectId: vi.fn(),
+    listByProjectId,
   }),
   createSubPartnerSharePort: () => ({
     createSubPartnerShare,
@@ -105,6 +107,26 @@ const PARTNER_USER = {
   createdAt: new Date().toISOString(),
 };
 
+const OTHER_PARTNER_USER = {
+  id: "partner-user-2",
+  email: "partner2@niveshbook.test",
+  passwordHash: "hash-should-never-leave-server",
+  role: "partner" as const,
+  active: true,
+  canApproveExtraWithdrawal: false,
+  createdAt: new Date().toISOString(),
+};
+
+const SUB_PARTNER_USER = {
+  id: "sub-partner-user-1",
+  email: "subpartner@niveshbook.test",
+  passwordHash: "hash-should-never-leave-server",
+  role: "sub_partner" as const,
+  active: true,
+  canApproveExtraWithdrawal: false,
+  createdAt: new Date().toISOString(),
+};
+
 const EXISTING_PROJECT = {
   id: PROJECT_ID,
   name: "Verification Project",
@@ -121,6 +143,7 @@ function makePartnerShare(overrides: Record<string, unknown> = {}) {
     projectId: PROJECT_ID,
     name: "Partner A",
     sharePercent: "50",
+    userId: null,
     effectiveFrom: now,
     createdAt: now,
     ...overrides,
@@ -136,6 +159,7 @@ function makeSubShare(overrides: Record<string, unknown> = {}) {
     projectId: PROJECT_ID,
     name: "Sub1",
     sharePercent: "12.5",
+    userId: null,
     effectiveFrom: now,
     createdAt: now,
     ...overrides,
@@ -147,13 +171,17 @@ function resetMocks() {
   touchSession.mockReset();
   touchSession.mockResolvedValue(1);
   findUserById.mockReset();
+  findUserByEmail.mockReset();
   findProjectById.mockReset();
   findProjectById.mockResolvedValue(EXISTING_PROJECT);
   findLatestByPartnerId.mockReset();
   findLatestByPartnerId.mockResolvedValue(makePartnerShare());
+  listByProjectId.mockReset();
+  listByProjectId.mockResolvedValue([]);
   createSubPartnerShare.mockReset();
   findLatestBySubPartnerId.mockReset();
   listByPartnerId.mockReset();
+  listByPartnerId.mockResolvedValue([]);
 }
 
 describe("GET /api/projects/[id]/partner-shares/[partnerId]/subpartner-shares", () => {
@@ -166,9 +194,10 @@ describe("GET /api/projects/[id]/partner-shares/[partnerId]/subpartner-shares", 
     expect(listByPartnerId).not.toHaveBeenCalled();
   });
 
-  it("returns 403 for an authenticated non-owner_admin, no data leaked", async () => {
+  it("returns 403 for an authenticated non-owner_admin not linked to this Partner Share, no data leaked", async () => {
     findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: "partner-user-1" });
     findUserById.mockResolvedValue(PARTNER_USER);
+    findLatestByPartnerId.mockResolvedValue(makePartnerShare({ userId: null }));
 
     const response = await GET(
       makeGetRequest(`${SESSION_COOKIE_NAME}=some-token`),
@@ -179,6 +208,85 @@ describe("GET /api/projects/[id]/partner-shares/[partnerId]/subpartner-shares", 
     expect(listByPartnerId).not.toHaveBeenCalled();
     const body = await response.json();
     expect(body).toEqual({ code: "forbidden", message: expect.any(String) });
+  });
+
+  it("returns 403, not 404, for a co-partner (Partner B) reading Partner A's Sub-partner structure on the same Project -- the row exists, they're just not allowed to see it", async () => {
+    findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: OTHER_PARTNER_USER.id });
+    findUserById.mockResolvedValue(OTHER_PARTNER_USER);
+    // Partner A's Partner Share row -- linked to a *different* user (partner-user-1).
+    findLatestByPartnerId.mockResolvedValue(makePartnerShare({ userId: PARTNER_USER.id }));
+    // Both Partner A and Partner B (the actor) have a current Partner Share
+    // on this Project -- passes the coarse `partner_shares:list` gate --
+    // but the actor is requesting Partner A's row, not their own.
+    listByProjectId.mockResolvedValue([
+      makePartnerShare({ partnerId: PARTNER_ID, userId: PARTNER_USER.id }),
+      makePartnerShare({ partnerId: "other-partner-id", userId: OTHER_PARTNER_USER.id }),
+    ]);
+
+    const response = await GET(
+      makeGetRequest(`${SESSION_COOKIE_NAME}=some-token`),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(403);
+    expect(listByPartnerId).not.toHaveBeenCalled();
+    const body = await response.json();
+    expect(body).toEqual({ code: "forbidden", message: expect.any(String) });
+  });
+
+  it("returns 403 (not 404) for a sub_partner-role session hitting a nonexistent partnerId -- the coarse gate blocks before resolveScope() ever runs, closing the existence-oracle", async () => {
+    findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: SUB_PARTNER_USER.id });
+    findUserById.mockResolvedValue(SUB_PARTNER_USER);
+    // Project exists with a real Partner Share roster, but none linked to
+    // this sub_partner -- and the role table denies subpartner_shares:list
+    // to sub_partner outright regardless.
+    listByProjectId.mockResolvedValue([makePartnerShare({ userId: PARTNER_USER.id })]);
+
+    const response = await GET(
+      makeGetRequest(`${SESSION_COOKIE_NAME}=some-token`),
+      makeContext(PROJECT_ID, UNKNOWN_PARTNER_ID),
+    );
+
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body).toEqual({ code: "forbidden", message: expect.any(String) });
+    expect(findLatestByPartnerId).not.toHaveBeenCalled();
+    expect(listByPartnerId).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 (not 404) for a Partner unrelated to this Project hitting a malformed partnerId -- the coarse gate blocks before resolveScope() ever runs, closing the existence-oracle", async () => {
+    findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: OTHER_PARTNER_USER.id });
+    findUserById.mockResolvedValue(OTHER_PARTNER_USER);
+    // The Project's real roster doesn't include this actor at all.
+    listByProjectId.mockResolvedValue([makePartnerShare({ userId: PARTNER_USER.id })]);
+
+    const response = await GET(
+      makeGetRequest(`${SESSION_COOKIE_NAME}=some-token`),
+      makeContext(PROJECT_ID, "not-a-uuid"),
+    );
+
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body).toEqual({ code: "forbidden", message: expect.any(String) });
+    expect(findLatestByPartnerId).not.toHaveBeenCalled();
+    expect(listByPartnerId).not.toHaveBeenCalled();
+  });
+
+  it("returns 200 for the linked Partner reading their own Sub-partner structure", async () => {
+    findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: PARTNER_USER.id });
+    findUserById.mockResolvedValue(PARTNER_USER);
+    findLatestByPartnerId.mockResolvedValue(makePartnerShare({ userId: PARTNER_USER.id }));
+    listByProjectId.mockResolvedValue([makePartnerShare({ userId: PARTNER_USER.id })]);
+    listByPartnerId.mockResolvedValue([makeSubShare({ subPartnerId: "a", sharePercent: "12.5" })]);
+
+    const response = await GET(
+      makeGetRequest(`${SESSION_COOKIE_NAME}=some-token`),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.shares).toHaveLength(1);
   });
 
   it("returns 200 with an empty list and total '0' for a partner with zero sub-partners", async () => {
@@ -338,7 +446,7 @@ describe("POST /api/projects/[id]/partner-shares/[partnerId]/subpartner-shares",
 
   it("returns 401 with no session cookie", async () => {
     const response = await POST(
-      makePostRequest({ body: { name: "Sub1", sharePercent: "12.5" } }),
+      makePostRequest({ body: { name: "Sub1", sharePercent: "12.5", linkedUserEmail: "" } }),
       makeContext(),
     );
 
@@ -346,17 +454,17 @@ describe("POST /api/projects/[id]/partner-shares/[partnerId]/subpartner-shares",
     expect(createSubPartnerShare).not.toHaveBeenCalled();
   });
 
-  it("adds a sub-partner -- 201, row created", async () => {
+  it("adds a sub-partner with no link -- 201, row created, userId null", async () => {
     findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
     findUserById.mockResolvedValue(OWNER_USER);
     createSubPartnerShare.mockResolvedValue(
-      makeSubShare({ name: "Sub1", sharePercent: "12.5" }),
+      makeSubShare({ name: "Sub1", sharePercent: "12.5", userId: null }),
     );
 
     const response = await POST(
       makePostRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Sub1", sharePercent: "12.5" },
+        body: { name: "Sub1", sharePercent: "12.5", linkedUserEmail: "" },
       }),
       makeContext(),
     );
@@ -371,8 +479,68 @@ describe("POST /api/projects/[id]/partner-shares/[partnerId]/subpartner-shares",
         projectId: PROJECT_ID,
         name: "Sub1",
         sharePercent: "12.5",
+        userId: null,
       }),
     );
+  });
+
+  it("links a Sub-partner Share to a user via email -- 201, userId set", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    findUserByEmail.mockResolvedValue(SUB_PARTNER_USER);
+    createSubPartnerShare.mockResolvedValue(
+      makeSubShare({ name: "Sub1", sharePercent: "12.5", userId: SUB_PARTNER_USER.id }),
+    );
+
+    const response = await POST(
+      makePostRequest({
+        cookie: `${SESSION_COOKIE_NAME}=some-token`,
+        body: { name: "Sub1", sharePercent: "12.5", linkedUserEmail: SUB_PARTNER_USER.email },
+      }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.userId).toBe(SUB_PARTNER_USER.id);
+  });
+
+  it("blocks a linkedUserEmail that resolves to a non-sub_partner role (e.g. a Partner) -- 400 validation_error, no row created", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    findUserByEmail.mockResolvedValue(PARTNER_USER);
+
+    const response = await POST(
+      makePostRequest({
+        cookie: `${SESSION_COOKIE_NAME}=some-token`,
+        body: { name: "Sub1", sharePercent: "12.5", linkedUserEmail: PARTNER_USER.email },
+      }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.code).toBe("validation_error");
+    expect(createSubPartnerShare).not.toHaveBeenCalled();
+  });
+
+  it("blocks a linkedUserEmail that resolves to no user -- 400 validation_error, no row created", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    findUserByEmail.mockResolvedValue(null);
+
+    const response = await POST(
+      makePostRequest({
+        cookie: `${SESSION_COOKIE_NAME}=some-token`,
+        body: { name: "Sub1", sharePercent: "12.5", linkedUserEmail: "nobody@x.test" },
+      }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.code).toBe("validation_error");
+    expect(createSubPartnerShare).not.toHaveBeenCalled();
   });
 
   it("adds a second sub-partner with an independently valid share -- both succeed even though together they don't reconcile to the parent's share", async () => {
@@ -385,7 +553,7 @@ describe("POST /api/projects/[id]/partner-shares/[partnerId]/subpartner-shares",
     const response = await POST(
       makePostRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Sub2", sharePercent: "30" },
+        body: { name: "Sub2", sharePercent: "30", linkedUserEmail: "" },
       }),
       makeContext(),
     );
@@ -402,7 +570,7 @@ describe("POST /api/projects/[id]/partner-shares/[partnerId]/subpartner-shares",
       const response = await POST(
         makePostRequest({
           cookie: `${SESSION_COOKIE_NAME}=some-token`,
-          body: { name: "Sub1", sharePercent },
+          body: { name: "Sub1", sharePercent, linkedUserEmail: "" },
         }),
         makeContext(),
       );
@@ -421,7 +589,7 @@ describe("POST /api/projects/[id]/partner-shares/[partnerId]/subpartner-shares",
     const response = await POST(
       makePostRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "", sharePercent: "12.5" },
+        body: { name: "", sharePercent: "12.5", linkedUserEmail: "" },
       }),
       makeContext(),
     );
@@ -439,7 +607,7 @@ describe("POST /api/projects/[id]/partner-shares/[partnerId]/subpartner-shares",
     const response = await POST(
       makePostRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Sub1", sharePercent: "12.5" },
+        body: { name: "Sub1", sharePercent: "12.5", linkedUserEmail: "" },
       }),
       makeContext(),
     );
@@ -481,7 +649,10 @@ describe("POST /api/projects/[id]/partner-shares/[partnerId]/subpartner-shares",
     findUserById.mockResolvedValue(OWNER_USER);
 
     const response = await POST(
-      makePostRequest({ cookie: `${SESSION_COOKIE_NAME}=some-token`, body: { name: "Sub1" } }),
+      makePostRequest({
+        cookie: `${SESSION_COOKIE_NAME}=some-token`,
+        body: { name: "Sub1", linkedUserEmail: "" },
+      }),
       makeContext(),
     );
 
@@ -497,7 +668,7 @@ describe("POST /api/projects/[id]/partner-shares/[partnerId]/subpartner-shares",
     const response = await POST(
       makePostRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Sub1", sharePercent: "12.5" },
+        body: { name: "Sub1", sharePercent: "12.5", linkedUserEmail: "" },
       }),
       makeContext(),
     );
@@ -516,7 +687,7 @@ describe("POST /api/projects/[id]/partner-shares/[partnerId]/subpartner-shares",
     const response = await POST(
       makePostRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Sub1", sharePercent: "12.5" },
+        body: { name: "Sub1", sharePercent: "12.5", linkedUserEmail: "" },
       }),
       makeContext(PROJECT_ID, UNKNOWN_PARTNER_ID),
     );
@@ -535,7 +706,7 @@ describe("POST /api/projects/[id]/partner-shares/[partnerId]/subpartner-shares",
     const response = await POST(
       makePostRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Sub1", sharePercent: "12.5" },
+        body: { name: "Sub1", sharePercent: "12.5", linkedUserEmail: "" },
       }),
       makeContext(PROJECT_ID, PARTNER_ID),
     );

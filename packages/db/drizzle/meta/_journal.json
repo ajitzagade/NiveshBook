@@ -43,6 +43,13 @@
       "when": 1790181570707,
       "tag": "0005_ancient_demogoblin",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790188541018,
+      "tag": "0006_black_zaran",
+      "breakpoints": true
     }
   ]
 }

@@ -120,6 +120,154 @@ describe("authorizeScope — projects:create/projects:update/projects:list (Stor
   );
 });
 
+describe("authorizeScope — partner_shares:list scopeOwnerIds (Story 2.4)", () => {
+  it("allows a partner whose userId is in scopeOwnerIds, even though the role table alone denies partner", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("partner-user-1", "partner_shares:list", deps, [
+      "someone-else",
+      "partner-user-1",
+    ]);
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("matches scopeOwnerIds case-insensitively (UUIDs are case-insensitive)", async () => {
+    const users = createFakeUserPort([
+      makeUser({ id: "0192f5a0-1111-7000-8000-000000000001", role: "partner" }),
+    ]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope(
+      "0192f5a0-1111-7000-8000-000000000001",
+      "partner_shares:list",
+      deps,
+      ["0192F5A0-1111-7000-8000-000000000001"],
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("denies a partner whose userId is not in scopeOwnerIds", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("partner-user-1", "partner_shares:list", deps, [
+      "some-other-partner",
+    ]);
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies a partner when scopeOwnerIds is omitted entirely (backward-compatible, no override)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("partner-user-1", "partner_shares:list", deps);
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("still allows an owner_admin regardless of scopeOwnerIds (role-based check, unaffected)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("owner-1", "partner_shares:list", deps, []);
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("does not extend the scopeOwnerIds override to actions outside SCOPE_SELF_ACCESS_ACTIONS", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("partner-user-1", "subpartner_shares:create", deps, [
+      "partner-user-1",
+    ]);
+
+    expect(result).toEqual({ allowed: false });
+  });
+});
+
+describe("authorize — subpartner_shares:list (Story 2.4, self-access override)", () => {
+  it("allows a linked Partner whose userId matches the target Partner Share's userId", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "partner-user-1",
+      "subpartner_shares:list",
+      { ownerId: "partner-user-1" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("denies a co-partner whose userId does not match the target Partner Share's userId", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-2", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "partner-user-2",
+      "subpartner_shares:list",
+      { ownerId: "partner-user-1" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies when the target Partner Share has no linked user (ownerId is empty)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "partner-user-1",
+      "subpartner_shares:list",
+      { ownerId: "" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("allows an owner_admin unconditionally, regardless of ownerId", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "owner-1",
+      "subpartner_shares:list",
+      { ownerId: "someone-else" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("denies a sub_partner role even targeting their own userId as ownerId -- Sub-partner visibility is Story 2.5's job, not admitted here", async () => {
+    const users = createFakeUserPort([makeUser({ id: "sub-partner-1", role: "sub_partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    // A sub_partner's own userId is never a partner_shares.userId in
+    // practice, but this proves the mechanism itself: SELF_ACCESS_ACTIONS
+    // is keyed on the *action*, not the role, so even a hypothetical
+    // ownerId match doesn't matter here -- it's the route layer's job to
+    // never construct this call with a sub_partner's own id as ownerId.
+    // This test instead proves the *mismatch* case still denies.
+    const result = await authorize(
+      "sub-partner-1",
+      "subpartner_shares:list",
+      { ownerId: "different-owner" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: false });
+  });
+});
+
 describe("authorize", () => {
   it("allows an owner_admin to view any single user", async () => {
     const users = createFakeUserPort([

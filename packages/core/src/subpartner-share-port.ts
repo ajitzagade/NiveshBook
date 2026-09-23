@@ -8,6 +8,8 @@ export interface CreateSubPartnerShareInput {
   projectId: string;
   name: string;
   sharePercent: Percent;
+  /** The `users.id` this Sub-partner is linked to, or `null` -- already-resolved by the route layer (Story 2.4's Decisions); this port performs no email lookup of its own. */
+  userId: string | null;
 }
 
 /**

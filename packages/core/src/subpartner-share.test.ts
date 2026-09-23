@@ -20,6 +20,7 @@ function makeSubShare(overrides: Partial<SubPartnerShare> = {}): SubPartnerShare
     projectId: "project-1",
     name: "Sub1",
     sharePercent: "12.5" as Percent,
+    userId: null,
     effectiveFrom: now,
     createdAt: now,
     ...overrides,
@@ -40,6 +41,7 @@ function createFakeSubPartnerSharePort(seed: SubPartnerShare[] = []): SubPartner
         projectId: input.projectId,
         name: input.name,
         sharePercent: input.sharePercent,
+        userId: input.userId,
         effectiveFrom: now,
         createdAt: now,
       };
@@ -67,7 +69,7 @@ describe("addSubPartnerShare", () => {
     const result = await addSubPartnerShare(
       "partner-1",
       "project-1",
-      { name: "Sub1", sharePercent: "12.5" },
+      { name: "Sub1", sharePercent: "12.5", userId: null },
       deps,
     );
 
@@ -76,6 +78,21 @@ describe("addSubPartnerShare", () => {
     expect(result.partnerId).toBe("partner-1");
     expect(result.projectId).toBe("project-1");
     expect(result.subPartnerId).toBeTruthy();
+    expect(result.userId).toBeNull();
+  });
+
+  it("passes a linked userId straight through to the port", async () => {
+    const subPartnerShares = createFakeSubPartnerSharePort();
+    const deps: SubPartnerShareDeps = { subPartnerShares };
+
+    const result = await addSubPartnerShare(
+      "partner-1",
+      "project-1",
+      { name: "Sub1", sharePercent: "12.5", userId: "user-1" },
+      deps,
+    );
+
+    expect(result.userId).toBe("user-1");
   });
 
   it("accepts a 2-decimal share (e.g. 33.33), stored exactly", async () => {
@@ -85,7 +102,7 @@ describe("addSubPartnerShare", () => {
     const result = await addSubPartnerShare(
       "partner-1",
       "project-1",
-      { name: "Sub1", sharePercent: "33.33" },
+      { name: "Sub1", sharePercent: "33.33", userId: null },
       deps,
     );
 
@@ -99,7 +116,12 @@ describe("addSubPartnerShare", () => {
       const deps: SubPartnerShareDeps = { subPartnerShares };
 
       await expect(
-        addSubPartnerShare("partner-1", "project-1", { name: "Sub1", sharePercent }, deps),
+        addSubPartnerShare(
+          "partner-1",
+          "project-1",
+          { name: "Sub1", sharePercent, userId: null },
+          deps,
+        ),
       ).rejects.toThrow(InvalidSubPartnerSharePercentError);
       expect(await subPartnerShares.listByPartnerId("partner-1")).toHaveLength(0);
     },
@@ -110,7 +132,7 @@ describe("addSubPartnerShare", () => {
     const deps: SubPartnerShareDeps = { subPartnerShares };
 
     await expect(
-      addSubPartnerShare("partner-1", "project-1", { name, sharePercent: "12.5" }, deps),
+      addSubPartnerShare("partner-1", "project-1", { name, sharePercent: "12.5", userId: null }, deps),
     ).rejects.toThrow(InvalidSubPartnerNameError);
     expect(await subPartnerShares.listByPartnerId("partner-1")).toHaveLength(0);
   });
@@ -122,13 +144,13 @@ describe("addSubPartnerShare", () => {
     const a = await addSubPartnerShare(
       "partner-1",
       "project-1",
-      { name: "Sub1", sharePercent: "12.5" },
+      { name: "Sub1", sharePercent: "12.5", userId: null },
       deps,
     );
     const b = await addSubPartnerShare(
       "partner-1",
       "project-1",
-      { name: "Sub2", sharePercent: "12.5" },
+      { name: "Sub2", sharePercent: "12.5", userId: null },
       deps,
     );
 
@@ -142,7 +164,7 @@ describe("addSubPartnerShare", () => {
     const result = await addSubPartnerShare(
       "partner-1",
       "project-1",
-      { name: "Sub1", sharePercent: "80" },
+      { name: "Sub1", sharePercent: "80", userId: null },
       deps,
     );
 
@@ -163,7 +185,7 @@ describe("updateSubPartnerShare", () => {
 
     const updated = await updateSubPartnerShare(
       "subpartner-1",
-      { name: "Sub1", sharePercent: "20" },
+      { name: "Sub1", sharePercent: "20", userId: null },
       deps,
     );
 
@@ -179,6 +201,19 @@ describe("updateSubPartnerShare", () => {
     expect(oldRow?.sharePercent).toBe("12.5");
   });
 
+  it("full-overwrites userId on edit -- an unlink (null) or a new link both take effect, never carried forward implicitly", async () => {
+    const existing = makeSubShare({ id: "row-1", subPartnerId: "subpartner-1", userId: "old-user" });
+    const subPartnerShares = createFakeSubPartnerSharePort([existing]);
+    const deps: SubPartnerShareDeps = { subPartnerShares };
+
+    const unlinked = await updateSubPartnerShare(
+      "subpartner-1",
+      { name: "Sub1", sharePercent: "12.5", userId: null },
+      deps,
+    );
+    expect(unlinked?.userId).toBeNull();
+  });
+
   it("always versions even when only the name changes", async () => {
     const existing = makeSubShare({ id: "row-1", subPartnerId: "subpartner-1", name: "Old Name" });
     const subPartnerShares = createFakeSubPartnerSharePort([existing]);
@@ -186,7 +221,7 @@ describe("updateSubPartnerShare", () => {
 
     const updated = await updateSubPartnerShare(
       "subpartner-1",
-      { name: "New Name", sharePercent: "12.5" },
+      { name: "New Name", sharePercent: "12.5", userId: null },
       deps,
     );
 
@@ -202,7 +237,7 @@ describe("updateSubPartnerShare", () => {
 
     const result = await updateSubPartnerShare(
       "unknown-subpartner",
-      { name: "X", sharePercent: "12.5" },
+      { name: "X", sharePercent: "12.5", userId: null },
       deps,
     );
 
@@ -215,7 +250,11 @@ describe("updateSubPartnerShare", () => {
     const deps: SubPartnerShareDeps = { subPartnerShares };
 
     await expect(
-      updateSubPartnerShare("subpartner-1", { name: "Sub1", sharePercent: "150" }, deps),
+      updateSubPartnerShare(
+        "subpartner-1",
+        { name: "Sub1", sharePercent: "150", userId: null },
+        deps,
+      ),
     ).rejects.toThrow(InvalidSubPartnerSharePercentError);
     expect(await subPartnerShares.listByPartnerId("partner-1")).toHaveLength(1);
   });

@@ -19,6 +19,7 @@ function makeShare(overrides: Partial<PartnerShare> = {}): PartnerShare {
     projectId: "project-1",
     name: "Partner A",
     sharePercent: "50" as Percent,
+    userId: null,
     effectiveFrom: now,
     createdAt: now,
     ...overrides,
@@ -38,6 +39,7 @@ function createFakePartnerSharePort(seed: PartnerShare[] = []): PartnerSharePort
         projectId: input.projectId,
         name: input.name,
         sharePercent: input.sharePercent,
+        userId: input.userId,
         effectiveFrom: now,
         createdAt: now,
       };
@@ -62,19 +64,41 @@ describe("addPartnerShare", () => {
     const partnerShares = createFakePartnerSharePort();
     const deps: PartnerShareDeps = { partnerShares };
 
-    const result = await addPartnerShare("project-1", { name: "Partner A", sharePercent: "50" }, deps);
+    const result = await addPartnerShare(
+      "project-1",
+      { name: "Partner A", sharePercent: "50", userId: null },
+      deps,
+    );
 
     expect(result.name).toBe("Partner A");
     expect(result.sharePercent).toBe("50");
     expect(result.projectId).toBe("project-1");
     expect(result.partnerId).toBeTruthy();
+    expect(result.userId).toBeNull();
+  });
+
+  it("passes a linked userId straight through to the port", async () => {
+    const partnerShares = createFakePartnerSharePort();
+    const deps: PartnerShareDeps = { partnerShares };
+
+    const result = await addPartnerShare(
+      "project-1",
+      { name: "Partner A", sharePercent: "50", userId: "user-1" },
+      deps,
+    );
+
+    expect(result.userId).toBe("user-1");
   });
 
   it("accepts a 2-decimal share (e.g. 33.33), stored exactly", async () => {
     const partnerShares = createFakePartnerSharePort();
     const deps: PartnerShareDeps = { partnerShares };
 
-    const result = await addPartnerShare("project-1", { name: "Partner A", sharePercent: "33.33" }, deps);
+    const result = await addPartnerShare(
+      "project-1",
+      { name: "Partner A", sharePercent: "33.33", userId: null },
+      deps,
+    );
 
     expect(result.sharePercent).toBe("33.33");
   });
@@ -86,7 +110,7 @@ describe("addPartnerShare", () => {
       const deps: PartnerShareDeps = { partnerShares };
 
       await expect(
-        addPartnerShare("project-1", { name: "Partner A", sharePercent }, deps),
+        addPartnerShare("project-1", { name: "Partner A", sharePercent, userId: null }, deps),
       ).rejects.toThrow(InvalidSharePercentError);
       expect(await partnerShares.listByProjectId("project-1")).toHaveLength(0);
     },
@@ -96,9 +120,9 @@ describe("addPartnerShare", () => {
     const partnerShares = createFakePartnerSharePort();
     const deps: PartnerShareDeps = { partnerShares };
 
-    await expect(addPartnerShare("project-1", { name, sharePercent: "50" }, deps)).rejects.toThrow(
-      InvalidPartnerNameError,
-    );
+    await expect(
+      addPartnerShare("project-1", { name, sharePercent: "50", userId: null }, deps),
+    ).rejects.toThrow(InvalidPartnerNameError);
     expect(await partnerShares.listByProjectId("project-1")).toHaveLength(0);
   });
 
@@ -106,8 +130,16 @@ describe("addPartnerShare", () => {
     const partnerShares = createFakePartnerSharePort();
     const deps: PartnerShareDeps = { partnerShares };
 
-    const a = await addPartnerShare("project-1", { name: "Partner A", sharePercent: "50" }, deps);
-    const b = await addPartnerShare("project-1", { name: "Partner B", sharePercent: "30" }, deps);
+    const a = await addPartnerShare(
+      "project-1",
+      { name: "Partner A", sharePercent: "50", userId: null },
+      deps,
+    );
+    const b = await addPartnerShare(
+      "project-1",
+      { name: "Partner B", sharePercent: "30", userId: null },
+      deps,
+    );
 
     expect(a.partnerId).not.toBe(b.partnerId);
   });
@@ -119,7 +151,11 @@ describe("updatePartnerShare", () => {
     const partnerShares = createFakePartnerSharePort([existing]);
     const deps: PartnerShareDeps = { partnerShares };
 
-    const updated = await updatePartnerShare("partner-1", { name: "Partner A", sharePercent: "60" }, deps);
+    const updated = await updatePartnerShare(
+      "partner-1",
+      { name: "Partner A", sharePercent: "60", userId: null },
+      deps,
+    );
 
     expect(updated).not.toBeNull();
     expect(updated?.partnerId).toBe("partner-1");
@@ -132,6 +168,19 @@ describe("updatePartnerShare", () => {
     expect(oldRow?.sharePercent).toBe("50");
   });
 
+  it("full-overwrites userId on edit -- an unlink (null) or a new link both take effect, never carried forward implicitly", async () => {
+    const existing = makeShare({ id: "row-1", partnerId: "partner-1", userId: "old-user" });
+    const partnerShares = createFakePartnerSharePort([existing]);
+    const deps: PartnerShareDeps = { partnerShares };
+
+    const unlinked = await updatePartnerShare(
+      "partner-1",
+      { name: "Partner A", sharePercent: "50", userId: null },
+      deps,
+    );
+    expect(unlinked?.userId).toBeNull();
+  });
+
   it("always versions even when only the name changes", async () => {
     const existing = makeShare({ id: "row-1", partnerId: "partner-1", name: "Old Name" });
     const partnerShares = createFakePartnerSharePort([existing]);
@@ -139,7 +188,7 @@ describe("updatePartnerShare", () => {
 
     const updated = await updatePartnerShare(
       "partner-1",
-      { name: "New Name", sharePercent: "50" },
+      { name: "New Name", sharePercent: "50", userId: null },
       deps,
     );
 
@@ -153,7 +202,11 @@ describe("updatePartnerShare", () => {
     const partnerShares = createFakePartnerSharePort();
     const deps: PartnerShareDeps = { partnerShares };
 
-    const result = await updatePartnerShare("unknown-partner", { name: "X", sharePercent: "50" }, deps);
+    const result = await updatePartnerShare(
+      "unknown-partner",
+      { name: "X", sharePercent: "50", userId: null },
+      deps,
+    );
 
     expect(result).toBeNull();
   });
@@ -164,7 +217,7 @@ describe("updatePartnerShare", () => {
     const deps: PartnerShareDeps = { partnerShares };
 
     await expect(
-      updatePartnerShare("partner-1", { name: "Partner A", sharePercent: "150" }, deps),
+      updatePartnerShare("partner-1", { name: "Partner A", sharePercent: "150", userId: null }, deps),
     ).rejects.toThrow(InvalidSharePercentError);
     expect(await partnerShares.listByProjectId("project-1")).toHaveLength(1);
   });

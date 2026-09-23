@@ -8,7 +8,7 @@ import {
 } from "@niveshbook/core";
 import { createSessionPort, createUserPort, createPartnerSharePort, createSubPartnerSharePort } from "@niveshbook/db";
 import { readSessionToken } from "@/lib/session";
-import { UNAUTHENTICATED_MESSAGE, FORBIDDEN_MESSAGE } from "@/lib/users";
+import { UNAUTHENTICATED_MESSAGE, FORBIDDEN_MESSAGE, resolveLinkedUserId } from "@/lib/users";
 import { isValidProjectId } from "../../../../../shared";
 import { isValidPartnerId } from "../../../shared";
 import {
@@ -40,6 +40,10 @@ interface RouteContext {
  * of bug as Story 2.2's cross-project PATCH fix, one level deeper, so none
  * of those cases leak which one applies and a Sub-partner Share can never
  * be edited through another Partner's or another Project's URL.
+ * `linkedUserEmail` (Story 2.4) is resolved to a `userId | null` via
+ * `resolveLinkedUserId()`, validated against `role: "sub_partner"` --
+ * unresolvable or wrong-role is a 400 `validation_error`, no new version
+ * created.
  */
 export async function PATCH(request: NextRequest, { params }: RouteContext) {
   const token = readSessionToken(request);
@@ -102,9 +106,17 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       return subPartnerShareNotFoundResponse();
     }
 
+    const linked = await resolveLinkedUserId(body.linkedUserEmail, "sub_partner", userPort);
+    if (!linked.ok) {
+      return NextResponse.json(
+        { code: "validation_error", message: linked.message },
+        { status: 400 },
+      );
+    }
+
     const updated = await updateSubPartnerShare(
       subPartnerId,
-      { name: body.name, sharePercent: body.sharePercent },
+      { name: body.name, sharePercent: body.sharePercent, userId: linked.userId },
       { subPartnerShares: subPartnerSharePort },
     );
 

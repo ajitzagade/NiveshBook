@@ -73,8 +73,28 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
  * deliberately excluded — an Owner/Admin acting on their own id still goes
  * through the normal role check (there is no override to grant a
  * non-Owner/Admin the ability to deactivate themselves either).
+ *
+ * Story 2.4 adds `subpartner_shares:list`: a linked Partner may list their
+ * own Sub-partner structure (`resourceRef.ownerId` is the target Partner
+ * Share row's `userId`) — the same single-resource idiom as `users:view`,
+ * just scoped to a different resource. A `sub_partner`-role actor's own
+ * `userId` is never a `partner_shares.userId` (different table/column), so
+ * this cannot accidentally admit a Sub-partner (Story 2.5's job, untouched
+ * here).
  */
-const SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set(["users:view"]);
+const SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set(["users:view", "subpartner_shares:list"]);
+
+/**
+ * Actions where `authorizeScope()` additionally allows any actor whose id
+ * appears in the caller-supplied `scopeOwnerIds` list (Story 2.4) — the
+ * list/scope-level generalization of `SELF_ACCESS_ACTIONS`'s single-resource
+ * idiom, one owner to many. `partner_shares:list` opens to a linked Partner,
+ * scoped to Projects they're actually linked to (their `userId` matches a
+ * `userId` on a *current* Partner Share row for the requested Project) — not
+ * every Project (FR7). The route computes `scopeOwnerIds` from the Project's
+ * current Partner Shares' `userId`s before calling `authorizeScope()`.
+ */
+const SCOPE_SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set(["partner_shares:list"]);
 
 export interface AuthorizeDeps {
   users: UserPort;
@@ -132,19 +152,31 @@ export async function authorize(
 }
 
 /**
- * List/scope-level authorization check (AD-1). Returns `{ allowed: boolean
- * }` for now — full scope-filtering (e.g. "partners see only their own
- * projects") arrives in Epic 2 once Project/Partner resources exist; this
- * story's actions (`users:list`) are all-or-nothing for a given role, so
- * there is no filter to compute yet.
+ * List/scope-level authorization check (AD-1). Always re-reads the actor's
+ * live role — never cached.
  *
- * Like `authorize()`, always re-reads the actor's live role — never cached.
+ * `scopeOwnerIds` (Story 2.4) is an optional list of userIds legitimately
+ * scoped-in for this specific request — e.g. the `userId`s of a Project's
+ * *current* Partner Shares, for `"partner_shares:list"`. For actions in
+ * `SCOPE_SELF_ACCESS_ACTIONS`, if `actorUserId` case-insensitively appears in
+ * `scopeOwnerIds`, the check short-circuits to allowed — in addition to the
+ * existing role-based `PERMISSIONS[action].has(actor.role)` check below, not
+ * replacing it. Fully backward-compatible: every pre-Story-2.4 call site
+ * omits the parameter and behaves exactly as before.
  */
 export async function authorizeScope(
   actorUserId: string,
   action: Action,
   deps: AuthorizeDeps,
+  scopeOwnerIds?: readonly string[],
 ): Promise<AuthorizeResult> {
+  if (
+    SCOPE_SELF_ACCESS_ACTIONS.has(action) &&
+    scopeOwnerIds?.some((ownerId) => ownerId.toLowerCase() === actorUserId.toLowerCase())
+  ) {
+    return { allowed: true };
+  }
+
   const actor = await deps.users.findUserById(actorUserId);
 
   if (!actor) {

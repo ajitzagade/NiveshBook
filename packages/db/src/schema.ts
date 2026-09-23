@@ -75,6 +75,14 @@ export const partnerShares = pgTable(
       .references(() => projects.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     sharePercent: numeric("share_percent", { precision: 7, scale: 4 }).notNull(),
+    // Story 2.4: nullable link to the `users` row this Partner corresponds
+    // to, if any -- lets `authorize()`/`authorizeScope()` know "this session
+    // IS Partner B". `ON DELETE SET NULL` so deleting a user never cascades
+    // into losing Partner Share history. No uniqueness constraint (spec-2-4's
+    // Decisions) -- nothing stops the same userId being linked more than
+    // once. Not indexed -- this story's auth checks operate on already-
+    // fetched rows, not a direct `userId` query.
+    userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
     effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -115,6 +123,9 @@ export const subpartnerShares = pgTable(
       .references(() => projects.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     sharePercent: numeric("share_percent", { precision: 7, scale: 4 }).notNull(),
+    // Story 2.4: mirrors `partnerShares.userId` one level down -- the
+    // `users` row this Sub-partner corresponds to, if any.
+    userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
     effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

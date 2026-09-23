@@ -6,6 +6,7 @@ import { SESSION_COOKIE_NAME } from "@/lib/session";
 const findSessionByTokenHash = vi.fn();
 const touchSession = vi.fn();
 const findUserById = vi.fn();
+const findUserByEmail = vi.fn();
 const createPartnerShare = vi.fn();
 const findLatestByPartnerId = vi.fn();
 const listByProjectId = vi.fn();
@@ -20,7 +21,7 @@ vi.mock("@niveshbook/db", () => ({
     deleteSessionById: vi.fn(),
   }),
   createUserPort: () => ({
-    findUserByEmail: vi.fn(),
+    findUserByEmail,
     findUserById,
     listAllUsers: vi.fn(),
   }),
@@ -90,6 +91,7 @@ function makeShare(overrides: Record<string, unknown> = {}) {
     projectId: PROJECT_ID,
     name: "Partner A",
     sharePercent: "50",
+    userId: null,
     effectiveFrom: now,
     createdAt: now,
     ...overrides,
@@ -101,6 +103,7 @@ function resetMocks() {
   touchSession.mockReset();
   touchSession.mockResolvedValue(1);
   findUserById.mockReset();
+  findUserByEmail.mockReset();
   createPartnerShare.mockReset();
   findLatestByPartnerId.mockReset();
   listByProjectId.mockReset();
@@ -111,7 +114,7 @@ describe("PATCH /api/projects/[id]/partner-shares/[partnerId]", () => {
 
   it("returns 401 with no session cookie", async () => {
     const response = await PATCH(
-      makePatchRequest({ body: { name: "Partner A", sharePercent: "60" } }),
+      makePatchRequest({ body: { name: "Partner A", sharePercent: "60", linkedUserEmail: "" } }),
       makeContext(),
     );
 
@@ -130,7 +133,7 @@ describe("PATCH /api/projects/[id]/partner-shares/[partnerId]", () => {
     const response = await PATCH(
       makePatchRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Partner A", sharePercent: "60" },
+        body: { name: "Partner A", sharePercent: "60", linkedUserEmail: "" },
       }),
       makeContext(),
     );
@@ -139,8 +142,98 @@ describe("PATCH /api/projects/[id]/partner-shares/[partnerId]", () => {
     const body = await response.json();
     expect(body).toEqual(newVersion);
     expect(createPartnerShare).toHaveBeenCalledWith(
-      expect.objectContaining({ partnerId: PARTNER_ID, projectId: PROJECT_ID, sharePercent: "60" }),
+      expect.objectContaining({
+        partnerId: PARTNER_ID,
+        projectId: PROJECT_ID,
+        sharePercent: "60",
+        userId: null,
+      }),
     );
+  });
+
+  it("unlinks an already-linked Partner Share -- 200, new versioned row with userId null", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    const existing = makeShare({ id: "row-1", sharePercent: "50", userId: PARTNER_USER.id });
+    findLatestByPartnerId.mockResolvedValue(existing);
+    const newVersion = makeShare({ id: "row-2", sharePercent: "50", userId: null });
+    createPartnerShare.mockResolvedValue(newVersion);
+
+    const response = await PATCH(
+      makePatchRequest({
+        cookie: `${SESSION_COOKIE_NAME}=some-token`,
+        body: { name: "Partner A", sharePercent: "50", linkedUserEmail: "" },
+      }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.userId).toBeNull();
+    expect(createPartnerShare).toHaveBeenCalledWith(expect.objectContaining({ userId: null }));
+  });
+
+  it("links a Partner Share to a user via email on edit -- 200, userId set", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    findUserByEmail.mockResolvedValue(PARTNER_USER);
+    const existing = makeShare({ id: "row-1", sharePercent: "50" });
+    findLatestByPartnerId.mockResolvedValue(existing);
+    createPartnerShare.mockResolvedValue(
+      makeShare({ id: "row-2", sharePercent: "50", userId: PARTNER_USER.id }),
+    );
+
+    const response = await PATCH(
+      makePatchRequest({
+        cookie: `${SESSION_COOKIE_NAME}=some-token`,
+        body: { name: "Partner A", sharePercent: "50", linkedUserEmail: PARTNER_USER.email },
+      }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.userId).toBe(PARTNER_USER.id);
+  });
+
+  it("blocks a linkedUserEmail that resolves to no user on edit -- 400 validation_error, no new version created", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    findUserByEmail.mockResolvedValue(null);
+    findLatestByPartnerId.mockResolvedValue(makeShare());
+
+    const response = await PATCH(
+      makePatchRequest({
+        cookie: `${SESSION_COOKIE_NAME}=some-token`,
+        body: { name: "Partner A", sharePercent: "50", linkedUserEmail: "nobody@x.test" },
+      }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.code).toBe("validation_error");
+    expect(createPartnerShare).not.toHaveBeenCalled();
+  });
+
+  it("blocks a linkedUserEmail that resolves to a non-partner role on edit -- 400 validation_error, no new version created", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    findUserByEmail.mockResolvedValue(OWNER_USER);
+    findLatestByPartnerId.mockResolvedValue(makeShare());
+
+    const response = await PATCH(
+      makePatchRequest({
+        cookie: `${SESSION_COOKIE_NAME}=some-token`,
+        body: { name: "Partner A", sharePercent: "50", linkedUserEmail: OWNER_USER.email },
+      }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.code).toBe("validation_error");
+    expect(createPartnerShare).not.toHaveBeenCalled();
   });
 
   it("returns 404 for a nonexistent partnerId", async () => {
@@ -151,7 +244,7 @@ describe("PATCH /api/projects/[id]/partner-shares/[partnerId]", () => {
     const response = await PATCH(
       makePatchRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Partner A", sharePercent: "60" },
+        body: { name: "Partner A", sharePercent: "60", linkedUserEmail: "" },
       }),
       makeContext(UNKNOWN_PARTNER_ID),
     );
@@ -169,7 +262,7 @@ describe("PATCH /api/projects/[id]/partner-shares/[partnerId]", () => {
     const response = await PATCH(
       makePatchRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Partner A", sharePercent: "60" },
+        body: { name: "Partner A", sharePercent: "60", linkedUserEmail: "" },
       }),
       makeContext("not-a-uuid"),
     );
@@ -185,7 +278,7 @@ describe("PATCH /api/projects/[id]/partner-shares/[partnerId]", () => {
     const response = await PATCH(
       makePatchRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Partner A", sharePercent: "60" },
+        body: { name: "Partner A", sharePercent: "60", linkedUserEmail: "" },
       }),
       makeContext(PARTNER_ID, "not-a-uuid"),
     );
@@ -202,7 +295,7 @@ describe("PATCH /api/projects/[id]/partner-shares/[partnerId]", () => {
     const response = await PATCH(
       makePatchRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Partner A", sharePercent: "60" },
+        body: { name: "Partner A", sharePercent: "60", linkedUserEmail: "" },
       }),
       makeContext(PARTNER_ID, PROJECT_ID),
     );
@@ -220,7 +313,7 @@ describe("PATCH /api/projects/[id]/partner-shares/[partnerId]", () => {
     const response = await PATCH(
       makePatchRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Partner A", sharePercent: "60" },
+        body: { name: "Partner A", sharePercent: "60", linkedUserEmail: "" },
       }),
       makeContext(),
     );
@@ -253,7 +346,7 @@ describe("PATCH /api/projects/[id]/partner-shares/[partnerId]", () => {
     const response = await PATCH(
       makePatchRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Partner A", sharePercent: "150" },
+        body: { name: "Partner A", sharePercent: "150", linkedUserEmail: "" },
       }),
       makeContext(),
     );

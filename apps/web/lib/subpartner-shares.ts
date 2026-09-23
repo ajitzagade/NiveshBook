@@ -11,6 +11,8 @@ const GENERIC_ERROR_MESSAGE = "Something went wrong. Please try again.";
 export interface SubPartnerShareInput {
   name: string;
   sharePercent: string;
+  /** Story 2.4: empty string means "no link" -- always sent, never omitted (full-overwrite-per-save, AD-3). */
+  linkedUserEmail: string;
 }
 
 /** `GET .../subpartner-shares`'s response shape -- the current Sub-partner Shares for one Partner, plus the live running total scoped to that Partner's own slice (AD-2's decimal-safe addition, not `%`-suffixed). */

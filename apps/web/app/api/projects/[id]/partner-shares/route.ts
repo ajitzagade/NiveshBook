@@ -10,7 +10,7 @@ import {
 } from "@niveshbook/core";
 import { createSessionPort, createUserPort, createProjectPort, createPartnerSharePort } from "@niveshbook/db";
 import { readSessionToken } from "@/lib/session";
-import { UNAUTHENTICATED_MESSAGE, FORBIDDEN_MESSAGE } from "@/lib/users";
+import { UNAUTHENTICATED_MESSAGE, FORBIDDEN_MESSAGE, resolveLinkedUserId } from "@/lib/users";
 import { isValidProjectId, projectNotFoundResponse } from "../../shared";
 import { INVALID_REQUEST_MESSAGE, isValidPartnerShareBody } from "./shared";
 
@@ -22,11 +22,23 @@ interface RouteContext {
  * Lists the *current* Partner Shares for a Project (one row per Partner --
  * `listCurrentPartnerShares` reduces every version row down to the latest
  * per `partnerId`) plus the live running total (`computeShareTotal`,
- * AD-2's decimal-safe addition). Owner/Admin-only (AD-1), gated by
- * `authorizeScope()` for `"partner_shares:list"` -- mirrors
- * `apps/web/app/api/projects/route.ts`'s GET. 404s for a nonexistent (or
- * malformed) project `id`, matching `apps/web/app/api/projects/[id]/route.ts`'s
- * own existence-check precedent, rather than silently returning an empty list.
+ * AD-2's decimal-safe addition). Owner/Admin-only, OR any linked Partner
+ * whose `userId` matches a `userId` on one of this Project's *current*
+ * Partner Shares (Story 2.4's co-partner privacy boundary, FR7) -- gated by
+ * `authorizeScope()` for `"partner_shares:list"` with a `scopeOwnerIds`
+ * list computed from the Project's current Partner Shares. Top-level Partner
+ * Share data (name + Share %) is not part of the privacy boundary (AC4) --
+ * a linked co-partner sees the full, unfiltered list once the membership
+ * check passes, no per-row redaction.
+ *
+ * The Project and its current Partner Shares are resolved *before* the
+ * authorization check (needed to compute `scopeOwnerIds`) -- but the 403 for
+ * "not Owner/Admin and not linked to this Project" is returned uniformly
+ * regardless of whether the Project actually exists, so an unrelated Partner
+ * can never use this endpoint to confirm/deny a Project id (spec-2-4's
+ * Decisions). Only once the caller is authorized does a still-missing (or
+ * malformed) Project id fall through to the existing 404, matching
+ * `apps/web/app/api/projects/[id]/route.ts`'s own existence-check precedent.
  */
 export async function GET(request: NextRequest, { params }: RouteContext) {
   const token = readSessionToken(request);
@@ -39,31 +51,39 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     );
   }
 
+  const { id: projectId } = await params;
+
+  const projectPort = createProjectPort();
+  const partnerSharePort = createPartnerSharePort();
+
+  const project = isValidProjectId(projectId) ? await projectPort.findProjectById(projectId) : null;
+  const currentShares = project
+    ? await listCurrentPartnerShares(projectId, { partnerShares: partnerSharePort })
+    : [];
+
+  const scopeOwnerIds = currentShares
+    .map((share) => share.userId)
+    .filter((userId): userId is string => userId !== null);
+
   const userPort = createUserPort();
-  const { allowed } = await authorizeScope(session.userId, "partner_shares:list", {
-    users: userPort,
-  });
+  const { allowed } = await authorizeScope(
+    session.userId,
+    "partner_shares:list",
+    { users: userPort },
+    scopeOwnerIds,
+  );
 
   if (!allowed) {
     return NextResponse.json({ code: "forbidden", message: FORBIDDEN_MESSAGE }, { status: 403 });
   }
 
-  const { id: projectId } = await params;
-
-  if (!isValidProjectId(projectId)) {
+  if (!project) {
     return projectNotFoundResponse();
   }
 
-  const projectPort = createProjectPort();
-  if (!(await projectPort.findProjectById(projectId))) {
-    return projectNotFoundResponse();
-  }
+  const total = computeShareTotal(currentShares);
 
-  const partnerSharePort = createPartnerSharePort();
-  const shares = await listCurrentPartnerShares(projectId, { partnerShares: partnerSharePort });
-  const total = computeShareTotal(shares);
-
-  return NextResponse.json({ shares, total });
+  return NextResponse.json({ shares: currentShares, total });
 }
 
 /**
@@ -78,7 +98,10 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
  * page, not enforced here. 404s for a nonexistent (or malformed) project
  * `id` before ever calling `addPartnerShare`, rather than letting the
  * insert fail uncaught against the `partner_shares_project_id_projects_id_fk`
- * foreign key.
+ * foreign key. `linkedUserEmail` (Story 2.4) is resolved to a `userId | null`
+ * via `resolveLinkedUserId()` after the project-existence check -- an empty
+ * string means no link; a non-empty, unresolvable, or wrong-role (must be
+ * `"partner"`) email is a 400 `validation_error`, no row created.
  */
 export async function POST(request: NextRequest, { params }: RouteContext) {
   const token = readSessionToken(request);
@@ -128,11 +151,16 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     return projectNotFoundResponse();
   }
 
+  const linked = await resolveLinkedUserId(body.linkedUserEmail, "partner", userPort);
+  if (!linked.ok) {
+    return NextResponse.json({ code: "validation_error", message: linked.message }, { status: 400 });
+  }
+
   const partnerSharePort = createPartnerSharePort();
   try {
     const share = await addPartnerShare(
       projectId,
-      { name: body.name, sharePercent: body.sharePercent },
+      { name: body.name, sharePercent: body.sharePercent, userId: linked.userId },
       { partnerShares: partnerSharePort },
     );
     return NextResponse.json(share, { status: 201 });

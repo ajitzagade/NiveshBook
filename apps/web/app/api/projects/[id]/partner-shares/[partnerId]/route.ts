@@ -8,7 +8,7 @@ import {
 } from "@niveshbook/core";
 import { createSessionPort, createUserPort, createPartnerSharePort } from "@niveshbook/db";
 import { readSessionToken } from "@/lib/session";
-import { UNAUTHENTICATED_MESSAGE, FORBIDDEN_MESSAGE } from "@/lib/users";
+import { UNAUTHENTICATED_MESSAGE, FORBIDDEN_MESSAGE, resolveLinkedUserId } from "@/lib/users";
 import { isValidProjectId } from "../../../shared";
 import {
   INVALID_REQUEST_MESSAGE,
@@ -34,7 +34,10 @@ interface RouteContext {
  * segment -- all get the same 404 (`apps/web/lib/ids.ts`'s
  * malformed-id-looks-like-404 convention), so none of those cases leak
  * which one applies, and a Partner Share can never be edited through
- * another project's URL.
+ * another project's URL. `linkedUserEmail` (Story 2.4) is resolved to a
+ * `userId | null` via `resolveLinkedUserId()`, full-overwrite every time
+ * (empty string unlinks) -- unresolvable or wrong-role (`"partner"`) is a
+ * 400 `validation_error`, no new version created.
  */
 export async function PATCH(request: NextRequest, { params }: RouteContext) {
   const token = readSessionToken(request);
@@ -87,9 +90,17 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       return partnerShareNotFoundResponse();
     }
 
+    const linked = await resolveLinkedUserId(body.linkedUserEmail, "partner", userPort);
+    if (!linked.ok) {
+      return NextResponse.json(
+        { code: "validation_error", message: linked.message },
+        { status: 400 },
+      );
+    }
+
     const updated = await updatePartnerShare(
       partnerId,
-      { name: body.name, sharePercent: body.sharePercent },
+      { name: body.name, sharePercent: body.sharePercent, userId: linked.userId },
       { partnerShares: partnerSharePort },
     );
 

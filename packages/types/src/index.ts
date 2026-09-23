@@ -70,6 +70,14 @@ export interface PartnerShare {
   projectId: string;
   name: string;
   sharePercent: Percent;
+  /**
+   * The `users.id` this Partner is linked to, or `null` if unlinked (Epic 2,
+   * Story 2.4) -- lets `authorize()`/`authorizeScope()` know "this session
+   * IS this Partner", scoping the co-partner privacy boundary. Set via the
+   * Add/Edit Partner dialog's "Linked user (email)" field, resolved at the
+   * route layer (`apps/web`) -- never a separate lookup here.
+   */
+  userId: string | null;
   /** ISO 8601 timestamp -- when this version took effect. */
   effectiveFrom: string;
   /** ISO 8601 timestamp */
@@ -101,6 +109,11 @@ export interface SubPartnerShare {
   projectId: string;
   name: string;
   sharePercent: Percent;
+  /**
+   * The `users.id` this Sub-partner is linked to, or `null` if unlinked
+   * (Epic 2, Story 2.4) -- mirrors `PartnerShare.userId` one level down.
+   */
+  userId: string | null;
   /** ISO 8601 timestamp -- when this version took effect. */
   effectiveFrom: string;
   /** ISO 8601 timestamp */

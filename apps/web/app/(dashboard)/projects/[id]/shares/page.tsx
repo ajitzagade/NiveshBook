@@ -142,11 +142,28 @@ export default function PartnerSharesPage() {
   const [dialog, setDialog] = useState<DialogState>({ open: false });
   const [name, setName] = useState("");
   const [sharePercent, setSharePercent] = useState("");
+  const [linkedUserEmail, setLinkedUserEmail] = useState("");
+  // Story 2.4: the `userId` of the share currently open for edit, if it has
+  // one -- `null` for "add" dialogs or an edit of an unlinked share. Used
+  // (with `userEmailById` below) to detect "this share IS linked, but we
+  // don't know the email yet" so the field is never silently blank for an
+  // already-linked share -- since every save is a full overwrite, a blank
+  // `linkedUserEmail` means "unlink", so saving a stale blank would
+  // silently destroy a real link.
+  const [editingShareUserId, setEditingShareUserId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const [expandedPartnerId, setExpandedPartnerId] = useState<string | null>(null);
   const [subSharesByPartner, setSubSharesByPartner] = useState<Record<string, SubListState>>({});
+
+  // Story 2.4: a `userId -> email` lookup, built once from the existing
+  // Owner/Admin-scoped user directory, so the Add/Edit dialogs can
+  // pre-populate "Linked user (email)" for an already-linked Partner/
+  // Sub-partner. Best-effort only -- if this fetch fails, the field simply
+  // starts blank; it never blocks the Partner Shares screen itself from
+  // loading.
+  const [userEmailById, setUserEmailById] = useState<Record<string, string>>({});
 
   async function refresh() {
     const result = await listPartnerShares(projectId);
@@ -175,6 +192,58 @@ export default function PartnerSharesPage() {
       cancelled = true;
     };
   }, [projectId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch("/api/users")
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error("failed"))))
+      .then((users: unknown) => {
+        if (cancelled || !Array.isArray(users)) return;
+        const lookup: Record<string, string> = {};
+        for (const user of users) {
+          if (
+            user &&
+            typeof user === "object" &&
+            typeof (user as { id?: unknown }).id === "string" &&
+            typeof (user as { email?: unknown }).email === "string"
+          ) {
+            lookup[(user as { id: string }).id] = (user as { email: string }).email;
+          }
+        }
+        setUserEmailById(lookup);
+      })
+      .catch(() => {
+        // Best-effort pre-population only -- an Owner/Admin can still type
+        // the email manually if this fetch fails.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Story 2.4: if the `/api/users` lookup above resolves (or updates) while
+  // an Edit dialog for an already-linked share is open and its email wasn't
+  // known yet, backfill the field once it becomes available -- otherwise
+  // the pending-guard below would leave Save disabled indefinitely even
+  // after the email is known.
+  useEffect(() => {
+    if (editingShareUserId === null) return;
+    const resolvedEmail = userEmailById[editingShareUserId];
+    if (resolvedEmail !== undefined) {
+      setLinkedUserEmail(resolvedEmail);
+    }
+  }, [userEmailById, editingShareUserId]);
+
+  // True while editing a share that IS linked to a user but whose email
+  // hasn't been resolved yet (the `/api/users` fetch above hasn't completed
+  // or failed) -- the field would otherwise render blank, and since every
+  // save is a full overwrite (empty `linkedUserEmail` means "unlink"),
+  // saving in this state would silently destroy a real link. Recomputed
+  // every render, so it clears itself as soon as `userEmailById` resolves.
+  const linkedUserEmailPending =
+    editingShareUserId !== null && userEmailById[editingShareUserId] === undefined;
 
   async function refreshSubShares(partnerId: string) {
     try {
@@ -210,6 +279,8 @@ export default function PartnerSharesPage() {
   function openAddDialog() {
     setName("");
     setSharePercent("");
+    setLinkedUserEmail("");
+    setEditingShareUserId(null);
     setFormError(null);
     setDialog({ open: true, mode: "add" });
   }
@@ -217,6 +288,8 @@ export default function PartnerSharesPage() {
   function openEditDialog(share: PartnerShare) {
     setName(share.name);
     setSharePercent(formatSharePercent(share.sharePercent));
+    setLinkedUserEmail(share.userId ? (userEmailById[share.userId] ?? "") : "");
+    setEditingShareUserId(share.userId);
     setFormError(null);
     setDialog({ open: true, mode: "edit", partnerId: share.partnerId });
   }
@@ -224,6 +297,8 @@ export default function PartnerSharesPage() {
   function openAddSubDialog(partnerId: string) {
     setName("");
     setSharePercent("");
+    setLinkedUserEmail("");
+    setEditingShareUserId(null);
     setFormError(null);
     setDialog({ open: true, mode: "add-sub", partnerId });
   }
@@ -231,6 +306,8 @@ export default function PartnerSharesPage() {
   function openEditSubDialog(partnerId: string, subShare: SubPartnerShare) {
     setName(subShare.name);
     setSharePercent(formatSharePercent(subShare.sharePercent));
+    setLinkedUserEmail(subShare.userId ? (userEmailById[subShare.userId] ?? "") : "");
+    setEditingShareUserId(subShare.userId);
     setFormError(null);
     setDialog({ open: true, mode: "edit-sub", partnerId, subPartnerId: subShare.subPartnerId });
   }
@@ -247,18 +324,19 @@ export default function PartnerSharesPage() {
     setSubmitting(true);
     try {
       if (dialog.mode === "add") {
-        await addPartnerShare(projectId, { name, sharePercent });
+        await addPartnerShare(projectId, { name, sharePercent, linkedUserEmail });
         await refresh();
       } else if (dialog.mode === "edit") {
-        await updatePartnerShare(projectId, dialog.partnerId, { name, sharePercent });
+        await updatePartnerShare(projectId, dialog.partnerId, { name, sharePercent, linkedUserEmail });
         await refresh();
       } else if (dialog.mode === "add-sub") {
-        await addSubPartnerShare(projectId, dialog.partnerId, { name, sharePercent });
+        await addSubPartnerShare(projectId, dialog.partnerId, { name, sharePercent, linkedUserEmail });
         await refreshSubShares(dialog.partnerId);
       } else {
         await updateSubPartnerShare(projectId, dialog.partnerId, dialog.subPartnerId, {
           name,
           sharePercent,
+          linkedUserEmail,
         });
         await refreshSubShares(dialog.partnerId);
       }
@@ -453,6 +531,25 @@ export default function PartnerSharesPage() {
               />
               <Helper>e.g. 33.33 for a one-third Share -- up to 4 decimal places are supported.</Helper>
             </Field>
+            <Field>
+              <Label htmlFor="linked-user-email">Linked user (email)</Label>
+              <Input
+                id="linked-user-email"
+                name="linkedUserEmail"
+                type="email"
+                value={linkedUserEmail}
+                onChange={(event) => setLinkedUserEmail(event.target.value)}
+                disabled={linkedUserEmailPending}
+                placeholder={linkedUserEmailPending ? "Loading current link…" : undefined}
+              />
+              <Helper>
+                {linkedUserEmailPending
+                  ? "Loading the currently linked user's email -- please wait before saving."
+                  : dialog.open && (dialog.mode === "add-sub" || dialog.mode === "edit-sub")
+                    ? "Optional -- links this Sub-partner to a login with the Sub-partner role, so they can see only their own data. Leave blank for no link."
+                    : "Optional -- links this Partner to a login with the Partner role, so they can see only their own data (never a co-partner's). Leave blank for no link."}
+              </Helper>
+            </Field>
 
             {formError ? (
               <p role="alert" className="mb-4 text-[13.4px] text-danger">
@@ -461,7 +558,7 @@ export default function PartnerSharesPage() {
             ) : null}
 
             <div className="flex gap-2.5">
-              <Button type="submit" disabled={submitting}>
+              <Button type="submit" disabled={submitting || linkedUserEmailPending}>
                 {submitting ? "Saving…" : "Save"}
               </Button>
               <Button type="button" variant="ghost" onClick={closeDialog} disabled={submitting}>

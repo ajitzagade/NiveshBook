@@ -1,8 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
+import type { PartnerShare } from "@niveshbook/types";
 import {
   getSession,
+  authorize,
   authorizeScope,
   addSubPartnerShare,
+  listCurrentPartnerShares,
   listCurrentSubPartnerShares,
   computeSubAllocationTotal,
   InvalidSubPartnerNameError,
@@ -16,7 +19,7 @@ import {
   createSubPartnerSharePort,
 } from "@niveshbook/db";
 import { readSessionToken } from "@/lib/session";
-import { UNAUTHENTICATED_MESSAGE, FORBIDDEN_MESSAGE } from "@/lib/users";
+import { UNAUTHENTICATED_MESSAGE, FORBIDDEN_MESSAGE, resolveLinkedUserId } from "@/lib/users";
 import { isValidProjectId, projectNotFoundResponse } from "../../../../shared";
 import { isValidPartnerId, partnerShareNotFoundResponse } from "../../shared";
 import { INVALID_REQUEST_MESSAGE, isValidSubPartnerShareBody } from "./shared";
@@ -30,14 +33,17 @@ interface RouteContext {
  * the project `id` must exist, and `partnerId` must belong to that project
  * (`findLatestByPartnerId` + `existing.projectId === id`) -- mirrors
  * `partner-shares/[partnerId]/route.ts`'s own cross-project check, one
- * level up the URL. Returns the found `PartnerShare` on success, or a
+ * level up the URL. Returns the found `PartnerShare` on success (so a
+ * caller can read its `userId` for Story 2.4's ownership check), or a
  * `NextResponse` to return immediately on any mismatch -- all 404, per
- * spec-2-3's "same class of bug, one level deeper" note.
+ * spec-2-3's "same class of bug, one level deeper" note. This 404
+ * scoping-integrity check is unchanged by Story 2.4 -- it adds an
+ * authorization layer on top, not a replacement.
  */
 async function resolveScope(
   projectId: string,
   partnerId: string,
-): Promise<{ ok: true } | { ok: false; response: NextResponse }> {
+): Promise<{ ok: true; partner: PartnerShare } | { ok: false; response: NextResponse }> {
   if (!isValidProjectId(projectId)) {
     return { ok: false, response: projectNotFoundResponse() };
   }
@@ -57,7 +63,7 @@ async function resolveScope(
     return { ok: false, response: partnerShareNotFoundResponse() };
   }
 
-  return { ok: true };
+  return { ok: true, partner };
 }
 
 /**
@@ -65,11 +71,25 @@ async function resolveScope(
  * Sub-partner -- `listCurrentSubPartnerShares` reduces every version row
  * down to the latest per `subPartnerId`) plus the live running total
  * (`computeSubAllocationTotal`, AD-2's decimal-safe addition, scoped to
- * this Partner's own slice -- never the Project's 100% total). Owner/Admin-
- * only (AD-1), gated by `authorizeScope()` for `"subpartner_shares:list"` --
- * mirrors `partner-shares/route.ts`'s GET one level down. 404s for a
- * nonexistent project `id` or a `partnerId` that doesn't belong to it,
- * rather than silently returning an empty list.
+ * this Partner's own slice -- never the Project's 100% total). Owner/Admin
+ * unconditionally, OR the specific linked Partner viewing their own
+ * Sub-partner structure only (Story 2.4's co-partner privacy boundary).
+ *
+ * Two-stage gate, mirroring `partner-shares/route.ts`'s GET: a **coarse**
+ * gate runs first -- `authorizeScope("partner_shares:list", ...,
+ * scopeOwnerIds)` computed from this *Project's* current Partner Shares'
+ * `userId`s -- so anyone not Owner/Admin and not linked to *any* Partner
+ * Share on this Project (e.g. a `sub_partner` role, or a Partner with zero
+ * share here) gets a uniform 403 *before* `resolveScope()` ever runs.
+ * Without this, `resolveScope()`'s 404-vs-something-else split would let any
+ * authenticated caller use this endpoint as an existence oracle for a
+ * bogus/cross-project `partnerId`, not just a legitimate co-partner. Only
+ * once the coarse gate passes does `resolveScope()` run (404s for a
+ * nonexistent Project `id` or a `partnerId` that doesn't belong to it,
+ * unchanged from Story 2.3) followed by the **fine** gate --
+ * `authorize("subpartner_shares:list", { ownerId: partner.userId ?? "" },
+ * ...)` -- so a different (but Project-linked) co-partner still gets 403
+ * (not 404) reading another real Partner's Sub-partner structure.
  */
 export async function GET(request: NextRequest, { params }: RouteContext) {
   const token = readSessionToken(request);
@@ -82,20 +102,45 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     );
   }
 
-  const userPort = createUserPort();
-  const { allowed } = await authorizeScope(session.userId, "subpartner_shares:list", {
-    users: userPort,
-  });
+  const { id: projectId, partnerId } = await params;
 
-  if (!allowed) {
+  const userPort = createUserPort();
+  const projectPort = createProjectPort();
+  const partnerSharePort = createPartnerSharePort();
+
+  const project = isValidProjectId(projectId) ? await projectPort.findProjectById(projectId) : null;
+  const currentShares = project
+    ? await listCurrentPartnerShares(projectId, { partnerShares: partnerSharePort })
+    : [];
+  const scopeOwnerIds = currentShares
+    .map((share) => share.userId)
+    .filter((userId): userId is string => userId !== null);
+
+  const coarse = await authorizeScope(
+    session.userId,
+    "partner_shares:list",
+    { users: userPort },
+    scopeOwnerIds,
+  );
+
+  if (!coarse.allowed) {
     return NextResponse.json({ code: "forbidden", message: FORBIDDEN_MESSAGE }, { status: 403 });
   }
-
-  const { id: projectId, partnerId } = await params;
 
   const scope = await resolveScope(projectId, partnerId);
   if (!scope.ok) {
     return scope.response;
+  }
+
+  const { allowed } = await authorize(
+    session.userId,
+    "subpartner_shares:list",
+    { ownerId: scope.partner.userId ?? "" },
+    { users: userPort },
+  );
+
+  if (!allowed) {
+    return NextResponse.json({ code: "forbidden", message: FORBIDDEN_MESSAGE }, { status: 403 });
   }
 
   const subPartnerSharePort = createSubPartnerSharePort();
@@ -119,7 +164,10 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
  * (spec-2-3's Decisions) -- that's informational-only, computed live by
  * `GET` and displayed by the page, not enforced here. 404s for a
  * nonexistent project `id` or a `partnerId` that doesn't belong to it
- * before ever calling `addSubPartnerShare`.
+ * before ever calling `addSubPartnerShare`. `linkedUserEmail` (Story 2.4) is
+ * resolved to a `userId | null` via `resolveLinkedUserId()`, validated
+ * against `role: "sub_partner"` -- unresolvable or wrong-role is a 400
+ * `validation_error`, no row created.
  */
 export async function POST(request: NextRequest, { params }: RouteContext) {
   const token = readSessionToken(request);
@@ -165,12 +213,17 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     return scope.response;
   }
 
+  const linked = await resolveLinkedUserId(body.linkedUserEmail, "sub_partner", userPort);
+  if (!linked.ok) {
+    return NextResponse.json({ code: "validation_error", message: linked.message }, { status: 400 });
+  }
+
   const subPartnerSharePort = createSubPartnerSharePort();
   try {
     const share = await addSubPartnerShare(
       partnerId,
       projectId,
-      { name: body.name, sharePercent: body.sharePercent },
+      { name: body.name, sharePercent: body.sharePercent, userId: linked.userId },
       { subPartnerShares: subPartnerSharePort },
     );
     return NextResponse.json(share, { status: 201 });

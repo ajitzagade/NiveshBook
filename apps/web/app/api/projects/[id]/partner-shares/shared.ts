@@ -4,23 +4,31 @@ import { UUID_PATTERN } from "@/lib/ids";
 /**
  * Shared between `POST /api/projects/[id]/partner-shares` and
  * `PATCH /api/projects/[id]/partner-shares/[partnerId]` -- both accept the
- * same `{ name, sharePercent }` request-body shape, mirroring
- * `apps/web/app/api/projects/shared.ts`'s pattern for Story 2.1.
+ * same `{ name, sharePercent, linkedUserEmail }` request-body shape,
+ * mirroring `apps/web/app/api/projects/shared.ts`'s pattern for Story 2.1.
+ * `linkedUserEmail` is required (Story 2.4) -- an empty string means "no
+ * link", never "leave unchanged" (AD-3's full-overwrite-per-save
+ * convention, same as `name`/`sharePercent`).
  */
 export const INVALID_REQUEST_MESSAGE =
-  "Request body must be valid JSON with a `name` string and a `sharePercent` string.";
+  "Request body must be valid JSON with a `name` string, a `sharePercent` string, and a `linkedUserEmail` string (empty for no link).";
 
 export interface ValidPartnerShareBody {
   name: string;
   sharePercent: string;
+  linkedUserEmail: string;
 }
 
 export function isValidPartnerShareBody(body: unknown): body is ValidPartnerShareBody {
   if (typeof body !== "object" || body === null) {
     return false;
   }
-  const candidate = body as { name?: unknown; sharePercent?: unknown };
-  return typeof candidate.name === "string" && typeof candidate.sharePercent === "string";
+  const candidate = body as { name?: unknown; sharePercent?: unknown; linkedUserEmail?: unknown };
+  return (
+    typeof candidate.name === "string" &&
+    typeof candidate.sharePercent === "string" &&
+    typeof candidate.linkedUserEmail === "string"
+  );
 }
 
 export const PARTNER_SHARE_NOT_FOUND_MESSAGE = "Partner Share not found.";
