@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import "@niveshbook/ui/src/styles/tokens.css";
 
 export const metadata = {
   title: "NiveshBook",

@@ -1,0 +1,217 @@
+/*
+ * Design tokens sourced verbatim from the founder-approved mockup
+ * (_bmad-output/planning-artifacts/ux-designs/ux-NiveshBook-2026-09-23/imports/founder-mockup.html).
+ * See DESIGN.md in that same folder for the authoritative rationale --
+ * this file must stay in sync with it, not the other way around.
+ */
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #1e293b;
+  --color-ink-soft: #64748b;
+  --color-ink-faint: #94a3b8;
+  --color-ground: #f3f5f9;
+  --color-surface: #ffffff;
+  --color-surface-alt: #f7f9fc;
+  --color-border: #e7ebf1;
+
+  --color-accent: #2f6fed;
+  --color-accent-strong: #1e54c7;
+  --color-accent-soft: #e7effe;
+
+  --color-success: #17a566;
+  --color-success-soft: #e3f8ec;
+  --color-danger: #e5484d;
+  --color-danger-soft: #fceaea;
+  --color-info: #0ea5a5;
+  --color-info-soft: #e1f7f5;
+  --color-violet: #8b5cf6;
+  --color-violet-soft: #f1eafe;
+  --color-amber: #e8a317;
+  --color-amber-soft: #fcf1dc;
+
+  --color-nav-neutral: #475569;
+
+  --radius-card: 14px;
+  --radius-el: 9px;
+  --radius-chip: 9999px;
+
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  --shadow-card:
+    0 1px 2px rgba(30, 41, 59, 0.04), 0 8px 20px rgba(30, 41, 59, 0.05);
+}
+
+@layer base {
+  body {
+    background: var(--color-ground);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 14.5px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1,
+  h2,
+  h3 {
+    font-weight: 650;
+    margin: 0;
+  }
+}
+
+@layer components {
+  /* Tabular numerals for every monetary value -- never let digits jitter. */
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .nb-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+  }
+
+  .nb-btn {
+    border: none;
+    border-radius: var(--radius-el);
+    padding: 9px 15px;
+    font-size: 13.2px;
+    font-weight: 650;
+    cursor: pointer;
+    font-family: inherit;
+    white-space: nowrap;
+  }
+  .nb-btn-primary {
+    background: var(--color-accent);
+    color: #ffffff;
+  }
+  .nb-btn-ghost {
+    background: var(--color-surface);
+    color: var(--color-ink-soft);
+    border: 1px solid var(--color-border);
+  }
+
+  .nb-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: var(--radius-chip);
+    font-size: 11.6px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .nb-chip-success {
+    background: var(--color-success-soft);
+    color: var(--color-success);
+  }
+  .nb-chip-danger {
+    background: var(--color-danger-soft);
+    color: var(--color-danger);
+  }
+  .nb-chip-info {
+    background: var(--color-info-soft);
+    color: var(--color-info);
+  }
+  .nb-chip-violet {
+    background: var(--color-violet-soft);
+    color: var(--color-violet);
+  }
+  .nb-chip-neutral {
+    background: var(--color-surface-alt);
+    color: var(--color-ink-faint);
+    border: 1px solid var(--color-border);
+  }
+
+  .nb-helper {
+    background: var(--color-accent-soft);
+    color: var(--color-accent-strong);
+    border-radius: 10px;
+    padding: 10px 13px;
+    font-size: 12.6px;
+    line-height: 1.45;
+  }
+
+  .nb-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.3px;
+  }
+  .nb-table th {
+    text-align: right;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-ink-faint);
+    padding: 0 9px 8px;
+    border-bottom: 1px solid var(--color-border);
+    font-weight: 700;
+  }
+  .nb-table th:first-child,
+  .nb-table td:first-child {
+    text-align: left;
+  }
+  .nb-table td {
+    padding: 10px 9px;
+    border-bottom: 1px solid var(--color-border);
+    text-align: right;
+  }
+  .nb-table tr:last-child td {
+    border-bottom: none;
+  }
+  .nb-table tr.nb-sub-row td:first-child {
+    padding-left: 24px;
+    color: var(--color-ink-soft);
+    font-size: 12.6px;
+  }
+
+  .nb-distributed-check {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 13px;
+    padding: 11px 14px;
+    border-radius: 10px;
+    background: var(--color-success-soft);
+    color: var(--color-success);
+    font-weight: 700;
+    font-size: 13px;
+  }
+
+  .nb-trail-item {
+    display: flex;
+    gap: 12px;
+    padding: 12px 0;
+    border-left: 2px solid var(--color-border);
+    padding-left: 16px;
+    margin-left: 12px;
+    position: relative;
+  }
+  .nb-trail-item:last-child {
+    border-left-color: transparent;
+  }
+  .nb-trail-dot {
+    position: absolute;
+    left: -8px;
+    top: 14px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+  }
+
+  .nb-trace-banner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    background: var(--color-surface-alt);
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 12px;
+    color: var(--color-ink-soft);
+  }
+}

@@ -1,4 +1,21 @@
-// Shared UI component library — empty scaffold. No components have been
-// needed yet; Story 1.1's login form lives directly in apps/web since it
-// isn't (yet) shared across multiple surfaces.
-export {};
+export * from "./lib/cn";
+export * from "./lib/format-amount";
+
+export * from "./components/button";
+export * from "./components/card";
+export * from "./components/status-chip";
+export * from "./components/amount";
+export * from "./components/stat-card";
+export * from "./components/wallet-hero";
+export * from "./components/table";
+export * from "./components/distributed-check";
+export * from "./components/share-row";
+export * from "./components/split-row";
+export * from "./components/adjust-person-card";
+export * from "./components/trail";
+export * from "./components/report-tile";
+export * from "./components/nav-item";
+export * from "./components/helper";
+export * from "./components/dialog";
+export * from "./components/popover";
+export * from "./components/dropdown-menu";
