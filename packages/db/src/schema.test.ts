@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { users, projects } from "./schema";
+import { users, projects, partnerShares } from "./schema";
 
 describe("users table schema (FR6)", () => {
   it("marks role NOT NULL — the DB itself rejects a null/missing role", () => {
@@ -29,5 +29,34 @@ describe("projects table schema (Story 2.1)", () => {
     expect(projects.createdAt.hasDefault).toBe(true);
     expect(projects.updatedAt.notNull).toBe(true);
     expect(projects.updatedAt.hasDefault).toBe(true);
+  });
+});
+
+describe("partner_shares table schema (Story 2.2)", () => {
+  it("marks partnerId/projectId/name/sharePercent NOT NULL", () => {
+    expect(partnerShares.partnerId.notNull).toBe(true);
+    expect(partnerShares.projectId.notNull).toBe(true);
+    expect(partnerShares.name.notNull).toBe(true);
+    expect(partnerShares.sharePercent.notNull).toBe(true);
+  });
+
+  it("gives id no implicit default -- application code (uuidv7) always supplies one, both for the first version and every later one", () => {
+    expect(partnerShares.id.hasDefault).toBe(false);
+  });
+
+  it("gives partnerId no implicit default -- the domain layer generates it once and reuses it across every version row", () => {
+    expect(partnerShares.partnerId.hasDefault).toBe(false);
+  });
+
+  it("stores sharePercent as numeric(7,4) -- up to 4 decimal places, no float storage (AD-2)", () => {
+    expect(partnerShares.sharePercent.columnType).toBe("PgNumeric");
+    expect(partnerShares.sharePercent.getSQLType()).toBe("numeric(7, 4)");
+  });
+
+  it("marks effectiveFrom/createdAt NOT NULL with a DB-side default", () => {
+    expect(partnerShares.effectiveFrom.notNull).toBe(true);
+    expect(partnerShares.effectiveFrom.hasDefault).toBe(true);
+    expect(partnerShares.createdAt.notNull).toBe(true);
+    expect(partnerShares.createdAt.hasDefault).toBe(true);
   });
 });

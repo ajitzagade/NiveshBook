@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "@niveshbook/types": "workspace:*",
-    "argon2": "^0.45.1"
+    "argon2": "^0.45.1",
+    "uuidv7": "^1.2.1"
   },
   "devDependencies": {
     "@niveshbook/config": "workspace:*",

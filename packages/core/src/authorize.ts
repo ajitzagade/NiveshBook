@@ -17,7 +17,10 @@ export type Action =
   | "permissions:manage"
   | "projects:create"
   | "projects:update"
-  | "projects:list";
+  | "projects:list"
+  | "partner_shares:create"
+  | "partner_shares:update"
+  | "partner_shares:list";
 
 /**
  * Role -> allowed-actions permission table. All actions here are
@@ -42,6 +45,14 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   "projects:create": new Set(["owner_admin"]),
   "projects:update": new Set(["owner_admin"]),
   "projects:list": new Set(["owner_admin"]),
+  // Story 2.2: same story as Story 2.1's Project actions -- no Partner
+  // Share-shaped `ResourceRef` yet (that's Story 2.4+, once the co-partner
+  // privacy boundary needs something to scope against), so these are
+  // all-or-nothing per role, checked via `authorizeScope()` only. Every
+  // Partner Share is visible to every Owner/Admin request.
+  "partner_shares:create": new Set(["owner_admin"]),
+  "partner_shares:update": new Set(["owner_admin"]),
+  "partner_shares:list": new Set(["owner_admin"]),
 };
 
 /**

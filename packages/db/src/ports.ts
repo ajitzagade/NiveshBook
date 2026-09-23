@@ -1,10 +1,25 @@
-import { and, eq, gt } from "drizzle-orm";
+import { and, desc, eq, gt } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
-import type { UserPort, SessionPort, CreateSessionInput, ProjectPort } from "@niveshbook/core";
-import type { User, Session, UserRole, Project } from "@niveshbook/types";
+import type {
+  UserPort,
+  SessionPort,
+  CreateSessionInput,
+  ProjectPort,
+  PartnerSharePort,
+} from "@niveshbook/core";
+import type { User, Session, UserRole, Project, PartnerShare, Percent } from "@niveshbook/types";
 import type { Database } from "./client";
 import { getDb } from "./client";
-import { users, sessions, projects, type SessionRow, type UserRow, type ProjectRow } from "./schema";
+import {
+  users,
+  sessions,
+  projects,
+  partnerShares,
+  type SessionRow,
+  type UserRow,
+  type ProjectRow,
+  type PartnerShareRow,
+} from "./schema";
 
 function toUser(row: UserRow): User {
   return {
@@ -35,6 +50,23 @@ function toProject(row: ProjectRow): Project {
     description: row.description,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+/**
+ * Converts the numeric `share_percent` column (Drizzle returns `numeric` as
+ * a `string`, never a native float -- AD-2) directly into a `Percent`,
+ * with no `parseFloat`/`Number()` round-trip.
+ */
+function toPartnerShare(row: PartnerShareRow): PartnerShare {
+  return {
+    id: row.id,
+    partnerId: row.partnerId,
+    projectId: row.projectId,
+    name: row.name,
+    sharePercent: row.sharePercent as Percent,
+    effectiveFrom: row.effectiveFrom.toISOString(),
+    createdAt: row.createdAt.toISOString(),
   };
 }
 
@@ -174,6 +206,51 @@ export function createProjectPort(database: Database = getDb()): ProjectPort {
     async listProjects() {
       const rows = await database.select().from(projects);
       return rows.map(toProject);
+    },
+  };
+}
+
+/**
+ * Drizzle-backed implementation of `packages/core`'s `PartnerSharePort`
+ * (Story 2.2). Every `createPartnerShare` call inserts a brand-new row --
+ * there is no update path here at all, since AD-3 means `sharePercent` is
+ * immutable once set (the domain layer's `updatePartnerShare` calls this
+ * same method with the existing `partnerId` to create the next version).
+ */
+export function createPartnerSharePort(database: Database = getDb()): PartnerSharePort {
+  return {
+    async createPartnerShare(input) {
+      const [row] = await database
+        .insert(partnerShares)
+        .values({
+          id: uuidv7(),
+          partnerId: input.partnerId,
+          projectId: input.projectId,
+          name: input.name,
+          sharePercent: input.sharePercent,
+        })
+        .returning();
+      if (!row) {
+        throw new Error("Failed to create partner share");
+      }
+      return toPartnerShare(row);
+    },
+    async findLatestByPartnerId(partnerId) {
+      const rows = await database
+        .select()
+        .from(partnerShares)
+        .where(eq(partnerShares.partnerId, partnerId))
+        .orderBy(desc(partnerShares.effectiveFrom), desc(partnerShares.id))
+        .limit(1);
+      const row = rows[0];
+      return row ? toPartnerShare(row) : null;
+    },
+    async listByProjectId(projectId) {
+      const rows = await database
+        .select()
+        .from(partnerShares)
+        .where(eq(partnerShares.projectId, projectId));
+      return rows.map(toPartnerShare);
     },
   };
 }

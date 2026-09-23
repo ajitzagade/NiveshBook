@@ -127,6 +127,9 @@ importers:
       argon2:
         specifier: ^0.45.1
         version: 0.45.1
+      uuidv7:
+        specifier: ^1.2.1
+        version: 1.2.1
     devDependencies:
       '@niveshbook/config':
         specifier: workspace:*

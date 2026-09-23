@@ -5,3 +5,6 @@ export * from "./session-port";
 export * from "./permissions";
 export * from "./project";
 export * from "./project-port";
+export * from "./decimal-math";
+export * from "./partner-share";
+export * from "./partner-share-port";

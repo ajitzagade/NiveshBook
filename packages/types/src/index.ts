@@ -42,3 +42,36 @@ export interface Project {
   /** ISO 8601 timestamp */
   updatedAt: string;
 }
+
+/**
+ * A validated, decimal-safe percentage value (AD-2), branded so a raw
+ * `string` can never be assigned where a `Percent` is expected without
+ * going through `packages/core/src/decimal-math.ts`'s `toPercent()` first.
+ * Always `0 < x <= 100`, stored with up to 4 decimal places even though
+ * only 2 are required by this story's UI (Epic 3's largest-remainder split
+ * logic needs the extra precision). Never a native float.
+ */
+export type Percent = string & { readonly __brand: "Percent" };
+
+/**
+ * A Partner's Share % on a Project (Epic 2, Story 2.2). One row per
+ * *version* of a Partner's share -- `sharePercent` is immutable once set
+ * (AD-3): every edit creates a new row with a new `id`/`effectiveFrom`,
+ * sharing the same stable `partnerId`. There is no separate `partners`
+ * table -- a Partner exists only as a row (or row-history) here, keyed by
+ * `partnerId`. Reduce all version rows for a Project down to the latest
+ * `effectiveFrom` per `partnerId` to get the *current* Partner Shares
+ * (`packages/core`'s `listCurrentPartnerShares`).
+ */
+export interface PartnerShare {
+  id: string;
+  /** Stable across every version row for the same Partner -- distinct from this row's own `id`. */
+  partnerId: string;
+  projectId: string;
+  name: string;
+  sharePercent: Percent;
+  /** ISO 8601 timestamp -- when this version took effect. */
+  effectiveFrom: string;
+  /** ISO 8601 timestamp */
+  createdAt: string;
+}

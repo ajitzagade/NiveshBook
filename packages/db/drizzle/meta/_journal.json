@@ -29,6 +29,13 @@
       "when": 1790159013321,
       "tag": "0003_nifty_caretaker",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790174361867,
+      "tag": "0004_wooden_champions",
+      "breakpoints": true
     }
   ]
 }

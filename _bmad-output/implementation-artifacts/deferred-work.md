@@ -57,3 +57,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-1-create-and-edit-a-project.md`
   summary: No audit trail (who/when) for Project creation/edits via `POST`/`PATCH /api/projects`.
   evidence: same pre-existing pattern as Story 1.6/1.7's audit-trail gaps — no story has built audit logging yet; `epics.md`'s nav list names a future "Audit History" area as a separate, later concern.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-2-add-edit-partner-shares-with-100-validation.md`
+  summary: No way to remove a mistakenly-added Partner Share — Owner/Admin can only overwrite via edit (which still versions it, per AD-3), never retract an accidental add.
+  evidence: not required by epics.md's Story 2.2 AC, which only covers add/edit. Found during step-04 review (blind-hunter); flagged as a real gap since a fat-fingered add currently has no undo path. Implementing removal is a new feature, not a small patch — needs a design decision (soft-delete flag vs. a zero-percent "retracted" version vs. something else) that should weigh against AD-3's versioning philosophy before being built.

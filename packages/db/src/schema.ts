@@ -1,4 +1,4 @@
-import { boolean, index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, numeric, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 /**
  * `users` and `sessions` are the only tables this epic creates (further
@@ -55,3 +55,35 @@ export const projects = pgTable("projects", {
 });
 
 export type ProjectRow = typeof projects.$inferSelect;
+
+/**
+ * Story 2.2 (Epic 2): one row per *version* of a Partner's Share % --
+ * `sharePercent` is immutable once set (AD-3), so an edit always inserts a
+ * new row rather than updating one in place. `partnerId` is the stable id
+ * across every version of the same Partner (distinct from this row's own
+ * `id`) -- there is no separate `partners` table. `numeric(7,4)` stores up
+ * to 3 whole-number digits and 4 decimal places (0.0001-100.0000),
+ * matching `decimal-math.ts`'s 4-decimal-place precision.
+ */
+export const partnerShares = pgTable(
+  "partner_shares",
+  {
+    id: uuid("id").primaryKey(),
+    partnerId: uuid("partner_id").notNull(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    sharePercent: numeric("share_percent", { precision: 7, scale: 4 }).notNull(),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // `listByProjectId` filters on project_id; `findLatestByPartnerId`
+    // filters on partner_id -- both hit every version row for their key.
+    index("partner_shares_project_id_idx").on(table.projectId),
+    index("partner_shares_partner_id_idx").on(table.partnerId),
+  ],
+);
+
+export type PartnerShareRow = typeof partnerShares.$inferSelect;
