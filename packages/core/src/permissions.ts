@@ -5,6 +5,16 @@ export interface PermissionsDeps {
   users: UserPort;
 }
 
+export interface PermissionsOverviewDeps extends PermissionsDeps {
+  /**
+   * Whether Project Admin is enabled for this deployment, resolved by the
+   * caller from `client.config` (Story 1.8, AD-7/AD-9). `packages/core`
+   * never reads a `CLIENT_*` env var or imports `client-config.ts` itself —
+   * this is supplied the same way any other dependency is.
+   */
+  projectAdminEnabled: boolean;
+}
+
 /** The shape of one Owner/Admin's approval-authority grant, as surfaced by the Permissions area. */
 export interface ApproverSummary {
   id: string;
@@ -14,10 +24,10 @@ export interface ApproverSummary {
 
 export interface PermissionsOverview {
   /**
-   * Which roles are "in use" for this deployment — computed read-only from
-   * actual active users, never a stored toggle. Story 1.8's later per-client
-   * enable/disable is a separate, independent concern; this view never
-   * caches the result (AD-1) so it always reflects the current row set.
+   * Which roles are enabled for this deployment. `project_admin` is sourced
+   * entirely from the caller-supplied `projectAdminEnabled` (Story 1.8's
+   * per-client config) — not from whether any `project_admin` user
+   * currently exists or is active.
    */
   enabledRoles: { project_admin: boolean };
   /** Every `owner_admin` user and their current Extra Withdrawal approval-authority grant. */
@@ -34,22 +44,24 @@ function toApproverSummary(user: User): ApproverSummary {
 
 /**
  * Builds the Owner/Admin Permissions overview (FR45): which roles are
- * enabled (in use) for this deployment, and who currently holds Extra
- * Withdrawal approval authority. Always re-reads live data via
- * `listAllUsers()` — never cached (AD-1) — so a role/active change, or a
- * grant toggled by `setApprovalAuthority`, is visible on the very next call.
+ * enabled for this deployment, and who currently holds Extra Withdrawal
+ * approval authority. `enabledRoles.project_admin` is taken directly from
+ * `deps.projectAdminEnabled` (Story 1.8's per-client config) — approvers
+ * always re-read live data via `listAllUsers()` — never cached (AD-1) — so
+ * a grant toggled by `setApprovalAuthority` is visible on the very next
+ * call.
  */
-export async function getPermissionsOverview(deps: PermissionsDeps): Promise<PermissionsOverview> {
+export async function getPermissionsOverview(
+  deps: PermissionsOverviewDeps,
+): Promise<PermissionsOverview> {
   const allUsers = await deps.users.listAllUsers();
-
-  const projectAdminInUse = allUsers.some((user) => user.role === "project_admin" && user.active);
 
   const approvers = allUsers
     .filter((user) => user.role === "owner_admin" && user.active)
     .map(toApproverSummary);
 
   return {
-    enabledRoles: { project_admin: projectAdminInUse },
+    enabledRoles: { project_admin: deps.projectAdminEnabled },
     approvers,
   };
 }

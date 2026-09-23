@@ -41,3 +41,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-7-owner-admin-manages-role-level-permissions.md`
   summary: No guard against revoking the last remaining Extra Withdrawal approver, or an Owner/Admin revoking their own grant — could leave zero users able to approve once Epic 4 enforces it.
   evidence: `packages/core/src/permissions.ts`'s `setApprovalAuthority` performs no such check; re-confirmed with the human as an accepted risk during Story 1.7's review, consistent with Story 1.6's identical self-lockout precedent. No functional consequence today since Epic 4 (the only consumer) doesn't exist yet — revisit if/when it's built.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-8-per-client-configuration.md`
+  summary: `client.config`'s `enabledModules.projectAdmin` only affects what `GET /api/permissions` displays — nothing in `authorize.ts`, `login()`, or user creation actually consults it, so a manually-seeded `project_admin` user can log in and act regardless of the config value.
+  evidence: this is a pre-existing gap since Story 1.5 first introduced `project_admin` as a valid-but-ungated role value; Story 1.8's Approach explicitly scoped itself to the Permissions view and `layout.tsx` only. Revisit once a story actually needs to enforce this role's availability (e.g. a user-creation/role-assignment endpoint, or `authorize()` gaining a project_admin-scoped action).

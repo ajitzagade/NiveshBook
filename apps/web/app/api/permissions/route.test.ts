@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 import type { User } from "@niveshbook/types";
 import { GET } from "./route";
@@ -91,12 +91,23 @@ const PROJECT_ADMIN_USER: User = {
 };
 
 describe("GET /api/permissions", () => {
+  const ORIGINAL_CLIENT_ENABLE_PROJECT_ADMIN = process.env.CLIENT_ENABLE_PROJECT_ADMIN;
+
   beforeEach(() => {
     findSessionByTokenHash.mockReset();
     touchSession.mockReset();
     touchSession.mockResolvedValue(1);
     findUserById.mockReset();
     listAllUsers.mockReset();
+    delete process.env.CLIENT_ENABLE_PROJECT_ADMIN;
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_CLIENT_ENABLE_PROJECT_ADMIN === undefined) {
+      delete process.env.CLIENT_ENABLE_PROJECT_ADMIN;
+    } else {
+      process.env.CLIENT_ENABLE_PROJECT_ADMIN = ORIGINAL_CLIENT_ENABLE_PROJECT_ADMIN;
+    }
   });
 
   it("returns 401 with no session cookie", async () => {
@@ -129,7 +140,8 @@ describe("GET /api/permissions", () => {
     },
   );
 
-  it("returns 200 with enabledRoles.project_admin: true and every owner_admin as an approver", async () => {
+  it("returns 200 with enabledRoles.project_admin sourced from client config and every owner_admin as an approver", async () => {
+    process.env.CLIENT_ENABLE_PROJECT_ADMIN = "true";
     findSessionByTokenHash.mockResolvedValue(makeLiveSession(OWNER_ID));
     findUserById.mockResolvedValue(OWNER_USER);
     listAllUsers.mockResolvedValue([
@@ -152,10 +164,11 @@ describe("GET /api/permissions", () => {
     });
   });
 
-  it("returns enabledRoles.project_admin: false when no active project_admin exists", async () => {
+  it("returns enabledRoles.project_admin: false when CLIENT_ENABLE_PROJECT_ADMIN is unset, even with an active project_admin user", async () => {
+    delete process.env.CLIENT_ENABLE_PROJECT_ADMIN;
     findSessionByTokenHash.mockResolvedValue(makeLiveSession(OWNER_ID));
     findUserById.mockResolvedValue(OWNER_USER);
-    listAllUsers.mockResolvedValue([OWNER_USER]);
+    listAllUsers.mockResolvedValue([OWNER_USER, PROJECT_ADMIN_USER]);
 
     const response = await GET(makeRequest(`${SESSION_COOKIE_NAME}=some-token`));
 
@@ -164,7 +177,21 @@ describe("GET /api/permissions", () => {
     expect(body.enabledRoles.project_admin).toBe(false);
   });
 
-  it("reflects the last project_admin being deactivated on the very next GET (never caches)", async () => {
+  it("returns enabledRoles.project_admin: true when CLIENT_ENABLE_PROJECT_ADMIN=true, even with no project_admin users at all", async () => {
+    process.env.CLIENT_ENABLE_PROJECT_ADMIN = "true";
+    findSessionByTokenHash.mockResolvedValue(makeLiveSession(OWNER_ID));
+    findUserById.mockResolvedValue(OWNER_USER);
+    listAllUsers.mockResolvedValue([OWNER_USER]);
+
+    const response = await GET(makeRequest(`${SESSION_COOKIE_NAME}=some-token`));
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.enabledRoles.project_admin).toBe(true);
+  });
+
+  it("does not flip enabledRoles.project_admin based on a project_admin user's active state (never caches, but also never derives from usage)", async () => {
+    process.env.CLIENT_ENABLE_PROJECT_ADMIN = "true";
     findSessionByTokenHash.mockResolvedValue(makeLiveSession(OWNER_ID));
     findUserById.mockResolvedValue(OWNER_USER);
     listAllUsers.mockResolvedValue([OWNER_USER, PROJECT_ADMIN_USER]);
@@ -175,6 +202,6 @@ describe("GET /api/permissions", () => {
     listAllUsers.mockResolvedValue([OWNER_USER, { ...PROJECT_ADMIN_USER, active: false }]);
 
     const after = await GET(makeRequest(`${SESSION_COOKIE_NAME}=some-token`));
-    expect((await after.json()).enabledRoles.project_admin).toBe(false);
+    expect((await after.json()).enabledRoles.project_admin).toBe(true);
   });
 });

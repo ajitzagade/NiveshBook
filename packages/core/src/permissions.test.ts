@@ -5,6 +5,7 @@ import {
   setApprovalAuthority,
   InvalidApprovalAuthorityTargetError,
   type PermissionsDeps,
+  type PermissionsOverviewDeps,
 } from "./permissions";
 import type { UserPort } from "./user-port";
 
@@ -56,48 +57,36 @@ function createFakeUserPort(users: User[]): UserPort {
 }
 
 describe("getPermissionsOverview", () => {
-  it("reports enabledRoles.project_admin: true when at least one active project_admin exists", async () => {
-    const users = createFakeUserPort([
-      makeUser({ id: "owner-1", role: "owner_admin" }),
-      makeUser({ id: "pa-1", role: "project_admin", active: true }),
-    ]);
-    const deps: PermissionsDeps = { users };
+  it("reports enabledRoles.project_admin: true from projectAdminEnabled, even with no project_admin user at all", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: PermissionsOverviewDeps = { users, projectAdminEnabled: true };
 
     const overview = await getPermissionsOverview(deps);
 
     expect(overview.enabledRoles.project_admin).toBe(true);
   });
 
-  it("reports enabledRoles.project_admin: false when no project_admin user exists", async () => {
-    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
-    const deps: PermissionsDeps = { users };
-
-    const overview = await getPermissionsOverview(deps);
-
-    expect(overview.enabledRoles.project_admin).toBe(false);
-  });
-
-  it("reports enabledRoles.project_admin: false when the only project_admin is inactive", async () => {
-    const users = createFakeUserPort([
-      makeUser({ id: "owner-1", role: "owner_admin" }),
-      makeUser({ id: "pa-1", role: "project_admin", active: false }),
-    ]);
-    const deps: PermissionsDeps = { users };
-
-    const overview = await getPermissionsOverview(deps);
-
-    expect(overview.enabledRoles.project_admin).toBe(false);
-  });
-
-  it("re-reads live usage — deactivating the last project_admin flips the result on the very next call", async () => {
+  it("reports enabledRoles.project_admin: false from projectAdminEnabled, even with an active project_admin user", async () => {
     const users = createFakeUserPort([
       makeUser({ id: "owner-1", role: "owner_admin" }),
       makeUser({ id: "pa-1", role: "project_admin", active: true }),
     ]);
-    const deps: PermissionsDeps = { users };
+    const deps: PermissionsOverviewDeps = { users, projectAdminEnabled: false };
+
+    const overview = await getPermissionsOverview(deps);
+
+    expect(overview.enabledRoles.project_admin).toBe(false);
+  });
+
+  it("does not re-derive enabledRoles.project_admin from user rows — deactivating/reactivating project_admin users never changes it", async () => {
+    const users = createFakeUserPort([
+      makeUser({ id: "owner-1", role: "owner_admin" }),
+      makeUser({ id: "pa-1", role: "project_admin", active: true }),
+    ]);
+    const deps: PermissionsOverviewDeps = { users, projectAdminEnabled: false };
 
     const before = await getPermissionsOverview(deps);
-    expect(before.enabledRoles.project_admin).toBe(true);
+    expect(before.enabledRoles.project_admin).toBe(false);
 
     await users.setUserActive("pa-1", false);
 
@@ -121,7 +110,7 @@ describe("getPermissionsOverview", () => {
       }),
       makeUser({ id: "partner-1", role: "partner" }),
     ]);
-    const deps: PermissionsDeps = { users };
+    const deps: PermissionsOverviewDeps = { users, projectAdminEnabled: false };
 
     const overview = await getPermissionsOverview(deps);
 
@@ -148,7 +137,7 @@ describe("getPermissionsOverview", () => {
         canApproveExtraWithdrawal: false,
       }),
     ]);
-    const deps: PermissionsDeps = { users };
+    const deps: PermissionsOverviewDeps = { users, projectAdminEnabled: false };
 
     const overview = await getPermissionsOverview(deps);
 
@@ -161,7 +150,7 @@ describe("getPermissionsOverview", () => {
     const users = createFakeUserPort([
       makeUser({ id: "owner-1", role: "owner_admin", canApproveExtraWithdrawal: true }),
     ]);
-    const deps: PermissionsDeps = { users };
+    const deps: PermissionsOverviewDeps = { users, projectAdminEnabled: false };
 
     const before = await getPermissionsOverview(deps);
     expect(before.approvers[0]?.canApproveExtraWithdrawal).toBe(true);

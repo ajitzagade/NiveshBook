@@ -26,13 +26,22 @@ const DEFAULT_LOCALE = "en-IN";
 const DEFAULT_CURRENCY = "INR";
 const DEFAULT_ENABLE_PROJECT_ADMIN = false;
 
+/**
+ * Trims whitespace and falls back to `fallback` when the trimmed value is
+ * empty, so a whitespace-only env var (e.g. a single space) is treated the
+ * same as an unset or empty one.
+ */
+function resolveStringEnv(value: string | undefined, fallback: string): string {
+  return value?.trim() || fallback;
+}
+
 export function getClientConfig(): ClientConfig {
   return {
     branding: {
-      appName: process.env.CLIENT_APP_NAME || DEFAULT_APP_NAME,
+      appName: resolveStringEnv(process.env.CLIENT_APP_NAME, DEFAULT_APP_NAME),
     },
-    locale: process.env.CLIENT_LOCALE || DEFAULT_LOCALE,
-    currency: process.env.CLIENT_CURRENCY || DEFAULT_CURRENCY,
+    locale: resolveStringEnv(process.env.CLIENT_LOCALE, DEFAULT_LOCALE),
+    currency: resolveStringEnv(process.env.CLIENT_CURRENCY, DEFAULT_CURRENCY),
     enabledModules: {
       // Only the literal string "true" parses as enabled; anything else
       // (unset, "false", "yes", "1", ...) falls back to the documented

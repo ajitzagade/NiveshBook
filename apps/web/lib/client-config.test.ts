@@ -64,4 +64,23 @@ describe("getClientConfig", () => {
     process.env.CLIENT_ENABLE_PROJECT_ADMIN = "1";
     expect(getClientConfig().enabledModules.projectAdmin).toBe(false);
   });
+
+  it("falls back to the default for a whitespace-only string value", () => {
+    process.env.CLIENT_APP_NAME = " ";
+    process.env.CLIENT_LOCALE = "   ";
+    process.env.CLIENT_CURRENCY = "\t\n";
+
+    expect(getClientConfig()).toEqual({
+      branding: { appName: "NiveshBook" },
+      locale: "en-IN",
+      currency: "INR",
+      enabledModules: { projectAdmin: false },
+    });
+  });
+
+  it("trims surrounding whitespace from an otherwise valid override", () => {
+    process.env.CLIENT_APP_NAME = "  Acme Capital  ";
+
+    expect(getClientConfig().branding.appName).toBe("Acme Capital");
+  });
 });
