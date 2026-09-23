@@ -94,6 +94,32 @@ describe("authorizeScope", () => {
   });
 });
 
+describe("authorizeScope — projects:create/projects:update/projects:list (Story 2.1)", () => {
+  it.each(["projects:create", "projects:update", "projects:list"] as const)(
+    "allows an owner_admin to %s",
+    async (action) => {
+      const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+      const deps: AuthorizeDeps = { users };
+
+      const result = await authorizeScope("owner-1", action, deps);
+
+      expect(result).toEqual({ allowed: true });
+    },
+  );
+
+  it.each(["projects:create", "projects:update", "projects:list"] as const)(
+    "denies a non-owner_admin from %s — a project must be creatable/editable with zero ResourceRef, but the gate itself is still Owner/Admin-only",
+    async (action) => {
+      const users = createFakeUserPort([makeUser({ id: "actor-1", role: "partner" })]);
+      const deps: AuthorizeDeps = { users };
+
+      const result = await authorizeScope("actor-1", action, deps);
+
+      expect(result).toEqual({ allowed: false });
+    },
+  );
+});
+
 describe("authorize", () => {
   it("allows an owner_admin to view any single user", async () => {
     const users = createFakeUserPort([

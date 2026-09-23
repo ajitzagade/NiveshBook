@@ -1,10 +1,10 @@
 import { and, eq, gt } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
-import type { UserPort, SessionPort, CreateSessionInput } from "@niveshbook/core";
-import type { User, Session, UserRole } from "@niveshbook/types";
+import type { UserPort, SessionPort, CreateSessionInput, ProjectPort } from "@niveshbook/core";
+import type { User, Session, UserRole, Project } from "@niveshbook/types";
 import type { Database } from "./client";
 import { getDb } from "./client";
-import { users, sessions, type SessionRow, type UserRow } from "./schema";
+import { users, sessions, projects, type SessionRow, type UserRow, type ProjectRow } from "./schema";
 
 function toUser(row: UserRow): User {
   return {
@@ -25,6 +25,16 @@ function toSession(row: SessionRow): Session {
     tokenHash: row.tokenHash,
     expiresAt: row.expiresAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function toProject(row: ProjectRow): Project {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
   };
 }
 
@@ -127,6 +137,43 @@ export function createSessionPort(database: Database = getDb()): SessionPort {
         .where(eq(sessions.userId, userId))
         .returning({ id: sessions.id });
       return deletedRows.length;
+    },
+  };
+}
+
+/** Drizzle-backed implementation of `packages/core`'s `ProjectPort` (Story 2.1). */
+export function createProjectPort(database: Database = getDb()): ProjectPort {
+  return {
+    async createProject(input) {
+      const [row] = await database
+        .insert(projects)
+        .values({
+          id: uuidv7(),
+          name: input.name,
+          description: input.description,
+        })
+        .returning();
+      if (!row) {
+        throw new Error("Failed to create project");
+      }
+      return toProject(row);
+    },
+    async updateProject(id, input) {
+      const [row] = await database
+        .update(projects)
+        .set({ name: input.name, description: input.description, updatedAt: new Date() })
+        .where(eq(projects.id, id))
+        .returning();
+      return row ? toProject(row) : null;
+    },
+    async findProjectById(id) {
+      const rows = await database.select().from(projects).where(eq(projects.id, id)).limit(1);
+      const row = rows[0];
+      return row ? toProject(row) : null;
+    },
+    async listProjects() {
+      const rows = await database.select().from(projects);
+      return rows.map(toProject);
     },
   };
 }

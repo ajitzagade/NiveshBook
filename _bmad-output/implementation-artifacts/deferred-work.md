@@ -45,3 +45,15 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-8-per-client-configuration.md`
   summary: `client.config`'s `enabledModules.projectAdmin` only affects what `GET /api/permissions` displays — nothing in `authorize.ts`, `login()`, or user creation actually consults it, so a manually-seeded `project_admin` user can log in and act regardless of the config value.
   evidence: this is a pre-existing gap since Story 1.5 first introduced `project_admin` as a valid-but-ungated role value; Story 1.8's Approach explicitly scoped itself to the Permissions view and `layout.tsx` only. Revisit once a story actually needs to enforce this role's availability (e.g. a user-creation/role-assignment endpoint, or `authorize()` gaining a project_admin-scoped action).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-create-and-edit-a-project.md`
+  summary: Generated migration `packages/db/drizzle/0003_nifty_caretaker.sql` (adds the `projects` table) had not been applied to any live database at implementation time; since resolved for local dev.
+  evidence: no Postgres instance was reachable (docker/colima not running) during implementation — same constraint noted for Story 1.7's migration. Applied and verified locally during step-03 review (colima + `docker compose up`, `db:migrate` + `db:seed`, full flow exercised against real Postgres — see spec-2-1's Implementation Notes). Still needs `pnpm --filter @niveshbook/db db:migrate` run against staging/production before this ships to any environment with real data.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-create-and-edit-a-project.md`
+  summary: `GET`/`POST`/`PATCH /api/projects[/[id]]` are Owner/Admin-only for every role, including `GET` (list/view) — a Partner or Sub-partner gets 403 on the Projects screen entirely, even though `EXPERIENCE.md`'s IA table lists Projects as "Everyone (scoped)".
+  evidence: `packages/core/src/authorize.ts`'s `PERMISSIONS` map grants all three `projects:*` actions to `owner_admin` only, per spec-2-1's Decisions ("no Project-shaped `ResourceRef` yet"). This is by design for this story — Partner/Sub-partner project-scoped visibility is Story 2.4+'s job once Partner Share records exist to scope against. `apps/web/lib/session-guard.ts`'s `requireOwnerAdminSession()` now gates the entire `(dashboard)` route group to `owner_admin` (redirecting any other authenticated role to `/`), so the sidebar's "Projects" nav item no longer renders for a role that can't use it — that stopgap holds until Story 2.4+ builds real per-role scoping and the shell can open back up to "everyone (scoped)" per `EXPERIENCE.md`'s IA table.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-create-and-edit-a-project.md`
+  summary: No audit trail (who/when) for Project creation/edits via `POST`/`PATCH /api/projects`.
+  evidence: same pre-existing pattern as Story 1.6/1.7's audit-trail gaps — no story has built audit logging yet; `epics.md`'s nav list names a future "Audit History" area as a separate, later concern.

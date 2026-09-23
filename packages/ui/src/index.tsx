@@ -20,3 +20,5 @@ export * from "./components/dialog";
 export * from "./components/popover";
 export * from "./components/dropdown-menu";
 export * from "./components/toast";
+export * from "./components/input";
+export * from "./components/label";

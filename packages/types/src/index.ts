@@ -26,3 +26,19 @@ export interface Session {
   /** ISO 8601 timestamp */
   createdAt: string;
 }
+
+/**
+ * A Project (Epic 2, Story 2.1): created with just a Name and Description —
+ * no partner information is required to save. `description` is nullable —
+ * a Project can exist with none. Money/balance columns and Partner Share
+ * data are added by later Epic 2/3/4 stories, not this type.
+ */
+export interface Project {
+  id: string;
+  name: string;
+  description: string | null;
+  /** ISO 8601 timestamp */
+  createdAt: string;
+  /** ISO 8601 timestamp */
+  updatedAt: string;
+}

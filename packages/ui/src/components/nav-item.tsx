@@ -58,6 +58,23 @@ export function NavItem({ icon, badgeColor, label, active, onClick, href }: NavI
       </a>
     );
   }
+
+  // No `href`/`onClick` — this item has no destination yet (its epic
+  // hasn't landed). Render it visibly inert rather than indistinguishable
+  // from a working control: unfocusable, marked `aria-disabled`, and muted.
+  if (!onClick) {
+    return (
+      <button
+        type="button"
+        tabIndex={-1}
+        aria-disabled="true"
+        className={cn(className, "cursor-default text-ink-soft/50 hover:bg-transparent")}
+      >
+        {content}
+      </button>
+    );
+  }
+
   return (
     <button type="button" onClick={onClick} className={className}>
       {content}

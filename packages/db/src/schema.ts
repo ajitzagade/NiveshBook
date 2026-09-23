@@ -39,3 +39,19 @@ export const sessions = pgTable(
 
 export type UserRow = typeof users.$inferSelect;
 export type SessionRow = typeof sessions.$inferSelect;
+
+/**
+ * Story 2.1 (Epic 2): a Project is created with just a name and description
+ * -- no partner information is required to save. `description` is
+ * nullable. Money/balance columns and Partner Share data belong to later
+ * Epic 2/3/4 stories, not this table (see spec-2-1's Decisions).
+ */
+export const projects = pgTable("projects", {
+  id: uuid("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type ProjectRow = typeof projects.$inferSelect;

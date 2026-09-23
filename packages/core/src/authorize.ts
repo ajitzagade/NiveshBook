@@ -14,7 +14,10 @@ export type Action =
   | "users:view"
   | "users:update-status"
   | "permissions:view"
-  | "permissions:manage";
+  | "permissions:manage"
+  | "projects:create"
+  | "projects:update"
+  | "projects:list";
 
 /**
  * Role -> allowed-actions permission table. All actions here are
@@ -31,6 +34,14 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // users:update-status — no self-access override either.
   "permissions:view": new Set(["owner_admin"]),
   "permissions:manage": new Set(["owner_admin"]),
+  // Story 2.1 (Epic 2): a Project must be creatable/editable with zero
+  // partners, so there's no Project-shaped `ResourceRef` yet — these three
+  // actions are all-or-nothing per role, exactly like `users:list`, checked
+  // via `authorizeScope()` only. Story 2.4+ builds Project/Partner-scoped
+  // `resourceRef`s once Partner records exist to scope against.
+  "projects:create": new Set(["owner_admin"]),
+  "projects:update": new Set(["owner_admin"]),
+  "projects:list": new Set(["owner_admin"]),
 };
 
 /**

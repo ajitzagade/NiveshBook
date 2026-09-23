@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import Link from "next/link";
 import { getSession, listSessions } from "@niveshbook/core";
 import { createSessionPort } from "@niveshbook/db";
 import { SESSION_COOKIE_NAME } from "@/lib/session";
@@ -30,6 +31,9 @@ export default async function HomePage() {
     <main style={{ padding: 32, fontFamily: "system-ui, sans-serif" }}>
       <h1>NiveshBook</h1>
       <p>You&apos;re logged in.</p>
+      <p>
+        <Link href="/home">Go to dashboard</Link>
+      </p>
       <LogoutButton />
       <SessionList
         sessions={sessions.map((s) => ({
