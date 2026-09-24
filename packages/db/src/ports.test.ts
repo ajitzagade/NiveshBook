@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
-import type { InvestmentTransaction, Money, Percent } from "@niveshbook/types";
-import { isUniqueViolation, matchesCancelRequest, matchesEditRequest, matchesRequest } from "./ports";
+import type { InvestmentTransaction, Money, Percent, WithdrawalTransaction } from "@niveshbook/types";
+import {
+  isUniqueViolation,
+  matchesCancelRequest,
+  matchesEditRequest,
+  matchesRequest,
+  matchesWithdrawalRequest,
+} from "./ports";
 
 function makeExistingTransaction(overrides: Partial<InvestmentTransaction> = {}): InvestmentTransaction {
   return {
@@ -321,5 +327,129 @@ describe("matchesCancelRequest", () => {
 
   it("rejects a mismatched entityId -- a genuine key collision with an unrelated request, not a replay of this cancel", () => {
     expect(matchesCancelRequest({ entityId: "tx-2" }, { transactionId: "tx-1" })).toBe(false);
+  });
+});
+
+function makeExistingWithdrawalTransaction(
+  overrides: Partial<WithdrawalTransaction> = {},
+): WithdrawalTransaction {
+  return {
+    id: "wtx-1",
+    projectId: "project-1",
+    partyType: "partner",
+    shareId: "partner-a",
+    sharePercentSnapshot: "50" as Percent,
+    canTakeSnapshot: "500000" as Money,
+    amount: "250000" as Money,
+    transactionDate: "2026-10-05",
+    paymentMode: "neft",
+    referenceNumber: null,
+    notes: null,
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+/**
+ * Narrowly-scoped unit tests for `matchesWithdrawalRequest` -- the
+ * `createWithdrawalTransactionPort.recordTransaction` (Story 4.2) analog of
+ * `matchesRequest` one ledger over, confirming a row found by
+ * `idempotencyKey` actually represents the *current* request, not an
+ * unrelated key collision. Mirrors `matchesRequest`'s own test shape
+ * exactly, including the decimal-safe `moneyEquals` regression (this
+ * story's Decisions: a legitimate identical-content retry must succeed as a
+ * replay, not a false 409 conflict, even though Postgres's `numeric(14,2)`
+ * round-trips a submitted `"250000"` as `"250000.00"`).
+ */
+describe("matchesWithdrawalRequest", () => {
+  it("matches when every field is byte-identical", () => {
+    const existing = makeExistingWithdrawalTransaction({ amount: "250000" as Money });
+
+    const result = matchesWithdrawalRequest(existing, {
+      projectId: "project-1",
+      shareId: "partner-a",
+      partyType: "partner",
+      amount: "250000" as Money,
+    });
+
+    expect(result).toBe(true);
+  });
+
+  it("matches a legitimate replay even though the stored amount round-tripped through numeric(14,2) ('250000.00' read back vs. a freshly-submitted '250000')", () => {
+    const existing = makeExistingWithdrawalTransaction({ amount: "250000.00" as Money });
+
+    const result = matchesWithdrawalRequest(existing, {
+      projectId: "project-1",
+      shareId: "partner-a",
+      partyType: "partner",
+      amount: "250000" as Money,
+    });
+
+    expect(result).toBe(true);
+  });
+
+  it("matches regardless of which side carries the padded/unpadded decimal formatting", () => {
+    const existing = makeExistingWithdrawalTransaction({ amount: "1234.5" as Money });
+
+    const result = matchesWithdrawalRequest(existing, {
+      projectId: "project-1",
+      shareId: "partner-a",
+      partyType: "partner",
+      amount: "1234.50" as Money,
+    });
+
+    expect(result).toBe(true);
+  });
+
+  it("rejects a genuinely different amount -- a true key collision, not a replay", () => {
+    const existing = makeExistingWithdrawalTransaction({ amount: "250000.00" as Money });
+
+    const result = matchesWithdrawalRequest(existing, {
+      projectId: "project-1",
+      shareId: "partner-a",
+      partyType: "partner",
+      amount: "250000.01" as Money,
+    });
+
+    expect(result).toBe(false);
+  });
+
+  it("rejects a mismatched projectId even when amount/shareId/partyType all match", () => {
+    const existing = makeExistingWithdrawalTransaction({ projectId: "project-1" });
+
+    const result = matchesWithdrawalRequest(existing, {
+      projectId: "project-2",
+      shareId: "partner-a",
+      partyType: "partner",
+      amount: "250000" as Money,
+    });
+
+    expect(result).toBe(false);
+  });
+
+  it("rejects a mismatched shareId even when the other fields all match", () => {
+    const existing = makeExistingWithdrawalTransaction({ shareId: "partner-a" });
+
+    const result = matchesWithdrawalRequest(existing, {
+      projectId: "project-1",
+      shareId: "partner-b",
+      partyType: "partner",
+      amount: "250000" as Money,
+    });
+
+    expect(result).toBe(false);
+  });
+
+  it("rejects a mismatched partyType even when shareId happens to be the same string (a Partner's partnerId colliding with a Sub-partner's subPartnerId)", () => {
+    const existing = makeExistingWithdrawalTransaction({ partyType: "partner", shareId: "shared-id" });
+
+    const result = matchesWithdrawalRequest(existing, {
+      projectId: "project-1",
+      shareId: "shared-id",
+      partyType: "sub_partner",
+      amount: "250000" as Money,
+    });
+
+    expect(result).toBe(false);
   });
 });

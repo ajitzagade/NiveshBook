@@ -4,6 +4,7 @@ import {
   AlreadyCancelledError,
   IdempotencyKeyConflictError,
   moneyEquals,
+  WithdrawalIdempotencyKeyConflictError,
   type UserPort,
   type SessionPort,
   type CreateSessionInput,
@@ -17,6 +18,8 @@ import {
   type CancelInvestmentTransactionInput,
   type InvestmentAdjustmentPort,
   type RecommendedAmountPort,
+  type WithdrawalTransactionPort,
+  type CreateWithdrawalTransactionInput,
 } from "@niveshbook/core";
 import type {
   User,
@@ -30,6 +33,7 @@ import type {
   InvestmentTransaction,
   InvestmentAdjustment,
   RecommendedAmount,
+  WithdrawalTransaction,
   PaymentMode,
   Money,
   AuditLogEntry,
@@ -46,6 +50,7 @@ import {
   investmentTransactions,
   investmentAdjustments,
   recommendedAmounts,
+  withdrawalTransactions,
   auditLog,
   type SessionRow,
   type UserRow,
@@ -56,6 +61,7 @@ import {
   type InvestmentTransactionRow,
   type InvestmentAdjustmentRow,
   type RecommendedAmountRow,
+  type WithdrawalTransactionRow,
   type AuditLogRow,
 } from "./schema";
 
@@ -220,6 +226,31 @@ function toAuditLogEntry(row: AuditLogRow): AuditLogEntry {
     oldValue: row.oldValue,
     newValue: row.newValue,
     reason: row.reason,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+/**
+ * Converts the numeric `share_percent_snapshot`/`can_take_snapshot`/
+ * `amount` columns (Drizzle returns `numeric` as a `string`, never a native
+ * float -- AD-2) directly into `Percent`/`Money`, with no `parseFloat`/
+ * `Number()` round-trip. `transactionDate` is already a plain `YYYY-MM-DD`
+ * string -- the `date` column's default Drizzle mode. Mirrors
+ * `toInvestmentTransaction` one ledger over.
+ */
+function toWithdrawalTransaction(row: WithdrawalTransactionRow): WithdrawalTransaction {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    partyType: row.partyType as WithdrawalTransaction["partyType"],
+    shareId: row.shareId,
+    sharePercentSnapshot: row.sharePercentSnapshot as Percent,
+    canTakeSnapshot: row.canTakeSnapshot as Money,
+    amount: row.amount as Money,
+    transactionDate: row.transactionDate,
+    paymentMode: row.paymentMode as PaymentMode,
+    referenceNumber: row.referenceNumber,
+    notes: row.notes,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -657,6 +688,149 @@ export function matchesCancelRequest(
   input: Pick<CancelInvestmentTransactionInput, "transactionId">,
 ): boolean {
   return entry.entityId === input.transactionId;
+}
+
+/**
+ * `true` if `existing` (a `withdrawal_transactions` row found by
+ * `idempotencyKey`) actually represents the *same* logical request as
+ * `input` -- compared on `projectId`/`shareId`/`partyType`/`amount`, mirroring
+ * `matchesRequest`'s exact rationale one ledger over (`sharePercentSnapshot`/
+ * `canTakeSnapshot` are server-computed outputs, not caller-supplied request
+ * identity, so they're deliberately excluded from this comparison, same as
+ * `matchesRequest` excludes `sharePercentSnapshot`/`shouldPaySnapshot`).
+ *
+ * `amount` is compared via `moneyEquals` (decimal-value-aware), never `===`
+ * -- `existing.amount` came back from Postgres's `numeric(14,2)` column,
+ * which round-trips a stored value at its full declared scale, while
+ * `input.amount` is the freshly-submitted, unreformatted value -- mirrors
+ * `matchesRequest`'s identical rounding-safety rationale (this story's
+ * Decisions).
+ */
+export function matchesWithdrawalRequest(
+  existing: WithdrawalTransaction,
+  input: Pick<CreateWithdrawalTransactionInput, "projectId" | "shareId" | "partyType" | "amount">,
+): boolean {
+  return (
+    existing.projectId === input.projectId &&
+    existing.shareId === input.shareId &&
+    existing.partyType === input.partyType &&
+    moneyEquals(existing.amount, input.amount)
+  );
+}
+
+/**
+ * Drizzle-backed implementation of `packages/core`'s `WithdrawalTransactionPort`
+ * (Story 4.2) -- mirrors `createInvestmentTransactionPort.recordTransaction`'s
+ * exact atomicity/idempotency structure one ledger over, deliberately
+ * narrower (no `editTransaction`/`cancelTransaction`/`findById`/
+ * `findAuditLogByTransactionId` yet -- Story 4.11's job, mirroring
+ * `withdrawal_transactions`' own Story-3.3-before-3.7/3.8 shape).
+ *
+ * `recordTransaction`'s idempotency handling, in order (identical to
+ * `createInvestmentTransactionPort.recordTransaction`'s own doc comment, one
+ * ledger over):
+ * 1. `SELECT` by `idempotencyKey` first -- if a row already exists AND it
+ *    `matchesWithdrawalRequest` the current `input` (same `projectId`/
+ *    `shareId`/`partyType`/`amount`), return it immediately (`created:
+ *    false`), no transaction attempted at all (the straightforward replay
+ *    case). If a row exists but does NOT match, this is a genuine key
+ *    collision between two unrelated requests -- throw
+ *    `WithdrawalIdempotencyKeyConflictError` rather than silently returning
+ *    the mismatched row.
+ * 2. Otherwise (no existing row), insert the transaction row and its paired
+ *    `audit_log` row together inside one `database.transaction()` call
+ *    (`created: true`).
+ * 3. If that insert throws because of the `idempotency_key` UNIQUE
+ *    constraint (SQL state `23505`) -- a concurrent double-submit that raced
+ *    step 1 -- catch it, re-`SELECT` by `idempotencyKey`, and apply the same
+ *    `matchesWithdrawalRequest` check to the winning row: match -> return it
+ *    (`created: false`) instead of propagating the error; mismatch ->
+ *    `WithdrawalIdempotencyKeyConflictError`. Any other error still
+ *    propagates unchanged.
+ */
+export function createWithdrawalTransactionPort(
+  database: Database = getDb(),
+): WithdrawalTransactionPort {
+  async function findByIdempotencyKey(idempotencyKey: string): Promise<WithdrawalTransaction | null> {
+    const rows = await database
+      .select()
+      .from(withdrawalTransactions)
+      .where(eq(withdrawalTransactions.idempotencyKey, idempotencyKey))
+      .limit(1);
+    const row = rows[0];
+    return row ? toWithdrawalTransaction(row) : null;
+  }
+
+  return {
+    async recordTransaction(input) {
+      const existing = await findByIdempotencyKey(input.idempotencyKey);
+      if (existing) {
+        if (!matchesWithdrawalRequest(existing, input)) {
+          throw new WithdrawalIdempotencyKeyConflictError();
+        }
+        return { transaction: existing, created: false };
+      }
+
+      try {
+        const inserted = await database.transaction(async (tx) => {
+          const [transactionRow] = await tx
+            .insert(withdrawalTransactions)
+            .values({
+              id: uuidv7(),
+              projectId: input.projectId,
+              partyType: input.partyType,
+              shareId: input.shareId,
+              sharePercentSnapshot: input.sharePercentSnapshot,
+              canTakeSnapshot: input.canTakeSnapshot,
+              amount: input.amount,
+              transactionDate: input.transactionDate,
+              paymentMode: input.paymentMode,
+              referenceNumber: input.referenceNumber,
+              notes: input.notes,
+              idempotencyKey: input.idempotencyKey,
+            })
+            .returning();
+          if (!transactionRow) {
+            throw new Error("Failed to record withdrawal transaction");
+          }
+
+          await tx.insert(auditLog).values({
+            id: uuidv7(),
+            entityType: "withdrawal_transaction",
+            entityId: transactionRow.id,
+            action: "create",
+            actorUserId: input.actorUserId,
+            oldValue: null,
+            newValue: transactionRow,
+            reason: null,
+          });
+
+          return transactionRow;
+        });
+
+        return { transaction: toWithdrawalTransaction(inserted), created: true };
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          const winner = await findByIdempotencyKey(input.idempotencyKey);
+          if (winner) {
+            if (!matchesWithdrawalRequest(winner, input)) {
+              throw new WithdrawalIdempotencyKeyConflictError();
+            }
+            return { transaction: winner, created: false };
+          }
+        }
+        throw error;
+      }
+    },
+    async listByProjectId(projectId) {
+      const rows = await database
+        .select()
+        .from(withdrawalTransactions)
+        .where(eq(withdrawalTransactions.projectId, projectId))
+        .orderBy(asc(withdrawalTransactions.createdAt));
+      return rows.map(toWithdrawalTransaction);
+    },
+  };
 }
 
 /**

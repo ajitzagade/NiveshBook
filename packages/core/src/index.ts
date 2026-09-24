@@ -21,3 +21,5 @@ export * from "./recommended-amount";
 export * from "./recommended-amount-port";
 export * from "./investment-status";
 export * from "./can-take";
+export * from "./withdrawal-transaction";
+export * from "./withdrawal-transaction-port";

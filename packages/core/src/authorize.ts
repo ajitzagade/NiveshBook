@@ -36,7 +36,9 @@ export type Action =
   | "investment_transactions:view_audit"
   | "investment_adjustments:view"
   | "investment_status:view"
-  | "can_take:view";
+  | "can_take:view"
+  | "withdrawal_transactions:create"
+  | "withdrawal_transactions:list";
 
 /**
  * Role -> allowed-actions permission table. All actions here are
@@ -170,6 +172,21 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // `SELF_ACCESS_ACTIONS`/`SCOPE_SELF_ACCESS_ACTIONS` entry, matching
   // `should_pay:view`'s exact all-or-nothing-for-the-role shape.
   "can_take:view": new Set(["owner_admin"]),
+  // Story 4.2 (Epic 4): recording a withdrawal is self-access-capable,
+  // mirroring `investment_transactions:create`'s exact Story 3.3 shape one
+  // ledger over -- a Partner/Sub-partner may record their own withdrawal
+  // (this story's Intent: "a Partner/Sub-partner records their own
+  // withdrawal; Owner/Admin records anyone's"). The role-table entry here
+  // still gates the Owner/Admin-acting-for-someone-else path; self-access
+  // itself is admitted via `SELF_ACCESS_ACTIONS` below, not by adding
+  // `partner`/`sub_partner` here.
+  "withdrawal_transactions:create": new Set(["owner_admin"]),
+  // `withdrawal_transactions:list` stays Owner/Admin-only, no self/scope
+  // override -- listing every withdrawal for a Project is oversight
+  // functionality, mirroring `investment_transactions:list`'s identical
+  // precedent one ledger over; a person's own withdrawal history view is
+  // Epic 5's job.
+  "withdrawal_transactions:list": new Set(["owner_admin"]),
 };
 
 /**
@@ -220,6 +237,16 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
  * Project's *current* Partner/Sub-partner Shares the same way beforehand).
  * `investment_transactions:edit` is deliberately NOT in this set -- editing
  * stays Owner/Admin-only, gated by the role table above alone.
+ *
+ * Story 4.2 adds `withdrawal_transactions:create`: identical shape to
+ * `investment_transactions:create` one ledger over -- a Partner or
+ * Sub-partner may record their own withdrawal (`resourceRef.ownerId` is the
+ * target Partner/Sub-partner Share's own `userId`, resolved by the route
+ * from the Project's current Partner/Sub-partner Shares before calling
+ * `authorize()`, mirroring `investment_transactions:create`'s exact Story
+ * 3.3 precedent). `withdrawal_transactions:list` is deliberately NOT in this
+ * set -- listing stays Owner/Admin-only, gated by the role table above
+ * alone, mirroring `investment_transactions:list`.
  */
 const SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set([
   "users:view",
@@ -228,6 +255,7 @@ const SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set([
   "investment_transactions:create",
   "investment_status:view",
   "investment_transactions:view_audit",
+  "withdrawal_transactions:create",
 ]);
 
 /**

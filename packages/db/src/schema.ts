@@ -432,3 +432,65 @@ export const auditLog = pgTable(
 );
 
 export type AuditLogRow = typeof auditLog.$inferSelect;
+
+/**
+ * Story 4.2 (Epic 4): one row per recorded "Take Now" withdrawal against a
+ * Project's Can Take (Story 4.1) for a specific Partner/Sub-partner --
+ * mirrors `investment_transactions`' exact shape one ledger over,
+ * Project-scoped rather than per-funding-requirement (Can Take itself is
+ * Project-scoped, not per-requirement, mirroring Story 4.1's own shape).
+ * `shareId` is the *stable* `partner_shares.partnerId`/
+ * `subpartner_shares.subPartnerId` (disambiguated by `partyType`), never
+ * this row's own `id` and never `users.id` (AD-4) -- deliberately **not** a
+ * foreign key, mirroring `investment_transactions.shareId`'s identical
+ * precedent (neither share table has a uniqueness constraint on that stable
+ * id to reference). `sharePercentSnapshot`/`canTakeSnapshot` mirror
+ * `investment_transactions.sharePercentSnapshot`/`.shouldPaySnapshot`'s
+ * exact column shapes (`numeric(7,4)`/`numeric(14,2)`) -- captured once at
+ * creation time (AD-3), never updated afterward even if the underlying
+ * share later changes. `amount` has no `> 0` floor and no cap against
+ * `canTakeSnapshot` at the DB layer either (this story's Decisions: `"0"` is
+ * a valid Take Now, and an amount exceeding Can Take is accepted as-is --
+ * no cap this story, Story 4.5's job). `idempotencyKey` is UNIQUE at the DB
+ * level, mirroring `investment_transactions.idempotencyKey`'s identical
+ * precedent -- the actual double-submit protection mechanism, not merely an
+ * application-layer check.
+ *
+ * No `status`/`reversalOfTransactionId` column yet (this story's Decisions
+ * -- mirrors `investment_transactions`' original Story 3.3 shape before
+ * Story 3.8 added them; Story 4.11 adds the withdrawal equivalent later, via
+ * its own migration).
+ */
+export const withdrawalTransactions = pgTable(
+  "withdrawal_transactions",
+  {
+    id: uuid("id").primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    partyType: text("party_type").notNull(),
+    shareId: uuid("share_id").notNull(),
+    sharePercentSnapshot: numeric("share_percent_snapshot", { precision: 7, scale: 4 }).notNull(),
+    canTakeSnapshot: numeric("can_take_snapshot", { precision: 14, scale: 2 }).notNull(),
+    amount: numeric("amount", { precision: 14, scale: 2 }).notNull(),
+    transactionDate: date("transaction_date").notNull(),
+    paymentMode: text("payment_mode").notNull(),
+    referenceNumber: text("reference_number"),
+    notes: text("notes"),
+    idempotencyKey: text("idempotency_key").notNull().unique(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // `listByProjectId` filters on project_id -- this resource's primary
+    // read pattern (Project-scoped, unlike `investment_transactions`'
+    // per-requirement `listByRequirementId`).
+    index("withdrawal_transactions_project_id_idx").on(table.projectId),
+    // `(shareId, projectId)` indexed per AD-4 for a person's eventual own-
+    // history lookup (Epic 5), mirroring
+    // `investment_transactions_share_id_project_id_idx`'s identical
+    // precedent one ledger over.
+    index("withdrawal_transactions_share_id_project_id_idx").on(table.shareId, table.projectId),
+  ],
+);
+
+export type WithdrawalTransactionRow = typeof withdrawalTransactions.$inferSelect;

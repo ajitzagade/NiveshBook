@@ -9,6 +9,7 @@ import {
   investmentTransactions,
   investmentAdjustments,
   recommendedAmounts,
+  withdrawalTransactions,
   auditLog,
 } from "./schema";
 
@@ -236,6 +237,90 @@ describe("investment_transactions table schema (Story 3.3; status/reversalOfTran
       "project_id",
       "status",
     ]);
+  });
+});
+
+describe("withdrawal_transactions table schema (Story 4.2)", () => {
+  it("marks projectId/partyType/shareId/sharePercentSnapshot/canTakeSnapshot/amount/transactionDate/paymentMode/idempotencyKey NOT NULL", () => {
+    expect(withdrawalTransactions.projectId.notNull).toBe(true);
+    expect(withdrawalTransactions.partyType.notNull).toBe(true);
+    expect(withdrawalTransactions.shareId.notNull).toBe(true);
+    expect(withdrawalTransactions.sharePercentSnapshot.notNull).toBe(true);
+    expect(withdrawalTransactions.canTakeSnapshot.notNull).toBe(true);
+    expect(withdrawalTransactions.amount.notNull).toBe(true);
+    expect(withdrawalTransactions.transactionDate.notNull).toBe(true);
+    expect(withdrawalTransactions.paymentMode.notNull).toBe(true);
+    expect(withdrawalTransactions.idempotencyKey.notNull).toBe(true);
+  });
+
+  it("gives id no implicit default -- application code (uuidv7) always supplies one", () => {
+    expect(withdrawalTransactions.id.hasDefault).toBe(false);
+  });
+
+  it("leaves referenceNumber/notes nullable -- both optional, mirroring investment_transactions' identical precedent", () => {
+    expect(withdrawalTransactions.referenceNumber.notNull).toBe(false);
+    expect(withdrawalTransactions.notes.notNull).toBe(false);
+  });
+
+  it("stores sharePercentSnapshot as numeric(7,4), mirroring partner_shares.sharePercent's precision", () => {
+    expect(withdrawalTransactions.sharePercentSnapshot.columnType).toBe("PgNumeric");
+    expect(withdrawalTransactions.sharePercentSnapshot.getSQLType()).toBe("numeric(7, 4)");
+  });
+
+  it("stores canTakeSnapshot/amount as numeric(14,2), mirroring investment_requirements.amount's precision", () => {
+    expect(withdrawalTransactions.canTakeSnapshot.columnType).toBe("PgNumeric");
+    expect(withdrawalTransactions.canTakeSnapshot.getSQLType()).toBe("numeric(14, 2)");
+    expect(withdrawalTransactions.amount.columnType).toBe("PgNumeric");
+    expect(withdrawalTransactions.amount.getSQLType()).toBe("numeric(14, 2)");
+  });
+
+  it("stores transactionDate as a plain date column (no time component)", () => {
+    expect(withdrawalTransactions.transactionDate.columnType).toBe("PgDateString");
+    expect(withdrawalTransactions.transactionDate.getSQLType()).toBe("date");
+  });
+
+  it("stores shareId as uuid with no FK reference -- mirrors investment_transactions.shareId's identical precedent (this story's Code Map)", () => {
+    expect(withdrawalTransactions.shareId.columnType).toBe("PgUUID");
+  });
+
+  it("enforces idempotencyKey UNIQUE at the DB level -- the actual double-submit protection, not just an application-layer check", () => {
+    expect(withdrawalTransactions.idempotencyKey.isUnique).toBe(true);
+  });
+
+  it("marks createdAt NOT NULL with a DB-side default", () => {
+    expect(withdrawalTransactions.createdAt.notNull).toBe(true);
+    expect(withdrawalTransactions.createdAt.hasDefault).toBe(true);
+  });
+
+  it("has no status/reversalOfTransactionId column yet -- mirrors investment_transactions' original Story 3.3 shape before Story 3.8 added them (this story's Decisions: Story 4.11 adds the withdrawal equivalent later, via its own migration)", () => {
+    expect(Object.keys(withdrawalTransactions)).not.toContain("status");
+    expect(Object.keys(withdrawalTransactions)).not.toContain("reversalOfTransactionId");
+  });
+
+  it("cascade-deletes when its projectId's project is deleted", () => {
+    const { foreignKeys } = getTableConfig(withdrawalTransactions);
+    const projectFk = foreignKeys.find((fk) =>
+      fk.reference().columns.some((column) => column.name === "project_id"),
+    );
+    expect(projectFk).toBeDefined();
+    expect(projectFk!.onDelete).toBe("cascade");
+  });
+
+  it("indexes projectId (primary read pattern -- Project-scoped, unlike investment_transactions' per-requirement listByRequirementId) and (shareId, projectId) per AD-4", () => {
+    const { indexes } = getTableConfig(withdrawalTransactions);
+    const projectIndex = indexes.find((idx) => idx.config.name === "withdrawal_transactions_project_id_idx");
+    expect(projectIndex).toBeDefined();
+    expect(projectIndex!.config.columns.map((column) => (column as { name: string }).name)).toEqual([
+      "project_id",
+    ]);
+
+    const shareProjectIndex = indexes.find(
+      (idx) => idx.config.name === "withdrawal_transactions_share_id_project_id_idx",
+    );
+    expect(shareProjectIndex).toBeDefined();
+    expect(
+      shareProjectIndex!.config.columns.map((column) => (column as { name: string }).name),
+    ).toEqual(["share_id", "project_id"]);
   });
 });
 

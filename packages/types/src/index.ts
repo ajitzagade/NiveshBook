@@ -330,3 +330,43 @@ export interface AuditLogEntry {
   /** ISO 8601 timestamp */
   createdAt: string;
 }
+
+/**
+ * A recorded "Take Now" withdrawal against one Project's Can Take for a
+ * specific Partner or Sub-partner (Epic 4, Story 4.2) -- one row per
+ * recorded withdrawal, mirroring `InvestmentTransaction`'s exact shape
+ * (Story 3.3) one ledger over: Project-scoped (no requirement-equivalent
+ * entity, mirroring Story 4.1's Can Take, which is Project-scoped, not
+ * per-funding-round), `partyType`/`shareId` disambiguated the identical way
+ * (AD-4: `shareId` is `PartnerShare.partnerId` or `SubPartnerShare.subPartnerId`,
+ * the *stable* id shared across every version row, never a version row's
+ * own `id` and never `User.id`), and no `status`/`reversalOfTransactionId`
+ * column yet (this story's Decisions -- mirrors `InvestmentTransaction`'s
+ * original Story 3.3 shape before Story 3.8 added them; Story 4.11 adds the
+ * withdrawal equivalent later, via its own migration).
+ *
+ * `sharePercentSnapshot`/`canTakeSnapshot` are captured once, at creation
+ * time, by re-running Story 4.1's `computeCanTake` server-side -- never a
+ * client-submitted value, and never recomputed later from the share's
+ * current state (AD-3), mirroring `shouldPaySnapshot`'s exact role one
+ * ledger over -- needed by Story 4.3's later Withdrawal Adjustment
+ * computation.
+ */
+export interface WithdrawalTransaction {
+  id: string;
+  projectId: string;
+  partyType: "partner" | "sub_partner";
+  /** The stable `partnerId`/`subPartnerId` this withdrawal was recorded against -- see this type's own doc comment. */
+  shareId: string;
+  sharePercentSnapshot: Percent;
+  canTakeSnapshot: Money;
+  /** "Take Now" -- `toMoney()`'s baseline validation only, no `> 0` floor and no cap against `canTakeSnapshot` (this story's Decisions): `"0"` is explicitly accepted, and an amount exceeding Can Take is accepted as-is (no cap in this story). */
+  amount: Money;
+  /** Plain date, `YYYY-MM-DD` -- no time component. */
+  transactionDate: string;
+  paymentMode: PaymentMode;
+  referenceNumber: string | null;
+  notes: string | null;
+  /** ISO 8601 timestamp */
+  createdAt: string;
+}
