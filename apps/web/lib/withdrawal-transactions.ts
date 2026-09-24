@@ -18,6 +18,15 @@ export interface RecordWithdrawalTransactionInput {
   paymentMode: string;
   referenceNumber: string | null;
   notes: string | null;
+  /**
+   * Story 4.5 (FR25): set `true` only after the caller has confirmed the
+   * distinct "Authorize Extra Withdrawal?" step -- passed through to the API
+   * unchanged, never defaulted here. Omitted (or `false`) is only valid when
+   * `amount` doesn't exceed the target's Can Take; the server's own
+   * `assertExtraWithdrawalAuthorized` gate is the authoritative check either
+   * way (defense in depth, not UI-trust).
+   */
+  extraWithdrawalAuthorized?: boolean;
 }
 
 /** `GET /api/projects/[id]/withdrawal-transactions`'s response shape. */

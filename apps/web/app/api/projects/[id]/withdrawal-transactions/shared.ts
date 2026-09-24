@@ -18,7 +18,7 @@ import { NextResponse } from "next/server";
  * `shared.ts` export either.
  */
 export const INVALID_REQUEST_MESSAGE =
-  'Request body must be valid JSON with `partyType` ("partner" or "sub_partner"), a `shareId` string, an `amount` string, a `transactionDate` string (YYYY-MM-DD), a `paymentMode` string, an `idempotencyKey` string, and optional `referenceNumber`/`notes` strings.';
+  'Request body must be valid JSON with `partyType` ("partner" or "sub_partner"), a `shareId` string, an `amount` string, a `transactionDate` string (YYYY-MM-DD), a `paymentMode` string, an `idempotencyKey` string, optional `referenceNumber`/`notes` strings, and an optional `extraWithdrawalAuthorized` boolean.';
 
 export interface ValidWithdrawalTransactionBody {
   partyType: "partner" | "sub_partner";
@@ -29,6 +29,15 @@ export interface ValidWithdrawalTransactionBody {
   referenceNumber: string | null;
   notes: string | null;
   idempotencyKey: string;
+  /**
+   * Story 4.5 (FR25): set `true` only when the caller has confirmed the
+   * distinct "Authorize Extra Withdrawal?" step -- optional, defaults to
+   * `false`/absent (this story's Code Map). Only ever consulted by the
+   * route's `assertExtraWithdrawalAuthorized` gate when `amount` exceeds the
+   * target's live Can Take; entirely ignored for a normal (within-
+   * entitlement) withdrawal.
+   */
+  extraWithdrawalAuthorized?: boolean;
 }
 
 export function isValidWithdrawalTransactionBody(
@@ -46,6 +55,7 @@ export function isValidWithdrawalTransactionBody(
     referenceNumber?: unknown;
     notes?: unknown;
     idempotencyKey?: unknown;
+    extraWithdrawalAuthorized?: unknown;
   };
 
   if (candidate.partyType !== "partner" && candidate.partyType !== "sub_partner") {
@@ -74,6 +84,12 @@ export function isValidWithdrawalTransactionBody(
     return false;
   }
   if (typeof candidate.idempotencyKey !== "string") {
+    return false;
+  }
+  if (
+    candidate.extraWithdrawalAuthorized !== undefined &&
+    typeof candidate.extraWithdrawalAuthorized !== "boolean"
+  ) {
     return false;
   }
 

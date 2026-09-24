@@ -8,7 +8,12 @@ import type { Money, Percent } from "@niveshbook/types";
 import type { CanTakeResponse } from "@/lib/can-take";
 import type { WithdrawalTransactionsResponse } from "@/lib/withdrawal-transactions";
 import type { WithdrawalAdjustmentsResponse } from "@/lib/withdrawal-adjustments";
-import WithdrawMoneyPage from "./page";
+import WithdrawMoneyPage, {
+  digitsToInt,
+  scaleMoneyForCompare,
+  exceedsCanTake,
+  excessOverCanTake,
+} from "./page";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ id: "project-1" }),
@@ -87,6 +92,101 @@ function findParagraphContaining(text: string): HTMLElement {
     return (element.textContent ?? "").includes(text);
   });
 }
+
+/**
+ * Story 4.5 (FR25): direct unit coverage for the page's hand-rolled,
+ * client-side decimal-safe money helpers -- exercised only indirectly
+ * elsewhere (via round-number page tests), so the edge cases their own doc
+ * comments describe (malformed/mid-edit input, two-decimal amounts, a
+ * >12-digit value) are asserted here directly instead.
+ */
+describe("withdraw-money/page money helpers (Story 4.5)", () => {
+  describe("digitsToInt", () => {
+    it("accumulates a plain digit string", () => {
+      expect(digitsToInt("250000")).toBe(250000);
+    });
+
+    it("returns 0 for an empty string (no digits to accumulate)", () => {
+      expect(digitsToInt("")).toBe(0);
+    });
+  });
+
+  describe("scaleMoneyForCompare", () => {
+    it("scales a whole-rupee amount by 100", () => {
+      expect(scaleMoneyForCompare("250000")).toBe(25000000);
+    });
+
+    it("scales a two-decimal amount exactly", () => {
+      expect(scaleMoneyForCompare("1234.56")).toBe(123456);
+    });
+
+    it("scales a single-decimal amount as if right-padded with a trailing 0", () => {
+      expect(scaleMoneyForCompare("10.5")).toBe(1050);
+    });
+
+    it("returns 0 for an empty string (mid-edit, nothing typed yet)", () => {
+      expect(scaleMoneyForCompare("")).toBe(0);
+    });
+
+    it("returns 0 for a trailing-dot value (mid-edit, e.g. \"12.\")", () => {
+      expect(scaleMoneyForCompare("12.")).toBe(0);
+    });
+
+    it("returns 0 for a non-numeric string", () => {
+      expect(scaleMoneyForCompare("abc")).toBe(0);
+    });
+
+    it("scales a 12-digit whole-number amount (the maximum accepted width)", () => {
+      expect(scaleMoneyForCompare("999999999999")).toBe(99999999999900);
+    });
+
+    it("returns 0 for a value wider than 12 whole-number digits, matching the server's own toMoney cap", () => {
+      expect(scaleMoneyForCompare("1000000000000")).toBe(0);
+    });
+  });
+
+  describe("exceedsCanTake", () => {
+    it("is false when the amount is within Can Take", () => {
+      expect(exceedsCanTake("200000", "250000" as Money)).toBe(false);
+    });
+
+    it("is false for an exact match (not \"exceeds\")", () => {
+      expect(exceedsCanTake("250000", "250000" as Money)).toBe(false);
+    });
+
+    it("is true when the amount exceeds Can Take", () => {
+      expect(exceedsCanTake("300000", "250000" as Money)).toBe(true);
+    });
+
+    it("is true for a two-decimal amount that exceeds Can Take by a fractional amount", () => {
+      expect(exceedsCanTake("250000.01", "250000" as Money)).toBe(true);
+    });
+
+    it("is false for malformed/mid-edit input -- never spuriously 'exceeds' (client-side UX nicety only)", () => {
+      expect(exceedsCanTake("", "250000" as Money)).toBe(false);
+      expect(exceedsCanTake("12.", "250000" as Money)).toBe(false);
+    });
+  });
+
+  describe("excessOverCanTake", () => {
+    it("computes the exact excess for a whole-rupee over-cap amount", () => {
+      expect(excessOverCanTake("300000", "250000" as Money)).toBe("50000");
+    });
+
+    it("computes the exact excess for a two-decimal over-cap amount", () => {
+      expect(excessOverCanTake("250050.75", "250000" as Money)).toBe("50.75");
+    });
+
+    it("clamps at 0 for malformed/mid-edit input rather than a negative or NaN value", () => {
+      expect(excessOverCanTake("", "250000" as Money)).toBe("0");
+      expect(excessOverCanTake("12.", "250000" as Money)).toBe("0");
+    });
+
+    it("clamps at 0 when the amount doesn't actually exceed canTake", () => {
+      expect(excessOverCanTake("200000", "250000" as Money)).toBe("0");
+    });
+  });
+});
 
 describe("WithdrawMoneyPage (Story 4.1)", () => {
   beforeEach(() => {
@@ -658,6 +758,176 @@ describe("WithdrawMoneyPage -- Record Withdrawal dialog (Story 4.2)", () => {
     // The dialog itself stays open/rendered (the Save button is still present) --
     // the 404 surfaces as an inline error, not a page-level crash.
     expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+  });
+});
+
+/**
+ * Story 4.5 (FR25): the "Authorize Extra Withdrawal?" confirmation dialog,
+ * opened when the Record Withdrawal form's amount exceeds the target's live
+ * Can Take. Partner A's Can Take is 2,50,000 throughout (`PARTNER_WITH_SUBS`
+ * above) -- 3,00,000 exceeds it by 50,000.
+ */
+describe("WithdrawMoneyPage -- Authorize Extra Withdrawal confirmation dialog (Story 4.5)", () => {
+  beforeEach(() => {
+    getCanTake.mockReset();
+    listWithdrawalTransactions.mockReset().mockResolvedValue(EMPTY_WITHDRAWALS_RESPONSE);
+    recordWithdrawalTransaction.mockReset();
+    getWithdrawalAdjustments.mockReset().mockResolvedValue(EMPTY_ADJUSTMENTS_RESPONSE);
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("submits immediately (no confirmation dialog) when the amount is within Can Take", async () => {
+    recordWithdrawalTransaction.mockResolvedValue(makeWithdrawalTransaction({ amount: "100000" }));
+    const user = await renderAndReady();
+
+    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "100000" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(recordWithdrawalTransaction).toHaveBeenCalledTimes(1);
+    });
+    expect(recordWithdrawalTransaction).toHaveBeenCalledWith(
+      "project-1",
+      expect.objectContaining({ amount: "100000", extraWithdrawalAuthorized: false }),
+      expect.any(String),
+    );
+    expect(screen.queryByText("Authorize Extra Withdrawal?")).not.toBeInTheDocument();
+  });
+
+  it("intercepts the submit and opens the confirmation dialog when the amount exceeds Can Take -- no API call yet", async () => {
+    const user = await renderAndReady();
+
+    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "300000" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText("Authorize Extra Withdrawal?")).toBeInTheDocument();
+    expect(recordWithdrawalTransaction).not.toHaveBeenCalled();
+  });
+
+  it("over-cap amount -> confirm dialog -> confirm -> success (extraWithdrawalAuthorized: true)", async () => {
+    recordWithdrawalTransaction.mockResolvedValue(makeWithdrawalTransaction({ amount: "300000" }));
+    const user = await renderAndReady();
+
+    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "300000" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByText("Authorize Extra Withdrawal?");
+    await user.click(screen.getByRole("button", { name: "Confirm Authorization" }));
+
+    await waitFor(() => {
+      expect(recordWithdrawalTransaction).toHaveBeenCalledTimes(1);
+    });
+    expect(recordWithdrawalTransaction).toHaveBeenCalledWith(
+      "project-1",
+      expect.objectContaining({ amount: "300000", extraWithdrawalAuthorized: true }),
+      expect.any(String),
+    );
+    await waitFor(() => {
+      expect(screen.queryByText("Authorize Extra Withdrawal?")).not.toBeInTheDocument();
+    });
+  });
+
+  it("over-cap amount -> confirm dialog -> cancel (Back) -> no submission, Record Withdrawal dialog stays open", async () => {
+    const user = await renderAndReady();
+
+    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "300000" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByText("Authorize Extra Withdrawal?");
+    await user.click(screen.getByRole("button", { name: "Back" }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("Authorize Extra Withdrawal?")).not.toBeInTheDocument();
+    });
+    expect(recordWithdrawalTransaction).not.toHaveBeenCalled();
+    // The Record Withdrawal dialog underneath is still open, values intact.
+    expect(screen.getByLabelText("Amount")).toHaveValue("300000");
+    expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+  });
+
+  it("renders the 403 error from the server inside the confirmation dialog on failure, without closing it", async () => {
+    recordWithdrawalTransaction.mockRejectedValue(
+      new Error("You don't have permission to do that."),
+    );
+    const user = await renderAndReady();
+
+    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "300000" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByText("Authorize Extra Withdrawal?");
+    await user.click(screen.getByRole("button", { name: "Confirm Authorization" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("You don't have permission to do that.");
+    expect(screen.getByText("Authorize Extra Withdrawal?")).toBeInTheDocument();
+  });
+
+  it("does not intercept an exact-match amount (amount === Can Take) -- submits immediately, no confirmation dialog", async () => {
+    recordWithdrawalTransaction.mockResolvedValue(makeWithdrawalTransaction({ amount: "250000" }));
+    const user = await renderAndReady();
+
+    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "250000" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(recordWithdrawalTransaction).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.queryByText("Authorize Extra Withdrawal?")).not.toBeInTheDocument();
+  });
+
+  it("renders the exact 'exceeds by ₹X' excess-amount text (excessOverCanTake's output, not just the boolean exceedsCanTake check)", async () => {
+    const user = await renderAndReady();
+
+    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "300000" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByText("Authorize Extra Withdrawal?");
+    // Can Take is ₹2,50,000, amount is ₹3,00,000 -- excessOverCanTake computes
+    // exactly ₹50,000, distinct from either of those two figures.
+    expect(findParagraphContaining("by ₹50,000")).toBeInTheDocument();
+  });
+
+  it("sends extraWithdrawalAuthorized: true on a within-Can-Take request with no special effect -- the client just passes the flag through, it never re-checks the amount at confirm time", async () => {
+    recordWithdrawalTransaction.mockResolvedValue(makeWithdrawalTransaction({ amount: "100000" }));
+    const user = await renderAndReady();
+
+    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "300000" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Authorize Extra Withdrawal?");
+
+    // Edit the amount back down to within Can Take while the confirmation
+    // dialog is still open underneath (its values are shared, live state),
+    // then confirm anyway.
+    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "100000" } });
+    await user.click(screen.getByRole("button", { name: "Confirm Authorization" }));
+
+    await waitFor(() => {
+      expect(recordWithdrawalTransaction).toHaveBeenCalledTimes(1);
+    });
+    expect(recordWithdrawalTransaction).toHaveBeenCalledWith(
+      "project-1",
+      expect.objectContaining({ amount: "100000", extraWithdrawalAuthorized: true }),
+      expect.any(String),
+    );
   });
 });
 

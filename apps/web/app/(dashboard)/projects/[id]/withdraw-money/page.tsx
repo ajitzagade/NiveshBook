@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
-import { BanknoteArrowDown, Minus, Save, X } from "lucide-react";
+import { ArrowLeft, BanknoteArrowDown, Minus, Save, ShieldCheck, X } from "lucide-react";
 import type { PartnerCanTake, PartnerWithdrawalAdjustment } from "@niveshbook/core";
 import type { Money, PaymentMode, WithdrawalTransaction } from "@niveshbook/types";
 import {
@@ -98,6 +98,68 @@ function formatSharePercent(raw: string): string {
   return raw.replace(/0+$/, "").replace(/\.$/, "");
 }
 
+/** Digit-by-digit accumulation, never `parseFloat`/`Number()` on a full numeric string -- mirrors `packages/core/src/decimal-math.ts`'s identical `digitsToInt` helper. Exported (alongside its sibling helpers below) only so `page.test.tsx` can unit-test this hand-rolled arithmetic directly -- Next.js's App Router only ever resolves this file's default export as the route; extra named exports are otherwise inert. */
+export function digitsToInt(digits: string): number {
+  let value = 0;
+  for (const char of digits) {
+    value = value * 10 + (char.charCodeAt(0) - 48);
+  }
+  return value;
+}
+
+/**
+ * Scales a plain decimal string (up to 2 fractional digits) to an integer
+ * (`"250000" -> 25000000`), mirroring `decimal-math.ts`'s `parseMoneyScaled`
+ * shape -- never `parseFloat`. Returns `0` for anything that doesn't match a
+ * bare non-negative decimal (a client-typed amount mid-edit, e.g. `""` or
+ * `"12."`) rather than throwing -- this is a client-side UX nicety only (see
+ * `exceedsCanTake`'s doc comment below), never the authoritative validation
+ * (the server's own `toMoney` is), so a malformed value just can't
+ * spuriously register as "exceeding" anything.
+ */
+export function scaleMoneyForCompare(raw: string): number {
+  const trimmed = raw.trim();
+  const match = /^(\d{1,12})(?:\.(\d{1,2}))?$/.exec(trimmed);
+  if (!match) return 0;
+  const [, wholePart, fractionPart = ""] = match;
+  return digitsToInt(wholePart as string) * 100 + digitsToInt((fractionPart as string).padEnd(2, "0"));
+}
+
+/**
+ * Story 4.5 (FR25): decimal-safe "does `amount` exceed `canTake`" check
+ * driving this page's client-side Record Withdrawal submit interception --
+ * scaled-integer arithmetic mirroring `packages/core/src/decimal-math.ts`'s
+ * `compareMoney` (AD-2: never a raw `>` on the strings themselves), but its
+ * own small local copy, not a runtime import of `compareMoney` from
+ * `@niveshbook/core`. This "use client" page cannot import any *runtime*
+ * value from that package's barrel -- see `recommendedWithdrawalFor`'s doc
+ * comment further below for the identical `next build` "Module not found:
+ * Can't resolve 'fs'" failure this would otherwise cause, tracing back to
+ * `auth.ts`'s `argon2` dependency. This check is a client-side UX nicety
+ * only, deciding whether to show the Authorize Extra Withdrawal confirmation
+ * dialog before submitting -- the route's own `assertExtraWithdrawalAuthorized`
+ * (using the real `compareMoney`, server-side) is the authoritative gate
+ * either way, never trusted from here.
+ */
+export function exceedsCanTake(amount: string, canTake: Money): boolean {
+  return scaleMoneyForCompare(amount) > scaleMoneyForCompare(canTake);
+}
+
+/**
+ * `amount - canTake`, clamped at `0`, for the Authorize Extra Withdrawal
+ * dialog's "exceeds by ₹X" display line only -- never submitted/stored.
+ * Mirrors `recommendedWithdrawalFor`'s existing `"0" as Money` cast
+ * precedent in this same file (a locally-computed literal, not untrusted
+ * input, so `toMoney`'s validation is unneeded here).
+ */
+export function excessOverCanTake(amount: string, canTake: Money): Money {
+  const diff = scaleMoneyForCompare(amount) - scaleMoneyForCompare(canTake);
+  const safeDiff = diff > 0 ? diff : 0;
+  const whole = Math.trunc(safeDiff / 100);
+  const fraction = safeDiff % 100;
+  return (fraction === 0 ? String(whole) : `${whole}.${String(fraction).padStart(2, "0")}`) as Money;
+}
+
 /**
  * Withdraw Money page (Story 4.1, extended by Story 4.2): one page per
  * Project -- displays each current Partner's (and, one level down, each
@@ -139,6 +201,15 @@ export default function WithdrawMoneyPage() {
   // successful save, which closes it) mints a new one. Mirrors
   // `add-money/page.tsx`'s `recordIdempotencyKey` exactly.
   const [recordIdempotencyKey, setRecordIdempotencyKey] = useState("");
+
+  // Story 4.5 (FR25): the "Authorize Extra Withdrawal?" confirmation dialog,
+  // opened *on top of* the still-open Record Withdrawal dialog when its
+  // normal submit is intercepted (`handleRecordWithdrawalSubmit` below) --
+  // mirrors `add-money/page.tsx`'s Story 3.8 Cancel Payment dialog shape
+  // (separate confirmation dialog, no editable fields of its own), reusing
+  // this same page's `recordAmount`/`recordTarget`/etc. state rather than
+  // duplicating a second copy of the form's fields.
+  const [extraWithdrawalOpen, setExtraWithdrawalOpen] = useState(false);
 
   async function refreshCanTake() {
     const result = await getCanTake(projectId);
@@ -268,6 +339,27 @@ export default function WithdrawMoneyPage() {
     );
   }
 
+  /**
+   * Finds a Partner/Sub-partner's *live* Can Take (Story 4.1) in this page's
+   * already-loaded `state` -- `null` if not loaded yet, errored, or
+   * (defensively) not found. Drives Story 4.5's client-side "does the
+   * entered amount exceed Can Take" check (`handleRecordWithdrawalSubmit`
+   * below); the target's Can Take shown in the panel (`partner.canTake`/
+   * `sub.canTake`) is the exact same figure the route independently
+   * recomputes server-side (`computeCanTake`) before writing.
+   */
+  function canTakeForTarget(partyType: "partner" | "sub_partner", shareId: string): Money | null {
+    if (state.status !== "loaded") return null;
+    if (partyType === "partner") {
+      return state.partners.find((partner) => partner.partnerId === shareId)?.canTake ?? null;
+    }
+    for (const partner of state.partners) {
+      const match = partner.subPartners.find((sub) => sub.subPartnerId === shareId);
+      if (match) return match.canTake;
+    }
+    return null;
+  }
+
   function openRecordWithdrawalDialog(
     partyType: "partner" | "sub_partner",
     shareId: string,
@@ -280,12 +372,19 @@ export default function WithdrawMoneyPage() {
     setRecordReferenceNumber("");
     setRecordNotes("");
     setRecordFormError(null);
+    setExtraWithdrawalOpen(false);
     // A fresh key for this new logical submission -- see the state's own doc comment.
     setRecordIdempotencyKey(crypto.randomUUID());
   }
 
   function closeRecordWithdrawalDialog() {
     setRecordTarget(null);
+    setExtraWithdrawalOpen(false);
+  }
+
+  /** Closes just the Authorize Extra Withdrawal dialog (Story 4.5) -- the Record Withdrawal dialog underneath stays open, values untouched, so the user can adjust the amount and try again. No submission occurs. */
+  function closeExtraWithdrawalDialog() {
+    setExtraWithdrawalOpen(false);
   }
 
   /**
@@ -299,12 +398,21 @@ export default function WithdrawMoneyPage() {
    *
    * Passes `recordIdempotencyKey` through unchanged -- it's minted once, when
    * the dialog opens (`openRecordWithdrawalDialog`), not here. A retry of a
-   * failed submission (the user clicking Save again with the dialog still
-   * open) reuses that same key, so a real double-submit is deduped
-   * server-side rather than creating two rows.
+   * failed submission (the user clicking Save again, or re-confirming
+   * Authorize Extra Withdrawal, with the dialog still open) reuses that same
+   * key, so a real double-submit is deduped server-side rather than creating
+   * two rows.
+   *
+   * `authorized` is passed through unchanged as `extraWithdrawalAuthorized`
+   * (Story 4.5, FR25) -- `false` for a normal submit
+   * (`handleRecordWithdrawalSubmit` below), `true` only when the user has
+   * confirmed the Authorize Extra Withdrawal dialog
+   * (`handleAuthorizeExtraWithdrawalConfirm`). On failure, deliberately
+   * leaves both dialogs' open/closed state untouched -- the error renders in
+   * whichever one is currently on screen, mirroring `add-money/page.tsx`'s
+   * Cancel Payment dialog's identical stay-open-on-error convention.
    */
-  async function handleRecordWithdrawalSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submitWithdrawal(authorized: boolean) {
     if (!recordTarget) return;
 
     setRecordFormError(null);
@@ -321,6 +429,7 @@ export default function WithdrawMoneyPage() {
           referenceNumber:
             recordReferenceNumber.trim().length > 0 ? recordReferenceNumber.trim() : null,
           notes: recordNotes.trim().length > 0 ? recordNotes.trim() : null,
+          extraWithdrawalAuthorized: authorized,
         },
         recordIdempotencyKey,
       );
@@ -332,6 +441,7 @@ export default function WithdrawMoneyPage() {
     }
 
     setRecordSubmitting(false);
+    setExtraWithdrawalOpen(false);
     closeRecordWithdrawalDialog();
     // Best-effort, mirroring `add-money/page.tsx`'s identical convention --
     // the withdrawal is already saved server-side either way. Refreshing
@@ -344,6 +454,44 @@ export default function WithdrawMoneyPage() {
       refreshAdjustments().catch(() => {}),
     ]);
   }
+
+  /**
+   * The Record Withdrawal form's own submit (Story 4.2, extended by Story
+   * 4.5/FR25). Compares `recordAmount` against the target's *live* Can Take
+   * (`canTakeForTarget`, sourced from this page's already-loaded `state` --
+   * the exact same figure the server independently recomputes) via
+   * `exceedsCanTake`. Within Can Take (or Can Take not yet resolvable):
+   * submits immediately, exactly as before this story
+   * (`extraWithdrawalAuthorized: false`). Exceeds Can Take: intercepts the
+   * submit -- no API call here -- and opens the Authorize Extra Withdrawal
+   * confirmation dialog instead, deferring the actual save to
+   * `handleAuthorizeExtraWithdrawalConfirm`.
+   */
+  async function handleRecordWithdrawalSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!recordTarget) return;
+
+    const targetCanTake = canTakeForTarget(recordTarget.partyType, recordTarget.shareId);
+    if (targetCanTake !== null && exceedsCanTake(recordAmount, targetCanTake)) {
+      setRecordFormError(null);
+      setExtraWithdrawalOpen(true);
+      return;
+    }
+
+    await submitWithdrawal(false);
+  }
+
+  /** Confirms the Authorize Extra Withdrawal dialog (Story 4.5, FR25) -- resubmits with `extraWithdrawalAuthorized: true`. No form fields of its own to validate (mirrors Cancel Payment's identical "no editable fields" shape). */
+  async function handleAuthorizeExtraWithdrawalConfirm() {
+    await submitWithdrawal(true);
+  }
+
+  // Derived once per render for the Authorize Extra Withdrawal dialog's copy
+  // below (Story 4.5) -- `null` whenever `recordTarget`/Can Take aren't both
+  // resolvable yet, which the dialog's own render guards against.
+  const extraWithdrawalCanTake = recordTarget
+    ? canTakeForTarget(recordTarget.partyType, recordTarget.shareId)
+    : null;
 
   return (
     <div>
@@ -491,8 +639,9 @@ export default function WithdrawMoneyPage() {
         <DialogContent>
           <DialogTitle>Record Withdrawal{recordTarget ? ` — ${recordTarget.personName}` : ""}</DialogTitle>
           <DialogDescription>
-            Saved with an audit record (AD-5). No cap against Can Take is enforced here -- any amount,
-            including one exceeding Can Take, is accepted and recorded as-is.
+            Saved with an audit record (AD-5). An amount within Can Take saves immediately; an amount
+            that exceeds Can Take requires a separate Owner/Admin Extra Withdrawal authorization step
+            (FR25).
           </DialogDescription>
           <form onSubmit={handleRecordWithdrawalSubmit} className="mt-4">
             <Field>
@@ -589,6 +738,55 @@ export default function WithdrawMoneyPage() {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={extraWithdrawalOpen}
+        onOpenChange={(open) => {
+          if (!open) closeExtraWithdrawalDialog();
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>Authorize Extra Withdrawal?</DialogTitle>
+          <DialogDescription>
+            {recordTarget && extraWithdrawalCanTake !== null ? (
+              <>
+                <Amount value={recordAmount as Money} size="sm" /> exceeds {recordTarget.personName}
+                &apos;s Can Take of <Amount value={extraWithdrawalCanTake} size="sm" /> by{" "}
+                <Amount value={excessOverCanTake(recordAmount, extraWithdrawalCanTake)} size="sm" />.
+                Only an Owner/Admin with Extra Withdrawal approval authority (Story 1.7) can authorize
+                this excess as Extra Taken (FR25). Confirming records the full amount with this
+                authorization; going back returns to the amount field with nothing saved.
+              </>
+            ) : null}
+          </DialogDescription>
+
+          {recordFormError ? (
+            <p role="alert" className="mt-4 text-[13.4px] text-danger">
+              {recordFormError}
+            </p>
+          ) : null}
+
+          <div className="mt-4 flex gap-2.5">
+            <Button
+              type="button"
+              onClick={handleAuthorizeExtraWithdrawalConfirm}
+              disabled={recordSubmitting}
+              icon={<ShieldCheck size={14} />}
+            >
+              {recordSubmitting ? "Saving…" : "Confirm Authorization"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={closeExtraWithdrawalDialog}
+              disabled={recordSubmitting}
+              icon={<ArrowLeft size={14} />}
+            >
+              Back
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

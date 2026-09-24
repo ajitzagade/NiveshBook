@@ -365,7 +365,7 @@ describe("POST /api/projects/[id]/withdrawal-transactions", () => {
     findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: "sub-partner-user-1" });
     findUserById.mockResolvedValue(SUB_PARTNER_USER);
     recordTransaction.mockResolvedValue({
-      transaction: { ...SAVED_WITHDRAWAL, partyType: "sub_partner", shareId: "sub-1" },
+      transaction: { ...SAVED_WITHDRAWAL, partyType: "sub_partner", shareId: "sub-1", amount: "50000" },
       created: true,
     });
 
@@ -373,7 +373,10 @@ describe("POST /api/projects/[id]/withdrawal-transactions", () => {
       makeRequest({
         cookie: `${SESSION_COOKIE_NAME}=t`,
         method: "POST",
-        body: makeWithdrawalBody({ partyType: "sub_partner", shareId: "sub-1" }),
+        // Sub-1's live Can Take is 62,500 (12.5% of 5,00,000) -- 50,000 stays
+        // within it, so Story 4.5's gate never triggers here (that's this
+        // describe block's own dedicated tests below).
+        body: makeWithdrawalBody({ partyType: "sub_partner", shareId: "sub-1", amount: "50000" }),
       }),
       makeContext(),
     );
@@ -419,25 +422,201 @@ describe("POST /api/projects/[id]/withdrawal-transactions", () => {
     expect((await response.json()).amount).toBe("0");
   });
 
-  it("returns 201 when amount exceeds Can Take -- no cap enforced this story", async () => {
-    ownerSession();
-    // Can Take is 2,50,000 (50% of 5,00,000); amount requested is 3,00,000.
-    recordTransaction.mockResolvedValue({
-      transaction: { ...SAVED_WITHDRAWAL, amount: "300000" },
-      created: true,
+  describe("Story 4.5: the Extra Withdrawal gate", () => {
+    // Can Take is 2,50,000 (Partner A's 50% of the Project's 5,00,000
+    // available-to-withdraw) throughout this block -- 3,00,000 exceeds it by
+    // 50,000.
+
+    it("AC: an Owner/Admin (with the grant) who authorizes an over-cap withdrawal -- 201, saved as-is, no new column", async () => {
+      ownerSession();
+      recordTransaction.mockResolvedValue({
+        transaction: { ...SAVED_WITHDRAWAL, amount: "300000" },
+        created: true,
+      });
+
+      const response = await POST(
+        makeRequest({
+          cookie: `${SESSION_COOKIE_NAME}=t`,
+          method: "POST",
+          body: makeWithdrawalBody({ amount: "300000", extraWithdrawalAuthorized: true }),
+        }),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(201);
+      expect((await response.json()).amount).toBe("300000");
     });
 
-    const response = await POST(
-      makeRequest({
-        cookie: `${SESSION_COOKIE_NAME}=t`,
-        method: "POST",
-        body: makeWithdrawalBody({ amount: "300000" }),
-      }),
-      makeContext(),
-    );
+    it("AC: an over-cap attempt without the authorization step -- 400 extra_withdrawal_authorization_required, no write", async () => {
+      ownerSession();
 
-    expect(response.status).toBe(201);
-    expect((await response.json()).amount).toBe("300000");
+      const response = await POST(
+        makeRequest({
+          cookie: `${SESSION_COOKIE_NAME}=t`,
+          method: "POST",
+          body: makeWithdrawalBody({ amount: "300000" }),
+        }),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(400);
+      expect((await response.json()).code).toBe("extra_withdrawal_authorization_required");
+      expect(recordTransaction).not.toHaveBeenCalled();
+    });
+
+    it("returns 400 extra_withdrawal_authorization_required when extraWithdrawalAuthorized is explicitly false and amount exceeds Can Take", async () => {
+      ownerSession();
+
+      const response = await POST(
+        makeRequest({
+          cookie: `${SESSION_COOKIE_NAME}=t`,
+          method: "POST",
+          body: makeWithdrawalBody({ amount: "300000", extraWithdrawalAuthorized: false }),
+        }),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(400);
+      expect((await response.json()).code).toBe("extra_withdrawal_authorization_required");
+      expect(recordTransaction).not.toHaveBeenCalled();
+    });
+
+    it("AC: a non-Owner/Admin attempting to self-authorize their own over-cap withdrawal -- 403, even though normal self-access would otherwise allow recording their own withdrawal", async () => {
+      findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: "partner-user-a" });
+      findUserById.mockResolvedValue(PARTNER_A_USER);
+
+      const response = await POST(
+        makeRequest({
+          cookie: `${SESSION_COOKIE_NAME}=t`,
+          method: "POST",
+          body: makeWithdrawalBody({ amount: "300000", extraWithdrawalAuthorized: true }),
+        }),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(403);
+      expect((await response.json()).code).toBe("forbidden");
+      expect(recordTransaction).not.toHaveBeenCalled();
+    });
+
+    it("AC: an Owner/Admin with a revoked canApproveExtraWithdrawal grant -- 403, even with extraWithdrawalAuthorized true", async () => {
+      findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+      findUserById.mockResolvedValue({ ...OWNER_USER, canApproveExtraWithdrawal: false });
+
+      const response = await POST(
+        makeRequest({
+          cookie: `${SESSION_COOKIE_NAME}=t`,
+          method: "POST",
+          body: makeWithdrawalBody({ amount: "300000", extraWithdrawalAuthorized: true }),
+        }),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(403);
+      expect((await response.json()).code).toBe("forbidden");
+      expect(recordTransaction).not.toHaveBeenCalled();
+    });
+
+    it("exact-match amount (amount === live Can Take) is treated as within Can Take, not 'exceeds' -- 201 with no extraWithdrawalAuthorized needed", async () => {
+      ownerSession();
+
+      const response = await POST(
+        makeRequest({
+          cookie: `${SESSION_COOKIE_NAME}=t`,
+          method: "POST",
+          body: makeWithdrawalBody({ amount: "250000" }),
+        }),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(201);
+    });
+
+    it("idempotent replay of an already-authorized over-cap transaction -- 200; the gate runs on every request (replay or not), but is a no-op here since the replayed amount/canTake/authorization are unchanged", async () => {
+      ownerSession();
+      recordTransaction.mockResolvedValue({
+        transaction: { ...SAVED_WITHDRAWAL, amount: "300000" },
+        created: false,
+      });
+
+      const response = await POST(
+        makeRequest({
+          cookie: `${SESSION_COOKIE_NAME}=t`,
+          method: "POST",
+          body: makeWithdrawalBody({
+            amount: "300000",
+            extraWithdrawalAuthorized: true,
+            idempotencyKey: "idem-1",
+          }),
+        }),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(200);
+    });
+
+    it("applies identically to a sub_partner target: over-cap without authorization -- 400 extra_withdrawal_authorization_required (sub-1's live Can Take is 62,500; 1,00,000 exceeds it)", async () => {
+      ownerSession();
+
+      const response = await POST(
+        makeRequest({
+          cookie: `${SESSION_COOKIE_NAME}=t`,
+          method: "POST",
+          body: makeWithdrawalBody({ partyType: "sub_partner", shareId: "sub-1", amount: "100000" }),
+        }),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(400);
+      expect((await response.json()).code).toBe("extra_withdrawal_authorization_required");
+      expect(recordTransaction).not.toHaveBeenCalled();
+    });
+
+    it("applies identically to a sub_partner target: an Owner/Admin who authorizes an over-cap withdrawal -- 201", async () => {
+      ownerSession();
+      recordTransaction.mockResolvedValue({
+        transaction: { ...SAVED_WITHDRAWAL, partyType: "sub_partner", shareId: "sub-1", amount: "100000" },
+        created: true,
+      });
+
+      const response = await POST(
+        makeRequest({
+          cookie: `${SESSION_COOKIE_NAME}=t`,
+          method: "POST",
+          body: makeWithdrawalBody({
+            partyType: "sub_partner",
+            shareId: "sub-1",
+            amount: "100000",
+            extraWithdrawalAuthorized: true,
+          }),
+        }),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(201);
+      expect((await response.json()).amount).toBe("100000");
+    });
+
+    it("locks in current behavior for two simultaneously-invalid conditions: a malformed amount AND Partner Shares not totalling 100% -- 409 shares_not_fully_allocated wins, since the gate's computeCanTake now runs before amount validation", async () => {
+      ownerSession();
+      listPartnerSharesByProjectId.mockResolvedValue([
+        makePartnerShareRow({ partnerId: "a", name: "A", sharePercent: "50", userId: "partner-user-a" }),
+        makePartnerShareRow({ partnerId: "b", name: "B", sharePercent: "40", userId: "partner-user-b" }),
+      ]);
+
+      const response = await POST(
+        makeRequest({
+          cookie: `${SESSION_COOKIE_NAME}=t`,
+          method: "POST",
+          body: makeWithdrawalBody({ amount: "not-a-number" }),
+        }),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(409);
+      expect((await response.json()).code).toBe("shares_not_fully_allocated");
+      expect(recordTransaction).not.toHaveBeenCalled();
+    });
   });
 
   it("returns 400 validation_error for a negative amount", async () => {

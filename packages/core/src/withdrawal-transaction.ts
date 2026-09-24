@@ -29,11 +29,17 @@ export interface RecordWithdrawalTransactionInput {
 /**
  * Thrown when `amount` fails `decimal-math.ts`'s `toMoney` validation (not a
  * plain non-negative decimal string, or more than 2 decimal places).
- * Deliberately does **not** additionally require `> 0` on top of `toMoney`,
- * nor cap against `canTakeSnapshot` -- both explicitly accepted this story
- * (Decisions: "0" is a valid Take Now, no forced withdrawal; any amount,
- * including one exceeding Can Take, is accepted and recorded as-is -- no cap
- * this story, Story 4.5's job). Named `InvalidWithdrawalAmountError`, not
+ * Deliberately does **not** additionally require `> 0` on top of `toMoney`
+ * -- "0" is a valid Take Now, no forced withdrawal (this story's Decisions).
+ * This function/module still never caps `amount` against `canTakeSnapshot`
+ * itself -- that enforcement lives one layer up, in the route's
+ * `assertExtraWithdrawalAuthorized` gate (Story 4.5, FR25), which runs
+ * *before* this function is ever called and rejects an over-cap amount
+ * unless the request also carries Owner/Admin Extra Withdrawal
+ * authorization; `recordWithdrawalTransaction`'s own signature/contract was
+ * deliberately left unchanged by that story (Open/Closed), so a caller that
+ * bypasses the route (e.g. a test calling this module directly) still sees
+ * no cap here. Named `InvalidWithdrawalAmountError`, not
  * `InvalidTransactionAmountError` (`investment-transaction.ts` already
  * exports that exact name) -- so `packages/core/src/index.ts`'s two
  * `export *` statements never produce an ambiguous/dropped barrel export for
