@@ -1,4 +1,4 @@
-import type { InvestmentTransaction } from "@niveshbook/types";
+import type { AuditLogEntry, InvestmentTransaction } from "@niveshbook/types";
 
 /**
  * Thin client-side fetch helpers for the Add Money screen's Record Payment
@@ -81,4 +81,65 @@ export async function recordInvestmentTransaction(
     throw new Error(await readErrorMessage(response));
   }
   return (await response.json()) as InvestmentTransaction;
+}
+
+export interface EditInvestmentTransactionInput {
+  /** `"0"` is explicitly allowed -- no minimum payment enforced, mirrors create's rule. */
+  amount: string;
+  /** Plain date, `YYYY-MM-DD`. */
+  transactionDate: string;
+  paymentMode: string;
+  referenceNumber: string | null;
+  notes: string | null;
+  /** Optional -- `audit_log.reason`'s existing nullable design (Story 3.3). */
+  reason: string | null;
+}
+
+/** `GET .../transactions/[transactionId]/audit-log`'s response shape. */
+export interface AuditLogResponse {
+  entries: AuditLogEntry[];
+}
+
+/**
+ * Edits a previously recorded transaction's mutable fields (Story 3.7,
+ * AD-5) -- Owner/Admin-only. `idempotencyKey` mirrors
+ * `recordInvestmentTransaction`'s exact lifecycle contract one level over:
+ * the caller mints one fresh key per *logical* edit attempt (e.g. when the
+ * Edit Payment dialog opens) and reuses that same key across a retry of
+ * that same attempt. This function never generates or mutates the key.
+ */
+export async function editInvestmentTransaction(
+  projectId: string,
+  requirementId: string,
+  transactionId: string,
+  input: EditInvestmentTransactionInput,
+  idempotencyKey: string,
+): Promise<InvestmentTransaction> {
+  const response = await fetch(
+    `/api/projects/${projectId}/investment-requirements/${requirementId}/transactions/${transactionId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...input, idempotencyKey }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as InvestmentTransaction;
+}
+
+/** Fetches every audit-trail entry (the original `"create"` plus any `"edit"`s) for one transaction (Story 3.7). */
+export async function getAuditLog(
+  projectId: string,
+  requirementId: string,
+  transactionId: string,
+): Promise<AuditLogResponse> {
+  const response = await fetch(
+    `/api/projects/${projectId}/investment-requirements/${requirementId}/transactions/${transactionId}/audit-log`,
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as AuditLogResponse;
 }

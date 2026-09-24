@@ -1,4 +1,5 @@
 import type {
+  AuditLogEntry,
   InvestmentRequirement,
   Money,
   PartnerShare,
@@ -10,6 +11,8 @@ import { toMoney, InvalidMoneyError } from "./decimal-math";
 import { computeShouldPay } from "./should-pay";
 import type {
   CreateInvestmentTransactionInput,
+  EditInvestmentTransactionInput,
+  EditTransactionResult,
   InvestmentTransactionPort,
   RecordTransactionResult,
 } from "./investment-transaction-port";
@@ -301,4 +304,94 @@ export async function listInvestmentTransactions(
   deps: InvestmentTransactionDeps,
 ) {
   return deps.investmentTransactions.listByRequirementId(requirementId);
+}
+
+/**
+ * Raw, unvalidated edit request (Story 3.7) -- mirrors
+ * `RecordInvestmentTransactionInput`'s "raw input, validated by this
+ * module's own normalize helpers" shape one level over, deliberately scoped
+ * to only the fields an edit may ever change (see
+ * `EditInvestmentTransactionInput`'s own doc comment in the port module for
+ * exactly which fields are -- and, just as importantly, are never --
+ * touched by an edit).
+ */
+export interface EditInvestmentTransactionRequest {
+  /** Raw, unvalidated -- `"0"` remains explicitly valid, mirroring create's identical rule (no minimum payment enforced, whether recording or correcting one). */
+  amount: string;
+  /** Raw, unvalidated `YYYY-MM-DD` string. */
+  transactionDate: string;
+  /** Raw, unvalidated -- must match one of `PAYMENT_MODES` after normalization. */
+  paymentMode: string;
+  referenceNumber: string | null;
+  notes: string | null;
+  /** Required, non-empty -- this story reuses AD-5's idempotency mechanism, via `audit_log.idempotencyKey` (this story's Decisions). */
+  idempotencyKey: string;
+  /** Optional -- `audit_log.reason` is nullable (Story 3.3); no AC requires one for an edit either. */
+  reason: string | null;
+}
+
+/**
+ * Edits a previously recorded transaction's mutable fields IN PLACE (Story
+ * 3.7, FR41): validates `amount`/`transactionDate`/`paymentMode`/
+ * `idempotencyKey` via the exact same normalization helpers
+ * `recordInvestmentTransaction` uses (400-mappable errors), then calls the
+ * port -- whose atomicity/idempotency contract is documented on
+ * `InvestmentTransactionPort.editTransaction` itself.
+ *
+ * Deliberately does **not** touch `sharePercentSnapshot`/`shouldPaySnapshot`
+ * -- AD-3's frozen-at-creation guarantee applies just as much to an edit as
+ * to a later Share % change (this story's Decisions) -- and needs no new
+ * recompute of Story 3.4's Investment Adjustment: that computation already
+ * sums every transaction's *current* `amount` on every view, so an edited
+ * amount is automatically reflected the next time anyone views the
+ * adjustment ledger, with zero new logic here.
+ *
+ * Callers must run `authorizeScope()` for `"investment_transactions:edit"`
+ * (Owner/Admin-only, no self-access -- this story's Decisions) before
+ * calling this -- it performs no permission check of its own (AD-1's gate
+ * lives at the route layer), and it never validates that `transactionId`
+ * belongs to *this* Project/requirement -- callers (the route handler) must
+ * resolve and confirm that first, both to surface the 404 case and because
+ * this function has no requirement/project context to check against.
+ */
+export async function editInvestmentTransaction(
+  transactionId: string,
+  input: EditInvestmentTransactionRequest,
+  actorUserId: string,
+  deps: InvestmentTransactionDeps,
+): Promise<EditTransactionResult> {
+  const amount = normalizeAmount(input.amount);
+  const transactionDate = normalizeTransactionDate(input.transactionDate);
+  const paymentMode = normalizePaymentMode(input.paymentMode);
+  const idempotencyKey = normalizeIdempotencyKey(input.idempotencyKey);
+  const referenceNumber = normalizeOptionalText(input.referenceNumber);
+  const notes = normalizeOptionalText(input.notes);
+  const reason = normalizeOptionalText(input.reason);
+
+  const portInput: EditInvestmentTransactionInput = {
+    transactionId,
+    amount,
+    transactionDate,
+    paymentMode,
+    referenceNumber,
+    notes,
+    idempotencyKey,
+    reason,
+    actorUserId,
+  };
+
+  return deps.investmentTransactions.editTransaction(portInput);
+}
+
+/**
+ * Lists every `audit_log` entry for one transaction -- a thin pass-through
+ * to the port, mirroring `listInvestmentTransactions`'s identical shape.
+ * Callers must run `authorize()` for `"investment_transactions:view_audit"`
+ * before calling this.
+ */
+export async function listAuditLogForTransaction(
+  transactionId: string,
+  deps: InvestmentTransactionDeps,
+): Promise<AuditLogEntry[]> {
+  return deps.investmentTransactions.findAuditLogByTransactionId(transactionId);
 }

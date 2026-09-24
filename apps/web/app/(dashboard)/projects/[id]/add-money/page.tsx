@@ -32,6 +32,7 @@ import {
 import { listInvestmentRequirements, addInvestmentRequirement } from "@/lib/investment-requirements";
 import { getShouldPay } from "@/lib/should-pay";
 import {
+  editInvestmentTransaction,
   listInvestmentTransactions,
   recordInvestmentTransaction,
 } from "@/lib/investment-transactions";
@@ -67,6 +68,18 @@ interface RecordPaymentTarget {
   partyType: "partner" | "sub_partner";
   shareId: string;
   personName: string;
+}
+
+/**
+ * Story 3.7: the transaction currently open in the Edit Payment dialog --
+ * unlike `RecordPaymentTarget` (identified by `partyType`+`shareId`, since
+ * nothing exists yet to edit), this is identified by the specific
+ * `transaction` being corrected, plus the `requirementId` it belongs to
+ * (needed to build the `PATCH` URL and to refresh the right panel on save).
+ */
+interface EditPaymentTarget {
+  requirementId: string;
+  transaction: InvestmentTransaction;
 }
 
 /**
@@ -165,6 +178,20 @@ export default function AddMoneyPage() {
   // deduped server-side (AD-5/AC4). Only closing and reopening the dialog
   // (or a successful save, which closes it) mints a new one.
   const [recordIdempotencyKey, setRecordIdempotencyKey] = useState("");
+
+  // Story 3.7: the Edit Payment dialog -- mirrors the Record Payment state
+  // above field-for-field, plus `editIdempotencyKey` following the exact
+  // same mint-once-per-logical-submission-attempt lifecycle as
+  // `recordIdempotencyKey`.
+  const [editPaymentTarget, setEditPaymentTarget] = useState<EditPaymentTarget | null>(null);
+  const [editAmount, setEditAmount] = useState("");
+  const [editDate, setEditDate] = useState("");
+  const [editPaymentMode, setEditPaymentMode] = useState<PaymentMode>("cash");
+  const [editReferenceNumber, setEditReferenceNumber] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [editFormError, setEditFormError] = useState<string | null>(null);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editIdempotencyKey, setEditIdempotencyKey] = useState("");
 
   async function refresh() {
     const result = await listInvestmentRequirements(projectId);
@@ -415,6 +442,70 @@ export default function AddMoneyPage() {
     await Promise.all([refreshTransactions(requirementId), refreshAdjustments(requirementId)]);
   }
 
+  /** Opens the Edit Payment dialog, pre-filled with `transaction`'s current values (Story 3.7) -- Owner/Admin-facing only, mirroring `openRecordPaymentDialog`'s Decisions one dialog over. */
+  function openEditPaymentDialog(requirementId: string, transaction: InvestmentTransaction) {
+    setEditPaymentTarget({ requirementId, transaction });
+    setEditAmount(transaction.amount);
+    setEditDate(transaction.transactionDate);
+    setEditPaymentMode(transaction.paymentMode);
+    setEditReferenceNumber(transaction.referenceNumber ?? "");
+    setEditNotes(transaction.notes ?? "");
+    setEditFormError(null);
+    // A fresh key for this new logical edit attempt -- mirrors `recordIdempotencyKey`'s own doc comment.
+    setEditIdempotencyKey(crypto.randomUUID());
+  }
+
+  function closeEditPaymentDialog() {
+    setEditPaymentTarget(null);
+  }
+
+  /**
+   * Saves a corrected transaction (Story 3.7, FR41) -- Owner/Admin-only, no
+   * new recompute call needed: Story 3.4's Investment Adjustment already
+   * sums each transaction's *current* amount on every view, so refreshing
+   * the adjustment chip below (the same `refreshAdjustments` Record Payment
+   * already uses) is sufficient to reflect the correction, with zero new
+   * client-side logic either.
+   *
+   * Passes `editIdempotencyKey` through unchanged -- minted once, when the
+   * dialog opens (`openEditPaymentDialog`), not here -- mirrors
+   * `handleRecordPaymentSubmit`'s identical retry-reuses-the-same-key
+   * contract.
+   */
+  async function handleEditPaymentSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editPaymentTarget) return;
+
+    setEditFormError(null);
+    setEditSubmitting(true);
+    try {
+      await editInvestmentTransaction(
+        projectId,
+        editPaymentTarget.requirementId,
+        editPaymentTarget.transaction.id,
+        {
+          amount: editAmount,
+          transactionDate: editDate,
+          paymentMode: editPaymentMode,
+          referenceNumber: editReferenceNumber.trim().length > 0 ? editReferenceNumber.trim() : null,
+          notes: editNotes.trim().length > 0 ? editNotes.trim() : null,
+          reason: null,
+        },
+        editIdempotencyKey,
+      );
+    } catch (err) {
+      setEditFormError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+      setEditSubmitting(false);
+      return;
+    }
+
+    setEditSubmitting(false);
+    const requirementId = editPaymentTarget.requirementId;
+    closeEditPaymentDialog();
+    // Best-effort, mirroring `handleRecordPaymentSubmit`'s identical convention.
+    await Promise.all([refreshTransactions(requirementId), refreshAdjustments(requirementId)]);
+  }
+
   function openAddDialog() {
     setAmount("");
     setRequirementDate("");
@@ -612,6 +703,9 @@ export default function AddMoneyPage() {
                                           "partner",
                                           partner.partnerId,
                                         )}
+                                        onEdit={(transaction) =>
+                                          openEditPaymentDialog(requirement.id, transaction)
+                                        }
                                       />
 
                                       {partner.subPartners.length > 0 ? (
@@ -662,6 +756,9 @@ export default function AddMoneyPage() {
                                                   "sub_partner",
                                                   sub.subPartnerId,
                                                 )}
+                                                onEdit={(transaction) =>
+                                                  openEditPaymentDialog(requirement.id, transaction)
+                                                }
                                               />
                                             </div>
                                           ))}
@@ -840,6 +937,102 @@ export default function AddMoneyPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      <Dialog
+        open={editPaymentTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) closeEditPaymentDialog();
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>Edit Payment</DialogTitle>
+          <DialogDescription>
+            Owner/Admin only. The previous values, who changed it, and when, are preserved in the audit
+            trail (FR41) -- this updates the recorded payment in place, it never creates a new row.
+          </DialogDescription>
+          <form onSubmit={handleEditPaymentSubmit} className="mt-4">
+            <Field>
+              <Label htmlFor="edit-tx-amount">Amount</Label>
+              <Input
+                id="edit-tx-amount"
+                name="amount"
+                inputMode="decimal"
+                value={editAmount}
+                onChange={(event) => setEditAmount(event.target.value)}
+                required
+                autoFocus
+              />
+              <Helper>0 is accepted -- no minimum payment enforced.</Helper>
+            </Field>
+            <Field>
+              <Label htmlFor="edit-tx-date">Date</Label>
+              <Input
+                id="edit-tx-date"
+                name="transactionDate"
+                type="date"
+                value={editDate}
+                onChange={(event) => setEditDate(event.target.value)}
+                required
+              />
+            </Field>
+            <Field>
+              <Label htmlFor="edit-tx-payment-mode">Payment Mode</Label>
+              <select
+                id="edit-tx-payment-mode"
+                name="paymentMode"
+                className="w-full rounded-el border border-border bg-surface px-3 py-2.5 text-[14px] text-ink focus:border-accent focus:outline focus:outline-2 focus:outline-accent-soft"
+                value={editPaymentMode}
+                onChange={(event) => setEditPaymentMode(event.target.value as PaymentMode)}
+              >
+                {PAYMENT_MODE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field>
+              <Label htmlFor="edit-tx-reference">Reference Number</Label>
+              <Input
+                id="edit-tx-reference"
+                name="referenceNumber"
+                value={editReferenceNumber}
+                onChange={(event) => setEditReferenceNumber(event.target.value)}
+              />
+              <Helper>Optional -- e.g. a cash payment often has none.</Helper>
+            </Field>
+            <Field>
+              <Label htmlFor="edit-tx-notes">Notes</Label>
+              <Input
+                id="edit-tx-notes"
+                name="notes"
+                value={editNotes}
+                onChange={(event) => setEditNotes(event.target.value)}
+              />
+            </Field>
+
+            {editFormError ? (
+              <p role="alert" className="mb-4 text-[13.4px] text-danger">
+                {editFormError}
+              </p>
+            ) : null}
+
+            <div className="flex gap-2.5">
+              <Button type="submit" disabled={editSubmitting}>
+                {editSubmitting ? "Saving…" : "Save"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={closeEditPaymentDialog}
+                disabled={editSubmitting}
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -907,11 +1100,20 @@ function AdjustmentChip({ adjustment }: { adjustment: AdjustmentChipInfo | null 
 /**
  * The recorded-payments list shown under a Partner/Sub-partner's Should Pay
  * row once transactions exist for them against this requirement (Story
- * 3.3's Code Map) -- Date, Amount, Payment Mode, nothing more. Renders
- * nothing when there's nothing to show (no fetch-state handling here --
- * `recordedPaymentsFor` already resolves "not loaded yet" to `[]`).
+ * 3.3's Code Map) -- Date, Amount, Payment Mode, plus an "Edit" affordance
+ * per row (Story 3.7, Owner/Admin-facing only, matching Record Payment's own
+ * unconditional-here-since-the-API-itself-gates precedent immediately
+ * above). Renders nothing when there's nothing to show (no fetch-state
+ * handling here -- `recordedPaymentsFor` already resolves "not loaded yet"
+ * to `[]`).
  */
-function RecordedPayments({ transactions }: { transactions: InvestmentTransaction[] }) {
+function RecordedPayments({
+  transactions,
+  onEdit,
+}: {
+  transactions: InvestmentTransaction[];
+  onEdit: (transaction: InvestmentTransaction) => void;
+}) {
   if (transactions.length === 0) {
     return null;
   }
@@ -922,6 +1124,9 @@ function RecordedPayments({ transactions }: { transactions: InvestmentTransactio
           <span>{transaction.transactionDate}</span>
           <Amount value={transaction.amount} size="sm" />
           <span>{PAYMENT_MODE_LABELS[transaction.paymentMode]}</span>
+          <Button variant="ghost" onClick={() => onEdit(transaction)}>
+            Edit
+          </Button>
         </div>
       ))}
     </div>

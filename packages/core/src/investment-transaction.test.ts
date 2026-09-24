@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type {
+  AuditLogEntry,
   InvestmentRequirement,
   InvestmentTransaction,
   Money,
@@ -8,19 +9,24 @@ import type {
   SubPartnerShare,
 } from "@niveshbook/types";
 import { SharesNotFullyAllocatedError, SubPartnerSharesOverAllocatedError } from "./should-pay";
+import { computeInvestmentAdjustment, shareKey } from "./investment-adjustment";
 import type {
   CreateInvestmentTransactionInput,
+  EditInvestmentTransactionInput,
   InvestmentTransactionPort,
 } from "./investment-transaction-port";
 import {
   buildTransactionSnapshot,
+  editInvestmentTransaction,
   InvalidPaymentModeError,
   InvalidTransactionAmountError,
   InvalidTransactionDateError,
+  listAuditLogForTransaction,
   listInvestmentTransactions,
   MissingIdempotencyKeyError,
   recordInvestmentTransaction,
   ShareNotFoundError,
+  type EditInvestmentTransactionRequest,
   type RecordInvestmentTransactionInput,
 } from "./investment-transaction";
 
@@ -92,15 +98,45 @@ function makeInput(overrides: Partial<RecordInvestmentTransactionInput> = {}): R
  * test (`transactions/route.test.ts`, with this port mocked), not this
  * domain-layer test file's.
  */
+/**
+ * Story 3.7 addition: also implements `findById`/`editTransaction`/
+ * `findAuditLogByTransactionId` -- mutating `rows` in place on a successful
+ * edit (never touching `sharePercentSnapshot`/`shouldPaySnapshot`/
+ * `requirementId`/`projectId`/`partyType`/`shareId`/`createdAt`, mirroring
+ * `EditInvestmentTransactionInput`'s own structural guarantee -- those
+ * fields simply aren't present on `input` to copy from) and appending one
+ * `"edit"` entry to `auditEntries`, mirroring `recordTransaction`'s own
+ * `"create"`-entry bookkeeping above one level over.
+ *
+ * `editTransaction` DOES implement a real, if simplified, idempotency
+ * check -- mirroring `packages/db`'s own port implementation's
+ * check-first-then-replay contract (concurrent-race recovery, the part
+ * that genuinely needs a live Postgres UNIQUE constraint to exercise, is
+ * still out of scope here and covered at `packages/db/src/ports.test.ts`'s
+ * layer): a `Map<idempotencyKey, InvestmentTransaction>` tracks every
+ * `idempotencyKey` this fake has already applied an edit for. A repeat call
+ * with a previously-seen key returns that stored transaction unchanged
+ * (`edited: false`), without mutating `rows` or appending a second
+ * `auditEntries` entry -- so a test calling `editInvestmentTransaction`
+ * twice with the same key through this fake genuinely exercises the
+ * dedup logic, not just a hand-fed `{edited: false}`.
+ */
 function createFakeInvestmentTransactionPort(): InvestmentTransactionPort & {
   calls: CreateInvestmentTransactionInput[];
+  editCalls: EditInvestmentTransactionInput[];
   rows: InvestmentTransaction[];
+  auditEntries: AuditLogEntry[];
 } {
   const calls: CreateInvestmentTransactionInput[] = [];
+  const editCalls: EditInvestmentTransactionInput[] = [];
   const rows: InvestmentTransaction[] = [];
+  const auditEntries: AuditLogEntry[] = [];
+  const appliedEditsByIdempotencyKey = new Map<string, InvestmentTransaction>();
   return {
     calls,
+    editCalls,
     rows,
+    auditEntries,
     async recordTransaction(input) {
       calls.push(input);
       const transaction: InvestmentTransaction = {
@@ -119,10 +155,66 @@ function createFakeInvestmentTransactionPort(): InvestmentTransactionPort & {
         createdAt: new Date().toISOString(),
       };
       rows.push(transaction);
+      auditEntries.push({
+        id: `audit-${auditEntries.length + 1}`,
+        entityType: "investment_transaction",
+        entityId: transaction.id,
+        action: "create",
+        actorUserId: input.actorUserId,
+        oldValue: null,
+        newValue: transaction,
+        reason: null,
+        createdAt: new Date().toISOString(),
+      });
       return { transaction, created: true };
     },
     async listByRequirementId(requirementId) {
       return rows.filter((row) => row.requirementId === requirementId);
+    },
+    async findById(id) {
+      return rows.find((row) => row.id === id) ?? null;
+    },
+    async editTransaction(input) {
+      editCalls.push(input);
+
+      const alreadyApplied = appliedEditsByIdempotencyKey.get(input.idempotencyKey);
+      if (alreadyApplied) {
+        // Idempotent replay -- mirrors `packages/db`'s check-first path:
+        // return the already-edited current state, no new mutation, no new
+        // audit entry.
+        return { transaction: alreadyApplied, edited: false };
+      }
+
+      const index = rows.findIndex((row) => row.id === input.transactionId);
+      const existing = rows[index];
+      if (!existing) {
+        throw new Error(`No fake row for transactionId ${input.transactionId}`);
+      }
+      const updated: InvestmentTransaction = {
+        ...existing,
+        amount: input.amount,
+        transactionDate: input.transactionDate,
+        paymentMode: input.paymentMode,
+        referenceNumber: input.referenceNumber,
+        notes: input.notes,
+      };
+      rows[index] = updated;
+      auditEntries.push({
+        id: `audit-${auditEntries.length + 1}`,
+        entityType: "investment_transaction",
+        entityId: updated.id,
+        action: "edit",
+        actorUserId: input.actorUserId,
+        oldValue: existing,
+        newValue: updated,
+        reason: input.reason,
+        createdAt: new Date().toISOString(),
+      });
+      appliedEditsByIdempotencyKey.set(input.idempotencyKey, updated);
+      return { transaction: updated, edited: true };
+    },
+    async findAuditLogByTransactionId(transactionId) {
+      return auditEntries.filter((entry) => entry.entityId === transactionId);
     },
   };
 }
@@ -486,5 +578,332 @@ describe("listInvestmentTransactions", () => {
     const result = await listInvestmentTransactions("req-none", { investmentTransactions: port });
 
     expect(result).toEqual([]);
+  });
+});
+
+function makeEditInput(
+  overrides: Partial<EditInvestmentTransactionRequest> = {},
+): EditInvestmentTransactionRequest {
+  return {
+    amount: "750000",
+    transactionDate: "2026-10-06",
+    paymentMode: "upi",
+    referenceNumber: "REF-2",
+    notes: "corrected amount",
+    idempotencyKey: "edit-idem-1",
+    reason: "typo'd the original amount",
+    ...overrides,
+  };
+}
+
+/**
+ * Seeds one transaction via `recordInvestmentTransaction` and returns its
+ * id, so `editInvestmentTransaction`'s tests have a real row (with a real
+ * snapshot) to edit against.
+ */
+async function seedTransaction(
+  port: ReturnType<typeof createFakeInvestmentTransactionPort>,
+): Promise<InvestmentTransaction> {
+  const requirement = makeRequirement();
+  const partners = [makePartner({ partnerId: "a", name: "A", sharePercent: "100" as Percent })];
+  const { transaction } = await recordInvestmentTransaction(
+    "project-1",
+    "req-1",
+    requirement,
+    partners,
+    {},
+    makeInput({ shareId: "a" }),
+    "actor-1",
+    { investmentTransactions: port },
+  );
+  return transaction;
+}
+
+describe("editInvestmentTransaction — Story 3.7", () => {
+  it("rejects a negative amount with InvalidTransactionAmountError, no write", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const seeded = await seedTransaction(port);
+
+    await expect(
+      editInvestmentTransaction(seeded.id, makeEditInput({ amount: "-500" }), "owner-1", {
+        investmentTransactions: port,
+      }),
+    ).rejects.toThrow(InvalidTransactionAmountError);
+    expect(port.editCalls).toHaveLength(0);
+  });
+
+  it("accepts amount '0' -- the same no-minimum-payment rule as create", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const seeded = await seedTransaction(port);
+
+    const result = await editInvestmentTransaction(
+      seeded.id,
+      makeEditInput({ amount: "0" }),
+      "owner-1",
+      { investmentTransactions: port },
+    );
+
+    expect(result.transaction.amount).toBe("0");
+  });
+
+  it("rejects a malformed transactionDate with InvalidTransactionDateError", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const seeded = await seedTransaction(port);
+
+    await expect(
+      editInvestmentTransaction(
+        seeded.id,
+        makeEditInput({ transactionDate: "not-a-date" }),
+        "owner-1",
+        { investmentTransactions: port },
+      ),
+    ).rejects.toThrow(InvalidTransactionDateError);
+    expect(port.editCalls).toHaveLength(0);
+  });
+
+  it("rejects an unrecognized paymentMode with InvalidPaymentModeError", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const seeded = await seedTransaction(port);
+
+    await expect(
+      editInvestmentTransaction(seeded.id, makeEditInput({ paymentMode: "bitcoin" }), "owner-1", {
+        investmentTransactions: port,
+      }),
+    ).rejects.toThrow(InvalidPaymentModeError);
+    expect(port.editCalls).toHaveLength(0);
+  });
+
+  it("rejects a missing/blank idempotencyKey with MissingIdempotencyKeyError", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const seeded = await seedTransaction(port);
+
+    await expect(
+      editInvestmentTransaction(seeded.id, makeEditInput({ idempotencyKey: "   " }), "owner-1", {
+        investmentTransactions: port,
+      }),
+    ).rejects.toThrow(MissingIdempotencyKeyError);
+    expect(port.editCalls).toHaveLength(0);
+  });
+
+  it("normalizes an explicit empty-string/whitespace-only referenceNumber/notes/reason to null", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const seeded = await seedTransaction(port);
+
+    await editInvestmentTransaction(
+      seeded.id,
+      makeEditInput({ referenceNumber: "", notes: "\t ", reason: "" }),
+      "owner-1",
+      { investmentTransactions: port },
+    );
+
+    expect(port.editCalls[0]?.referenceNumber).toBeNull();
+    expect(port.editCalls[0]?.notes).toBeNull();
+    expect(port.editCalls[0]?.reason).toBeNull();
+  });
+
+  it("trims a non-empty referenceNumber/notes/reason but keeps its content", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const seeded = await seedTransaction(port);
+
+    await editInvestmentTransaction(
+      seeded.id,
+      makeEditInput({ referenceNumber: "  REF-9  ", notes: "  fixed  ", reason: "  typo  " }),
+      "owner-1",
+      { investmentTransactions: port },
+    );
+
+    expect(port.editCalls[0]?.referenceNumber).toBe("REF-9");
+    expect(port.editCalls[0]?.notes).toBe("fixed");
+    expect(port.editCalls[0]?.reason).toBe("typo");
+  });
+
+  it("passes the transactionId/actorUserId through to the port untouched", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const seeded = await seedTransaction(port);
+
+    await editInvestmentTransaction(seeded.id, makeEditInput(), "actor-99", {
+      investmentTransactions: port,
+    });
+
+    expect(port.editCalls[0]?.transactionId).toBe(seeded.id);
+    expect(port.editCalls[0]?.actorUserId).toBe("actor-99");
+  });
+
+  /**
+   * The spec's central guarantee (AD-3 applies to edits too): every
+   * identity/snapshot field must be byte-identical before and after an
+   * edit -- only `amount`/`transactionDate`/`paymentMode`/`referenceNumber`/
+   * `notes` may change. This is doubly guaranteed:
+   *
+   * - Structurally, by `EditInvestmentTransactionInput`'s shape -- it has no
+   *   `sharePercentSnapshot`/`shouldPaySnapshot`/`requirementId`/`projectId`/
+   *   `partyType`/`shareId`/its own original `idempotencyKey`/`createdAt`
+   *   fields to even pass through, so the port's `UPDATE` structurally
+   *   cannot touch any of those 8 fields.
+   * - At runtime, by the assertions below -- but only 7 of those 8 fields
+   *   are (or can be) asserted here, not all 8: `idempotencyKey` is
+   *   deliberately excluded, because `InvestmentTransaction` (the type
+   *   `result.transaction` actually is) never exposes that column to begin
+   *   with -- it's a write-only, internal field on the row (Story 3.3's
+   *   original design), so there is nothing on `result.transaction` to read
+   *   and compare it against. The structural guarantee above still fully
+   *   covers it; this runtime assertion just can't, by construction.
+   */
+  it("never touches sharePercentSnapshot/shouldPaySnapshot/requirementId/projectId/partyType/shareId/createdAt", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const seeded = await seedTransaction(port);
+
+    const result = await editInvestmentTransaction(
+      seeded.id,
+      makeEditInput({ amount: "999999" }),
+      "owner-1",
+      { investmentTransactions: port },
+    );
+
+    expect(result.transaction.id).toBe(seeded.id);
+    expect(result.transaction.sharePercentSnapshot).toBe(seeded.sharePercentSnapshot);
+    expect(result.transaction.shouldPaySnapshot).toBe(seeded.shouldPaySnapshot);
+    expect(result.transaction.requirementId).toBe(seeded.requirementId);
+    expect(result.transaction.projectId).toBe(seeded.projectId);
+    expect(result.transaction.partyType).toBe(seeded.partyType);
+    expect(result.transaction.shareId).toBe(seeded.shareId);
+    expect(result.transaction.createdAt).toBe(seeded.createdAt);
+
+    // ...while the mutable fields genuinely did change.
+    expect(result.transaction.amount).toBe("999999");
+    expect(result.transaction.amount).not.toBe(seeded.amount);
+  });
+
+  it("calls the port's editTransaction and returns edited: true on a genuine edit", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const seeded = await seedTransaction(port);
+
+    const result = await editInvestmentTransaction(seeded.id, makeEditInput(), "owner-1", {
+      investmentTransactions: port,
+    });
+
+    expect(result.edited).toBe(true);
+    expect(port.editCalls).toHaveLength(1);
+  });
+
+  /**
+   * The idempotency-replay guarantee (I/O matrix row 7, AD-5) -- calling
+   * `editInvestmentTransaction` twice with the SAME `idempotencyKey` must
+   * apply the edit exactly once. Unlike the tests above, this exercises the
+   * fake port's OWN idempotency-tracking logic (see
+   * `createFakeInvestmentTransactionPort`'s doc comment) rather than a
+   * hand-fed `{edited: false}` result -- both calls genuinely go through
+   * `editInvestmentTransaction` -> the port's `editTransaction`, and the
+   * second call is the fake's own dedup logic deciding not to re-apply.
+   */
+  it("applies a genuine edit only once when the SAME idempotencyKey is used twice (idempotent replay)", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const seeded = await seedTransaction(port); // amount "700000"
+    const input = makeEditInput({ amount: "850000", idempotencyKey: "replay-key-1" });
+
+    const first = await editInvestmentTransaction(seeded.id, input, "owner-1", {
+      investmentTransactions: port,
+    });
+    const second = await editInvestmentTransaction(seeded.id, input, "owner-1", {
+      investmentTransactions: port,
+    });
+
+    expect(first.edited).toBe(true);
+    expect(second.edited).toBe(false);
+    expect(second.transaction).toEqual(first.transaction);
+    expect(second.transaction.amount).toBe("850000");
+
+    // The port's editTransaction was genuinely called twice (this function
+    // performs no dedup of its own -- that's the port's job) ...
+    expect(port.editCalls).toHaveLength(2);
+    // ... but only ONE edit was actually applied: exactly one "edit" audit
+    // entry exists for this transaction, not two.
+    const entries = await listAuditLogForTransaction(seeded.id, { investmentTransactions: port });
+    expect(entries.filter((entry) => entry.action === "edit")).toHaveLength(1);
+  });
+});
+
+describe("listAuditLogForTransaction — Story 3.7", () => {
+  it("is a thin pass-through to the port, returning the create entry plus any edit entries", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const seeded = await seedTransaction(port);
+    await editInvestmentTransaction(seeded.id, makeEditInput(), "owner-1", {
+      investmentTransactions: port,
+    });
+
+    const entries = await listAuditLogForTransaction(seeded.id, { investmentTransactions: port });
+
+    expect(entries).toHaveLength(2);
+    expect(entries[0]?.action).toBe("create");
+    expect(entries[1]?.action).toBe("edit");
+  });
+
+  it("returns an empty list for a transaction with no audit entries recorded by this fake", async () => {
+    const port = createFakeInvestmentTransactionPort();
+
+    const entries = await listAuditLogForTransaction("tx-none", { investmentTransactions: port });
+
+    expect(entries).toEqual([]);
+  });
+});
+
+/**
+ * Proves Story 3.4's `computeInvestmentAdjustment` genuinely picks up an
+ * edited amount with ZERO new code from this story (spec-3-7's Intent) --
+ * not merely asserted. `computeInvestmentAdjustment` is imported unmodified
+ * from `./investment-adjustment` (this story never touches that file); the
+ * only wiring this test does itself is grouping the (now-edited) transaction
+ * list by `shareKey`, exactly as `apps/web`'s adjustments route already does.
+ */
+describe("Story 3.4's computeInvestmentAdjustment reflects an edited amount with no new recompute logic", () => {
+  it("sums the corrected amount, not the original one, on the next view", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const seeded = await seedTransaction(port); // amount "700000"
+
+    await editInvestmentTransaction(seeded.id, makeEditInput({ amount: "850000" }), "owner-1", {
+      investmentTransactions: port,
+    });
+
+    const requirement = makeRequirement();
+    const partners = [makePartner({ partnerId: "a", name: "A", sharePercent: "100" as Percent })];
+
+    const transactions = await listInvestmentTransactions("req-1", { investmentTransactions: port });
+    const byShareKey: Record<string, Money[]> = {};
+    for (const transaction of transactions) {
+      const key = shareKey(transaction.partyType, transaction.shareId);
+      byShareKey[key] = [...(byShareKey[key] ?? []), transaction.amount];
+    }
+
+    // A minimal, purely-echoing `InvestmentAdjustmentPort.upsert` -- this
+    // test's only interest is what `computeInvestmentAdjustment` (Story
+    // 3.4, imported unmodified) computes `actualPaid` as, not the
+    // persisted-row plumbing around it. Mirrors `investment-adjustment.test.ts`'s
+    // own `makeUpsertMock` shape.
+    let counter = 0;
+    const upsert = async (input: {
+      projectId: string;
+      partyType: "partner" | "sub_partner";
+      shareId: string;
+      requirementId: string;
+      shouldPay: Money;
+      actualPaid: Money;
+      adjustmentType: "pending" | "extra_paid" | "none";
+      adjustmentAmount: Money;
+    }) => {
+      counter += 1;
+      return {
+        id: `adj-${counter}`,
+        ...input,
+        updatedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      };
+    };
+
+    const results = await computeInvestmentAdjustment(requirement, partners, {}, byShareKey, {
+      investmentAdjustments: { upsert, listByProjectId: async () => [] },
+    });
+
+    expect(results[0]?.actualPaid).toBe("850000");
+    expect(results[0]?.actualPaid).not.toBe("700000");
   });
 });

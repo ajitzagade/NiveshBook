@@ -288,3 +288,30 @@ export interface RecommendedAmount {
   /** ISO 8601 timestamp -- when this row was written (creation time only, never updated). */
   createdAt: string;
 }
+
+/**
+ * One entry in the generic `audit_log` table (Epic 3, Story 3.3) -- a thin,
+ * generic read type, deliberately entity-agnostic: `entityType`/`entityId`
+ * together identify the row this entry is about (e.g. `entityType:
+ * "investment_transaction"`, `entityId` = that row's `id`). `oldValue` is
+ * `null` for a create-only entry (Story 3.3), populated for `"edit"` (Story
+ * 3.7)/`"cancel"` (Story 3.8) entries with the full previous row as JSON;
+ * `newValue` is always populated, with the full resulting row as JSON.
+ * `reason` is nullable -- unused (`null`) by a `"create"` entry, optional on
+ * an `"edit"`/`"cancel"` entry. `oldValue`/`newValue` are intentionally
+ * untyped (`unknown`) rather than a specific entity's shape -- this table is
+ * reused unchanged across every entity Epic 3/4 eventually audits (AD-5), so
+ * this type can't assume any one entity's row shape.
+ */
+export interface AuditLogEntry {
+  id: string;
+  entityType: string;
+  entityId: string;
+  action: string;
+  actorUserId: string;
+  oldValue: unknown;
+  newValue: unknown;
+  reason: string | null;
+  /** ISO 8601 timestamp */
+  createdAt: string;
+}

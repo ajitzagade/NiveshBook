@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { InvestmentTransaction, Money, Percent } from "@niveshbook/types";
-import { isUniqueViolation, matchesRequest } from "./ports";
+import { isUniqueViolation, matchesEditRequest, matchesRequest } from "./ports";
 
 function makeExistingTransaction(overrides: Partial<InvestmentTransaction> = {}): InvestmentTransaction {
   return {
@@ -182,5 +182,124 @@ describe("matchesRequest", () => {
     });
 
     expect(result).toBe(false);
+  });
+});
+
+/**
+ * Narrowly-scoped unit tests for `matchesEditRequest` -- the `editTransaction`
+ * (Story 3.7) analog of `matchesRequest` above, one level over: the
+ * idempotency-replay match check confirms an `audit_log` row found by
+ * `idempotencyKey` actually represents the *current* edit request, not an
+ * unrelated key collision. Mirrors `matchesRequest`'s own test shape,
+ * including the `numeric(14,2)`-round-trip regression coverage (here via
+ * `entry.newValue.amount`, since the stored value passes through `jsonb`
+ * rather than a typed column, but still originates from the same
+ * `numeric(14,2)` column via `.returning()`).
+ */
+describe("matchesEditRequest", () => {
+  function makeAuditEntry(overrides: { entityId?: string; newValue?: unknown } = {}) {
+    return {
+      entityId: overrides.entityId ?? "tx-1",
+      // `"newValue" in overrides` (not `??`) -- `??` would treat an explicit
+      // `newValue: null` override as "not provided" and fall through to the
+      // default object, defeating the malformed-row test cases below.
+      newValue:
+        "newValue" in overrides
+          ? overrides.newValue
+          : {
+              amount: "750000",
+              transactionDate: "2026-10-06",
+              paymentMode: "upi",
+              referenceNumber: "REF-2",
+              notes: "corrected",
+            },
+    };
+  }
+
+  function makeEditInput(overrides: Record<string, unknown> = {}) {
+    return {
+      transactionId: "tx-1",
+      amount: "750000" as Money,
+      transactionDate: "2026-10-06",
+      paymentMode: "upi" as const,
+      referenceNumber: "REF-2",
+      notes: "corrected",
+      ...overrides,
+    };
+  }
+
+  it("matches when every field is byte-identical", () => {
+    expect(matchesEditRequest(makeAuditEntry(), makeEditInput())).toBe(true);
+  });
+
+  it("matches a legitimate replay even though the stored amount round-tripped through numeric(14,2) ('750000.00' vs. a freshly-submitted '750000')", () => {
+    const entry = makeAuditEntry({
+      newValue: {
+        amount: "750000.00",
+        transactionDate: "2026-10-06",
+        paymentMode: "upi",
+        referenceNumber: "REF-2",
+        notes: "corrected",
+      },
+    });
+
+    expect(matchesEditRequest(entry, makeEditInput({ amount: "750000" as Money }))).toBe(true);
+  });
+
+  it("rejects a mismatched entityId (a different transaction entirely)", () => {
+    const entry = makeAuditEntry({ entityId: "tx-2" });
+
+    expect(matchesEditRequest(entry, makeEditInput({ transactionId: "tx-1" }))).toBe(false);
+  });
+
+  it("rejects a genuinely different amount -- a true key collision, not a replay", () => {
+    expect(matchesEditRequest(makeAuditEntry(), makeEditInput({ amount: "750000.01" as Money }))).toBe(
+      false,
+    );
+  });
+
+  it("rejects a mismatched transactionDate even when every other field matches", () => {
+    expect(
+      matchesEditRequest(makeAuditEntry(), makeEditInput({ transactionDate: "2026-10-07" })),
+    ).toBe(false);
+  });
+
+  it("rejects a mismatched paymentMode even when every other field matches", () => {
+    expect(matchesEditRequest(makeAuditEntry(), makeEditInput({ paymentMode: "neft" }))).toBe(false);
+  });
+
+  it("rejects a mismatched referenceNumber/notes even when amount/date/mode match", () => {
+    expect(
+      matchesEditRequest(makeAuditEntry(), makeEditInput({ referenceNumber: "REF-9" })),
+    ).toBe(false);
+    expect(matchesEditRequest(makeAuditEntry(), makeEditInput({ notes: "different note" }))).toBe(
+      false,
+    );
+  });
+
+  it("treats a null referenceNumber/notes on both sides as a match", () => {
+    const entry = makeAuditEntry({
+      newValue: {
+        amount: "750000",
+        transactionDate: "2026-10-06",
+        paymentMode: "upi",
+        referenceNumber: null,
+        notes: null,
+      },
+    });
+
+    expect(
+      matchesEditRequest(entry, makeEditInput({ referenceNumber: null, notes: null })),
+    ).toBe(true);
+  });
+
+  it("rejects a newValue that isn't a well-formed object (defense in depth against a malformed jsonb row)", () => {
+    expect(matchesEditRequest(makeAuditEntry({ newValue: null }), makeEditInput())).toBe(false);
+    expect(matchesEditRequest(makeAuditEntry({ newValue: "not-an-object" }), makeEditInput())).toBe(
+      false,
+    );
+    expect(matchesEditRequest(makeAuditEntry({ newValue: { amount: 750000 } }), makeEditInput())).toBe(
+      false,
+    );
   });
 });

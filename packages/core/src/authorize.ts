@@ -31,6 +31,8 @@ export type Action =
   | "should_pay:view"
   | "investment_transactions:create"
   | "investment_transactions:list"
+  | "investment_transactions:edit"
+  | "investment_transactions:view_audit"
   | "investment_adjustments:view"
   | "investment_status:view";
 
@@ -120,6 +122,21 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // precedent); a person's own transaction history view is Epic 5's job.
   "investment_transactions:create": new Set(["owner_admin"]),
   "investment_transactions:list": new Set(["owner_admin"]),
+  // Story 3.7: editing a previously recorded transaction is Owner/Admin-only
+  // -- no self-access, unlike `investment_transactions:create` (spec-3-7's
+  // Decisions: the AC's persona is explicitly "As an Owner/Admin", with no
+  // "(or the transaction's own Partner/Sub-partner)" qualifier). Mirrors
+  // `investment_transactions:list`'s identical all-or-nothing-for-the-role
+  // shape, checked via `authorizeScope()` only.
+  "investment_transactions:edit": new Set(["owner_admin"]),
+  // Story 3.7: viewing a transaction's audit trail is deliberately narrower
+  // than editing it but broader than `investment_transactions:list` -- the
+  // AC explicitly names "Owner/Admin (or the transaction's own Partner/
+  // Sub-partner)" as viewers. The role-table entry here still gates the
+  // Owner/Admin-viewing-anyone's-trail path; self-access itself is admitted
+  // via `SELF_ACCESS_ACTIONS` below, mirroring `investment_status:view`'s
+  // exact Story 3.6 shape one endpoint over.
+  "investment_transactions:view_audit": new Set(["owner_admin"]),
   // Story 3.4: Investment Adjustment (Should Pay - Actual Paid) is
   // Owner/Admin-only in this story, mirroring `should_pay:view`'s identical
   // precedent (spec-3-4's Decisions) -- the AC's "As a Partner or Sub-partner"
@@ -179,6 +196,14 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
  * my own view" -- never a separate grant for viewing someone *else's*
  * Sub-partner directly (that party's own self-access, or Owner/Admin, is
  * required instead).
+ *
+ * Story 3.7 adds `investment_transactions:view_audit`: identical shape to
+ * `investment_status:view` -- the transaction's own linked Partner/
+ * Sub-partner may view its audit trail (`resourceRef.ownerId` is the
+ * transaction's target share's own `userId`, resolved by the route from the
+ * Project's *current* Partner/Sub-partner Shares the same way beforehand).
+ * `investment_transactions:edit` is deliberately NOT in this set -- editing
+ * stays Owner/Admin-only, gated by the role table above alone.
  */
 const SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set([
   "users:view",
@@ -186,6 +211,7 @@ const SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set([
   "subpartner_shares:view",
   "investment_transactions:create",
   "investment_status:view",
+  "investment_transactions:view_audit",
 ]);
 
 /**

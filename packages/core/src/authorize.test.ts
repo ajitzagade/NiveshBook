@@ -540,6 +540,49 @@ describe("authorizeScope — investment_transactions:list (Story 3.3)", () => {
   });
 });
 
+describe("authorizeScope — investment_transactions:edit (Story 3.7, Owner/Admin-only, no self-access)", () => {
+  it("allows an owner_admin to edit a transaction", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("owner-1", "investment_transactions:edit", deps);
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it.each(["partner", "sub_partner", "project_admin"] as const)(
+    "denies a %s from editing a transaction -- Owner/Admin-only, no self/scope override even though investment_transactions:create (Story 3.3) grants self-access",
+    async (role) => {
+      const users = createFakeUserPort([makeUser({ id: "actor-1", role })]);
+      const deps: AuthorizeDeps = { users };
+
+      const result = await authorizeScope("actor-1", "investment_transactions:edit", deps);
+
+      expect(result).toEqual({ allowed: false });
+    },
+  );
+
+  it("denies a partner even when their own userId is passed as scopeOwnerIds -- not a SCOPE_SELF_ACCESS_ACTIONS entry", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("partner-user-1", "investment_transactions:edit", deps, [
+      "partner-user-1",
+    ]);
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies an actor that no longer exists", async () => {
+    const users = createFakeUserPort([]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("ghost", "investment_transactions:edit", deps);
+
+    expect(result).toEqual({ allowed: false });
+  });
+});
+
 describe("authorizeScope — investment_adjustments:view (Story 3.4)", () => {
   it("allows an owner_admin to view Investment Adjustments", async () => {
     const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
@@ -762,6 +805,108 @@ describe("authorize — investment_status:view (Story 3.6, self-access override,
     const deps: AuthorizeDeps = { users };
 
     const result = await authorize("ghost", "investment_status:view", { ownerId: "someone-else" }, deps);
+
+    expect(result).toEqual({ allowed: false });
+  });
+});
+
+describe("authorize — investment_transactions:view_audit (Story 3.7, self-access override, identical shape to investment_status:view)", () => {
+  it("allows an owner_admin to view anyone's transaction audit trail", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "owner-1",
+      "investment_transactions:view_audit",
+      { ownerId: "partner-user-1" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("allows a Partner to view their own transaction's audit trail (resourceRef.ownerId matches their own userId)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "partner-user-1",
+      "investment_transactions:view_audit",
+      { ownerId: "partner-user-1" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("allows a Sub-partner to view their own transaction's audit trail (resourceRef.ownerId matches their own userId)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "sub-partner-1", role: "sub_partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "sub-partner-1",
+      "investment_transactions:view_audit",
+      { ownerId: "sub-partner-1" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("matches self-access case-insensitively (UUIDs are case-insensitive)", async () => {
+    const users = createFakeUserPort([
+      makeUser({ id: "0192f5a0-1111-7000-8000-000000000001", role: "partner" }),
+    ]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "0192f5a0-1111-7000-8000-000000000001",
+      "investment_transactions:view_audit",
+      { ownerId: "0192F5A0-1111-7000-8000-000000000001" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("denies a co-Partner attempting to view another Partner's transaction audit trail", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-a", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "partner-user-a",
+      "investment_transactions:view_audit",
+      { ownerId: "partner-user-b" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies when the target share has no linked user (ownerId is empty)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-a", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "partner-user-a",
+      "investment_transactions:view_audit",
+      { ownerId: "" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies an actor that no longer exists, even targeting their own (former) id", async () => {
+    const users = createFakeUserPort([]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "ghost",
+      "investment_transactions:view_audit",
+      { ownerId: "someone-else" },
+      deps,
+    );
 
     expect(result).toEqual({ allowed: false });
   });

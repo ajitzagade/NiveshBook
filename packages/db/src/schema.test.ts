@@ -301,7 +301,7 @@ describe("recommended_amounts table schema (Story 3.5)", () => {
   });
 });
 
-describe("audit_log table schema (Story 3.3, AD-5)", () => {
+describe("audit_log table schema (Story 3.3, AD-5; idempotencyKey column added Story 3.7)", () => {
   it("marks entityType/entityId/action/actorUserId/newValue NOT NULL", () => {
     expect(auditLog.entityType.notNull).toBe(true);
     expect(auditLog.entityId.notNull).toBe(true);
@@ -327,5 +327,10 @@ describe("audit_log table schema (Story 3.3, AD-5)", () => {
   it("marks createdAt NOT NULL with a DB-side default", () => {
     expect(auditLog.createdAt.notNull).toBe(true);
     expect(auditLog.createdAt.hasDefault).toBe(true);
+  });
+
+  it("leaves idempotencyKey nullable but UNIQUE-when-present (Story 3.7) -- 'create' entries carry none, 'edit'/'cancel' entries do; mirrors investment_transactions.idempotencyKey's UNIQUE-at-the-DB-level precedent, minus the NOT NULL (Postgres allows multiple NULLs under a UNIQUE constraint)", () => {
+    expect(auditLog.idempotencyKey.notNull).toBe(false);
+    expect(auditLog.idempotencyKey.isUnique).toBe(true);
   });
 });

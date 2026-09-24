@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { PaymentMode } from "@niveshbook/types";
+import { UUID_PATTERN } from "@/lib/ids";
 
 /**
  * Shared by `POST`/`GET .../investment-requirements/[requirementId]/transactions`
@@ -104,3 +105,92 @@ const PAYMENT_MODE_LABELS: Record<PaymentMode, string> = {
  */
 export const PAYMENT_MODES = Object.keys(PAYMENT_MODE_LABELS) as PaymentMode[];
 export { PAYMENT_MODE_LABELS };
+
+/**
+ * Shared by `PATCH .../transactions/[transactionId]` and
+ * `GET .../transactions/[transactionId]/audit-log` (Story 3.7) --
+ * `transactionId` path-param validation/not-found response, mirroring
+ * `investment-requirements/shared.ts`'s `isValidRequirementId`/
+ * `requirementNotFoundResponse` one resource over.
+ */
+export const TRANSACTION_NOT_FOUND_MESSAGE = "Transaction not found.";
+
+/** The uniform 404 body/status both new routes return for an unknown, malformed, or cross-requirement/cross-project `transactionId`. */
+export function transactionNotFoundResponse(): NextResponse {
+  return NextResponse.json(
+    { code: "not_found", message: TRANSACTION_NOT_FOUND_MESSAGE },
+    { status: 404 },
+  );
+}
+
+/** `apps/web/lib/ids.ts`'s malformed-id-looks-like-404 convention, named for this resource's `transactionId`. */
+export function isValidTransactionId(id: string): boolean {
+  return UUID_PATTERN.test(id);
+}
+
+/**
+ * `PATCH .../transactions/[transactionId]`'s body shape (Story 3.7) --
+ * mirrors `ValidTransactionBody` one level over, minus `partyType`/`shareId`
+ * (an edit never moves a transaction to a different share -- this story's
+ * Boundaries) and plus an optional `reason` (`audit_log.reason`'s existing
+ * nullable design). The actual field-level validation (amount format, date
+ * format, payment mode membership, idempotency key presence) happens inside
+ * `packages/core`'s `editInvestmentTransaction`, not this type guard -- this
+ * only rejects a structurally malformed body before ever reaching the
+ * domain layer.
+ */
+export const EDIT_INVALID_REQUEST_MESSAGE =
+  'Request body must be valid JSON with an `amount` string, a `transactionDate` string (YYYY-MM-DD), a `paymentMode` string, an `idempotencyKey` string, optional `referenceNumber`/`notes` strings, and an optional `reason` string.';
+
+export interface ValidEditTransactionBody {
+  amount: string;
+  transactionDate: string;
+  paymentMode: string;
+  referenceNumber: string | null;
+  notes: string | null;
+  idempotencyKey: string;
+  reason: string | null;
+}
+
+export function isValidEditTransactionBody(body: unknown): body is ValidEditTransactionBody {
+  if (typeof body !== "object" || body === null) {
+    return false;
+  }
+  const candidate = body as {
+    amount?: unknown;
+    transactionDate?: unknown;
+    paymentMode?: unknown;
+    referenceNumber?: unknown;
+    notes?: unknown;
+    idempotencyKey?: unknown;
+    reason?: unknown;
+  };
+
+  if (typeof candidate.amount !== "string") {
+    return false;
+  }
+  if (typeof candidate.transactionDate !== "string") {
+    return false;
+  }
+  if (typeof candidate.paymentMode !== "string") {
+    return false;
+  }
+  if (
+    candidate.referenceNumber !== undefined &&
+    candidate.referenceNumber !== null &&
+    typeof candidate.referenceNumber !== "string"
+  ) {
+    return false;
+  }
+  if (candidate.notes !== undefined && candidate.notes !== null && typeof candidate.notes !== "string") {
+    return false;
+  }
+  if (typeof candidate.idempotencyKey !== "string") {
+    return false;
+  }
+  if (candidate.reason !== undefined && candidate.reason !== null && typeof candidate.reason !== "string") {
+    return false;
+  }
+
+  return true;
+}

@@ -12,6 +12,7 @@ import {
   type InvestmentRequirementPort,
   type InvestmentTransactionPort,
   type CreateInvestmentTransactionInput,
+  type EditInvestmentTransactionInput,
   type InvestmentAdjustmentPort,
   type RecommendedAmountPort,
 } from "@niveshbook/core";
@@ -29,6 +30,7 @@ import type {
   RecommendedAmount,
   PaymentMode,
   Money,
+  AuditLogEntry,
 } from "@niveshbook/types";
 import type { Database } from "./client";
 import { getDb } from "./client";
@@ -52,6 +54,7 @@ import {
   type InvestmentTransactionRow,
   type InvestmentAdjustmentRow,
   type RecommendedAmountRow,
+  type AuditLogRow,
 } from "./schema";
 
 function toUser(row: UserRow): User {
@@ -192,6 +195,27 @@ function toRecommendedAmount(row: RecommendedAmountRow): RecommendedAmount {
     previousPending: row.previousPending as Money,
     previousExtraPaid: row.previousExtraPaid as Money,
     recommendedAmount: row.recommendedAmount as Money,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+/**
+ * Converts a generic `audit_log` row (Story 3.3, `idempotencyKey` column
+ * added Story 3.7) into the entity-agnostic `AuditLogEntry` read type --
+ * `oldValue`/`newValue` pass through unchanged (already plain JSON, as
+ * stored by `jsonb`), never re-typed to any specific entity's shape (this
+ * table is reused across every entity Epic 3/4 eventually audits, AD-5).
+ */
+function toAuditLogEntry(row: AuditLogRow): AuditLogEntry {
+  return {
+    id: row.id,
+    entityType: row.entityType,
+    entityId: row.entityId,
+    action: row.action,
+    actorUserId: row.actorUserId,
+    oldValue: row.oldValue,
+    newValue: row.newValue,
+    reason: row.reason,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -563,6 +587,57 @@ export function matchesRequest(
 }
 
 /**
+ * `true` if `entry` (an `audit_log` row found by `idempotencyKey`) actually
+ * represents the *same* logical edit request as `input` -- the
+ * `editTransaction` analog of `matchesRequest` one level over. Since
+ * `audit_log.idempotencyKey` is a table-wide UNIQUE-when-present column with
+ * no other scoping, a bare key match alone isn't sufficient proof this is a
+ * legitimate replay of *this* edit rather than a genuine collision with some
+ * other edit request: `entry.entityId` must match `input.transactionId`
+ * (the same transaction being edited), and `entry.newValue` (the full
+ * resulting row, stored as JSON) must match every field `input` is asking to
+ * change.
+ *
+ * `amount` is compared via `moneyEquals` (decimal-value-aware), never
+ * `===`, mirroring `matchesRequest`'s identical rationale --
+ * `entry.newValue.amount` came back from Postgres's `numeric(14,2)` column
+ * by way of `jsonb` (still a string, still round-tripped to the column's
+ * full declared scale), while `input.amount` is the freshly-submitted,
+ * unreformatted value.
+ */
+export function matchesEditRequest(
+  entry: Pick<AuditLogRow, "entityId" | "newValue">,
+  input: Pick<
+    EditInvestmentTransactionInput,
+    "transactionId" | "amount" | "transactionDate" | "paymentMode" | "referenceNumber" | "notes"
+  >,
+): boolean {
+  if (entry.entityId !== input.transactionId) {
+    return false;
+  }
+  if (typeof entry.newValue !== "object" || entry.newValue === null) {
+    return false;
+  }
+  const newValue = entry.newValue as {
+    amount?: unknown;
+    transactionDate?: unknown;
+    paymentMode?: unknown;
+    referenceNumber?: unknown;
+    notes?: unknown;
+  };
+  if (typeof newValue.amount !== "string") {
+    return false;
+  }
+  return (
+    moneyEquals(newValue.amount as Money, input.amount) &&
+    newValue.transactionDate === input.transactionDate &&
+    newValue.paymentMode === input.paymentMode &&
+    (newValue.referenceNumber ?? null) === input.referenceNumber &&
+    (newValue.notes ?? null) === input.notes
+  );
+}
+
+/**
  * Drizzle-backed implementation of `packages/core`'s `InvestmentTransactionPort`
  * (Story 3.3) -- the first port method in this codebase to use Drizzle's
  * `database.transaction(async (tx) => {...})` API, implementing AD-5's
@@ -600,6 +675,27 @@ export function createInvestmentTransactionPort(
       .limit(1);
     const row = rows[0];
     return row ? toInvestmentTransaction(row) : null;
+  }
+
+  /** Shared by `findById` and `editTransaction`'s idempotent-replay paths. */
+  async function findTransactionById(id: string): Promise<InvestmentTransaction | null> {
+    const rows = await database
+      .select()
+      .from(investmentTransactions)
+      .where(eq(investmentTransactions.id, id))
+      .limit(1);
+    const row = rows[0];
+    return row ? toInvestmentTransaction(row) : null;
+  }
+
+  /** Shared by `editTransaction`'s straightforward-replay and concurrent-race-recovery paths. */
+  async function findAuditEntryByIdempotencyKey(idempotencyKey: string): Promise<AuditLogRow | null> {
+    const rows = await database
+      .select()
+      .from(auditLog)
+      .where(eq(auditLog.idempotencyKey, idempotencyKey))
+      .limit(1);
+    return rows[0] ?? null;
   }
 
   return {
@@ -671,6 +767,115 @@ export function createInvestmentTransactionPort(
         .where(eq(investmentTransactions.requirementId, requirementId))
         .orderBy(asc(investmentTransactions.createdAt));
       return rows.map(toInvestmentTransaction);
+    },
+    async findById(id) {
+      return findTransactionById(id);
+    },
+    /**
+     * Story 3.7's `editTransaction` -- mirrors `recordTransaction`'s
+     * atomicity/idempotency structure exactly, one level over: idempotency
+     * is checked against `audit_log.idempotencyKey` (never
+     * `investment_transactions.idempotencyKey`, which belongs to the
+     * original create), since an edit updates an existing row rather than
+     * inserting a new one.
+     */
+    async editTransaction(input) {
+      const existingEntry = await findAuditEntryByIdempotencyKey(input.idempotencyKey);
+      if (existingEntry) {
+        if (!matchesEditRequest(existingEntry, input)) {
+          throw new IdempotencyKeyConflictError();
+        }
+        const current = await findTransactionById(input.transactionId);
+        if (!current) {
+          throw new Error("Failed to replay investment transaction edit: transaction no longer exists");
+        }
+        return { transaction: current, edited: false };
+      }
+
+      try {
+        const updated = await database.transaction(async (tx) => {
+          // `.for("update")` (SELECT ... FOR UPDATE), not a plain SELECT --
+          // load-bearing under concurrent edits of the SAME transaction.
+          // Postgres's default READ COMMITTED isolation does NOT re-check a
+          // plain SELECT's result after waiting on another transaction's row
+          // lock; only FOR UPDATE (or an UPDATE's own row-recheck) does. Two
+          // concurrent, genuinely different edits of the same row: without
+          // this, the second request could read the row *before* the first
+          // request's commit, then -- after being blocked and released by
+          // the first request's UPDATE -- write an `audit_log` "edit" entry
+          // whose `oldValue` is that stale pre-first-edit snapshot instead
+          // of the true immediately-prior state, silently erasing the first
+          // edit from the audit trail (spec-3-7's Review Triage Log, row 1).
+          // With FOR UPDATE, this SELECT blocks until the first request's
+          // transaction commits and releases its lock, then reads the
+          // freshly-committed row.
+          const existingRows = await tx
+            .select()
+            .from(investmentTransactions)
+            .where(eq(investmentTransactions.id, input.transactionId))
+            .for("update")
+            .limit(1);
+          const previousRow = existingRows[0];
+          if (!previousRow) {
+            throw new Error("Failed to edit investment transaction: not found");
+          }
+
+          const [updatedRow] = await tx
+            .update(investmentTransactions)
+            .set({
+              amount: input.amount,
+              transactionDate: input.transactionDate,
+              paymentMode: input.paymentMode,
+              referenceNumber: input.referenceNumber,
+              notes: input.notes,
+            })
+            .where(eq(investmentTransactions.id, input.transactionId))
+            .returning();
+          if (!updatedRow) {
+            throw new Error("Failed to edit investment transaction");
+          }
+
+          await tx.insert(auditLog).values({
+            id: uuidv7(),
+            entityType: "investment_transaction",
+            entityId: input.transactionId,
+            action: "edit",
+            actorUserId: input.actorUserId,
+            oldValue: previousRow,
+            newValue: updatedRow,
+            reason: input.reason,
+            idempotencyKey: input.idempotencyKey,
+          });
+
+          return updatedRow;
+        });
+
+        return { transaction: toInvestmentTransaction(updated), edited: true };
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          const winner = await findAuditEntryByIdempotencyKey(input.idempotencyKey);
+          if (winner) {
+            if (!matchesEditRequest(winner, input)) {
+              throw new IdempotencyKeyConflictError();
+            }
+            const current = await findTransactionById(input.transactionId);
+            if (current) {
+              return { transaction: current, edited: false };
+            }
+          }
+        }
+        throw error;
+      }
+    },
+    async findAuditLogByTransactionId(transactionId) {
+      const rows = await database
+        .select()
+        .from(auditLog)
+        .where(
+          and(eq(auditLog.entityType, "investment_transaction"), eq(auditLog.entityId, transactionId)),
+        )
+        .orderBy(asc(auditLog.createdAt));
+      return rows.map(toAuditLogEntry);
     },
   };
 }

@@ -363,6 +363,20 @@ export type RecommendedAmountRow = typeof recommendedAmounts.$inferSelect;
  * always required -- even a cancel entry needs *some* resulting state to
  * record; `reason` is nullable and unused (`null`) by this story's
  * create-only entries, populated by edit/cancel stories.
+ *
+ * Story 3.7 adds `idempotencyKey`: nullable, UNIQUE-when-present. A `"create"`
+ * entry (Story 3.3) never sets it -- that action's idempotency already lives
+ * on `investment_transactions.idempotencyKey` itself, tied specifically to
+ * the original create. `"edit"` (this story) and later `"cancel"` (Story 3.8)
+ * entries *do* set it -- since those actions update/cancel an existing row
+ * in place rather than inserting a new one, there is no natural row-level
+ * UNIQUE column left to dedupe against, so `audit_log` is the column's
+ * natural home instead. Postgres allows multiple `NULL`s under a UNIQUE
+ * constraint (confirmed via Postgres's standard UNIQUE semantics -- NULL is
+ * never considered equal to another NULL for uniqueness purposes), so every
+ * pre-existing/future `"create"` entry with `idempotencyKey: null` coexists
+ * freely, while two `"edit"`/`"cancel"` entries can never accidentally share
+ * the same key.
  */
 export const auditLog = pgTable(
   "audit_log",
@@ -377,6 +391,7 @@ export const auditLog = pgTable(
     oldValue: jsonb("old_value"),
     newValue: jsonb("new_value").notNull(),
     reason: text("reason"),
+    idempotencyKey: text("idempotency_key").unique(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
