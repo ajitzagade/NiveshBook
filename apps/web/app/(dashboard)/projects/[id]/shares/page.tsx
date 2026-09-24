@@ -7,6 +7,7 @@ import type { PartnerShare, SubPartnerShare } from "@niveshbook/types";
 import {
   Button,
   Card,
+  Checkbox,
   Dialog,
   DialogContent,
   DialogTitle,
@@ -143,6 +144,11 @@ export default function PartnerSharesPage() {
   const [name, setName] = useState("");
   const [sharePercent, setSharePercent] = useState("");
   const [linkedUserEmail, setLinkedUserEmail] = useState("");
+  // Story 2.6: only meaningful for the Add/Edit Partner dialog (never the
+  // Sub-partner dialog) -- Owner/Admin-only opt-in grant letting this
+  // Partner's own current Sub-partners see the Partner's total Share %.
+  // Full-overwrite-per-save, same convention as `linkedUserEmail`.
+  const [subPartnerVisibilityGrant, setSubPartnerVisibilityGrant] = useState(false);
   // Story 2.4: the `userId` of the share currently open for edit, if it has
   // one -- `null` for "add" dialogs or an edit of an unlinked share. Used
   // (with `userEmailById` below) to detect "this share IS linked, but we
@@ -280,6 +286,7 @@ export default function PartnerSharesPage() {
     setName("");
     setSharePercent("");
     setLinkedUserEmail("");
+    setSubPartnerVisibilityGrant(false);
     setEditingShareUserId(null);
     setFormError(null);
     setDialog({ open: true, mode: "add" });
@@ -289,6 +296,7 @@ export default function PartnerSharesPage() {
     setName(share.name);
     setSharePercent(formatSharePercent(share.sharePercent));
     setLinkedUserEmail(share.userId ? (userEmailById[share.userId] ?? "") : "");
+    setSubPartnerVisibilityGrant(share.subPartnerVisibilityGrant);
     setEditingShareUserId(share.userId);
     setFormError(null);
     setDialog({ open: true, mode: "edit", partnerId: share.partnerId });
@@ -324,10 +332,20 @@ export default function PartnerSharesPage() {
     setSubmitting(true);
     try {
       if (dialog.mode === "add") {
-        await addPartnerShare(projectId, { name, sharePercent, linkedUserEmail });
+        await addPartnerShare(projectId, {
+          name,
+          sharePercent,
+          linkedUserEmail,
+          subPartnerVisibilityGrant,
+        });
         await refresh();
       } else if (dialog.mode === "edit") {
-        await updatePartnerShare(projectId, dialog.partnerId, { name, sharePercent, linkedUserEmail });
+        await updatePartnerShare(projectId, dialog.partnerId, {
+          name,
+          sharePercent,
+          linkedUserEmail,
+          subPartnerVisibilityGrant,
+        });
         await refresh();
       } else if (dialog.mode === "add-sub") {
         await addSubPartnerShare(projectId, dialog.partnerId, { name, sharePercent, linkedUserEmail });
@@ -550,6 +568,23 @@ export default function PartnerSharesPage() {
                     : "Optional -- links this Partner to a login with the Partner role, so they can see only their own data (never a co-partner's). Leave blank for no link."}
               </Helper>
             </Field>
+            {dialog.open && (dialog.mode === "add" || dialog.mode === "edit") ? (
+              <Field>
+                <label className="flex items-center gap-2 text-[13.4px] text-ink">
+                  <Checkbox
+                    name="subPartnerVisibilityGrant"
+                    checked={subPartnerVisibilityGrant}
+                    onChange={(event) => setSubPartnerVisibilityGrant(event.target.checked)}
+                  />
+                  Let this Partner&apos;s Sub-partners see their total Share %
+                </label>
+                <Helper>
+                  Optional -- when on, this Partner&apos;s own Sub-partners can see the
+                  Partner&apos;s total Share % (nothing else). Off by default. Takes effect
+                  immediately, both ways.
+                </Helper>
+              </Field>
+            ) : null}
 
             {formError ? (
               <p role="alert" className="mb-4 text-[13.4px] text-danger">

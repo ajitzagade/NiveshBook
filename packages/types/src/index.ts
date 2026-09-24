@@ -78,6 +78,16 @@ export interface PartnerShare {
    * route layer (`apps/web`) -- never a separate lookup here.
    */
   userId: string | null;
+  /**
+   * Owner/Admin-toggled, opt-in grant (Epic 2, Story 2.6) letting this
+   * Partner's own *current* Sub-partners see the Partner's total
+   * `sharePercent` -- and nothing else (never `name`/`userId`/`id`/
+   * `effectiveFrom`/`createdAt`). Full-overwrite on every save, mirroring
+   * `userId`'s Story 2.4 convention -- not bound by AD-3's `sharePercent`-only
+   * immutability rule, so an edit carries the current value forward rather
+   * than requiring its own versioned history.
+   */
+  subPartnerVisibilityGrant: boolean;
   /** ISO 8601 timestamp -- when this version took effect. */
   effectiveFrom: string;
   /** ISO 8601 timestamp */

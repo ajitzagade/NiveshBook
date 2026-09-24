@@ -83,6 +83,14 @@ export const partnerShares = pgTable(
     // once. Not indexed -- this story's auth checks operate on already-
     // fetched rows, not a direct `userId` query.
     userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+    // Story 2.6: Owner/Admin-toggled, opt-in grant letting this Partner's own
+    // *current* Sub-partners see the Partner's total `sharePercent` (and
+    // nothing else -- never name/userId/id/effectiveFrom/createdAt).
+    // Threads through `addPartnerShare`/`updatePartnerShare` exactly like
+    // `userId` (full-overwrite every save) -- NOT bound by AD-3's
+    // `sharePercent`-only immutability rule, so it carries forward on every
+    // versioned edit without needing its own history mechanism.
+    subPartnerVisibilityGrant: boolean("sub_partner_visibility_grant").notNull().default(false),
     effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

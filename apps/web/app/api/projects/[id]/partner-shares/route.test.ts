@@ -100,6 +100,7 @@ function makeShare(overrides: Record<string, unknown> = {}) {
     name: "Partner A",
     sharePercent: "50",
     userId: null,
+    subPartnerVisibilityGrant: false,
     effectiveFrom: now,
     createdAt: now,
     ...overrides,
@@ -267,7 +268,7 @@ describe("POST /api/projects/[id]/partner-shares", () => {
 
   it("returns 401 with no session cookie", async () => {
     const response = await POST(
-      makePostRequest({ body: { name: "Partner A", sharePercent: "50", linkedUserEmail: "" } }),
+      makePostRequest({ body: { name: "Partner A", sharePercent: "50", linkedUserEmail: "", subPartnerVisibilityGrant: false } }),
       makeContext(),
     );
 
@@ -285,7 +286,7 @@ describe("POST /api/projects/[id]/partner-shares", () => {
     const response = await POST(
       makePostRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Partner A", sharePercent: "50", linkedUserEmail: "" },
+        body: { name: "Partner A", sharePercent: "50", linkedUserEmail: "", subPartnerVisibilityGrant: false },
       }),
       makeContext(),
     );
@@ -316,7 +317,7 @@ describe("POST /api/projects/[id]/partner-shares", () => {
     const response = await POST(
       makePostRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Partner A", sharePercent: "50", linkedUserEmail: PARTNER_USER.email },
+        body: { name: "Partner A", sharePercent: "50", linkedUserEmail: PARTNER_USER.email, subPartnerVisibilityGrant: false },
       }),
       makeContext(),
     );
@@ -337,7 +338,7 @@ describe("POST /api/projects/[id]/partner-shares", () => {
     const response = await POST(
       makePostRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Partner A", sharePercent: "50", linkedUserEmail: "nobody@x.test" },
+        body: { name: "Partner A", sharePercent: "50", linkedUserEmail: "nobody@x.test", subPartnerVisibilityGrant: false },
       }),
       makeContext(),
     );
@@ -356,7 +357,7 @@ describe("POST /api/projects/[id]/partner-shares", () => {
     const response = await POST(
       makePostRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Partner A", sharePercent: "50", linkedUserEmail: OWNER_USER.email },
+        body: { name: "Partner A", sharePercent: "50", linkedUserEmail: OWNER_USER.email, subPartnerVisibilityGrant: false },
       }),
       makeContext(),
     );
@@ -375,7 +376,7 @@ describe("POST /api/projects/[id]/partner-shares", () => {
     const response = await POST(
       makePostRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Partner A", sharePercent: "33.33", linkedUserEmail: "" },
+        body: { name: "Partner A", sharePercent: "33.33", linkedUserEmail: "", subPartnerVisibilityGrant: false },
       }),
       makeContext(),
     );
@@ -394,7 +395,7 @@ describe("POST /api/projects/[id]/partner-shares", () => {
       const response = await POST(
         makePostRequest({
           cookie: `${SESSION_COOKIE_NAME}=some-token`,
-          body: { name: "Partner A", sharePercent, linkedUserEmail: "" },
+          body: { name: "Partner A", sharePercent, linkedUserEmail: "", subPartnerVisibilityGrant: false },
         }),
         makeContext(),
       );
@@ -413,7 +414,7 @@ describe("POST /api/projects/[id]/partner-shares", () => {
     const response = await POST(
       makePostRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "", sharePercent: "50", linkedUserEmail: "" },
+        body: { name: "", sharePercent: "50", linkedUserEmail: "", subPartnerVisibilityGrant: false },
       }),
       makeContext(),
     );
@@ -431,7 +432,7 @@ describe("POST /api/projects/[id]/partner-shares", () => {
     const response = await POST(
       makePostRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Partner A", sharePercent: "50", linkedUserEmail: "" },
+        body: { name: "Partner A", sharePercent: "50", linkedUserEmail: "", subPartnerVisibilityGrant: false },
       }),
       makeContext(),
     );
@@ -475,7 +476,7 @@ describe("POST /api/projects/[id]/partner-shares", () => {
     const response = await POST(
       makePostRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Partner A", linkedUserEmail: "" },
+        body: { name: "Partner A", linkedUserEmail: "", subPartnerVisibilityGrant: false },
       }),
       makeContext(),
     );
@@ -502,6 +503,47 @@ describe("POST /api/projects/[id]/partner-shares", () => {
     expect(createPartnerShare).not.toHaveBeenCalled();
   });
 
+  it("returns 400 when subPartnerVisibilityGrant is missing entirely -- required field (Story 2.6)", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+
+    const response = await POST(
+      makePostRequest({
+        cookie: `${SESSION_COOKIE_NAME}=some-token`,
+        body: { name: "Partner A", sharePercent: "50", linkedUserEmail: "" },
+      }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.code).toBe("invalid_request");
+    expect(createPartnerShare).not.toHaveBeenCalled();
+  });
+
+  it("passes subPartnerVisibilityGrant: true straight through to addPartnerShare -- 201, grant on (Story 2.6)", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    createPartnerShare.mockResolvedValue(
+      makeShare({ name: "Partner A", sharePercent: "50", subPartnerVisibilityGrant: true }),
+    );
+
+    const response = await POST(
+      makePostRequest({
+        cookie: `${SESSION_COOKIE_NAME}=some-token`,
+        body: { name: "Partner A", sharePercent: "50", linkedUserEmail: "", subPartnerVisibilityGrant: true },
+      }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.subPartnerVisibilityGrant).toBe(true);
+    expect(createPartnerShare).toHaveBeenCalledWith(
+      expect.objectContaining({ subPartnerVisibilityGrant: true }),
+    );
+  });
+
   it("returns 404 for a nonexistent project, rather than letting the insert fail on the FK constraint", async () => {
     findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
     findUserById.mockResolvedValue(OWNER_USER);
@@ -510,7 +552,7 @@ describe("POST /api/projects/[id]/partner-shares", () => {
     const response = await POST(
       makePostRequest({
         cookie: `${SESSION_COOKIE_NAME}=some-token`,
-        body: { name: "Partner A", sharePercent: "50", linkedUserEmail: "" },
+        body: { name: "Partner A", sharePercent: "50", linkedUserEmail: "", subPartnerVisibilityGrant: false },
       }),
       makeContext(),
     );

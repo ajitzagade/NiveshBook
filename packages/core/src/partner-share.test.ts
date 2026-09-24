@@ -20,6 +20,7 @@ function makeShare(overrides: Partial<PartnerShare> = {}): PartnerShare {
     name: "Partner A",
     sharePercent: "50" as Percent,
     userId: null,
+    subPartnerVisibilityGrant: false,
     effectiveFrom: now,
     createdAt: now,
     ...overrides,
@@ -40,6 +41,7 @@ function createFakePartnerSharePort(seed: PartnerShare[] = []): PartnerSharePort
         name: input.name,
         sharePercent: input.sharePercent,
         userId: input.userId,
+        subPartnerVisibilityGrant: input.subPartnerVisibilityGrant,
         effectiveFrom: now,
         createdAt: now,
       };
@@ -66,7 +68,7 @@ describe("addPartnerShare", () => {
 
     const result = await addPartnerShare(
       "project-1",
-      { name: "Partner A", sharePercent: "50", userId: null },
+      { name: "Partner A", sharePercent: "50", userId: null, subPartnerVisibilityGrant: false },
       deps,
     );
 
@@ -83,11 +85,37 @@ describe("addPartnerShare", () => {
 
     const result = await addPartnerShare(
       "project-1",
-      { name: "Partner A", sharePercent: "50", userId: "user-1" },
+      { name: "Partner A", sharePercent: "50", userId: "user-1", subPartnerVisibilityGrant: false },
       deps,
     );
 
     expect(result.userId).toBe("user-1");
+  });
+
+  it("passes subPartnerVisibilityGrant: true straight through to the port (Story 2.6)", async () => {
+    const partnerShares = createFakePartnerSharePort();
+    const deps: PartnerShareDeps = { partnerShares };
+
+    const result = await addPartnerShare(
+      "project-1",
+      { name: "Partner A", sharePercent: "50", userId: null, subPartnerVisibilityGrant: true },
+      deps,
+    );
+
+    expect(result.subPartnerVisibilityGrant).toBe(true);
+  });
+
+  it("defaults subPartnerVisibilityGrant to false when explicitly provided as false", async () => {
+    const partnerShares = createFakePartnerSharePort();
+    const deps: PartnerShareDeps = { partnerShares };
+
+    const result = await addPartnerShare(
+      "project-1",
+      { name: "Partner A", sharePercent: "50", userId: null, subPartnerVisibilityGrant: false },
+      deps,
+    );
+
+    expect(result.subPartnerVisibilityGrant).toBe(false);
   });
 
   it("accepts a 2-decimal share (e.g. 33.33), stored exactly", async () => {
@@ -96,7 +124,7 @@ describe("addPartnerShare", () => {
 
     const result = await addPartnerShare(
       "project-1",
-      { name: "Partner A", sharePercent: "33.33", userId: null },
+      { name: "Partner A", sharePercent: "33.33", userId: null, subPartnerVisibilityGrant: false },
       deps,
     );
 
@@ -110,7 +138,7 @@ describe("addPartnerShare", () => {
       const deps: PartnerShareDeps = { partnerShares };
 
       await expect(
-        addPartnerShare("project-1", { name: "Partner A", sharePercent, userId: null }, deps),
+        addPartnerShare("project-1", { name: "Partner A", sharePercent, userId: null, subPartnerVisibilityGrant: false }, deps),
       ).rejects.toThrow(InvalidSharePercentError);
       expect(await partnerShares.listByProjectId("project-1")).toHaveLength(0);
     },
@@ -121,7 +149,7 @@ describe("addPartnerShare", () => {
     const deps: PartnerShareDeps = { partnerShares };
 
     await expect(
-      addPartnerShare("project-1", { name, sharePercent: "50", userId: null }, deps),
+      addPartnerShare("project-1", { name, sharePercent: "50", userId: null, subPartnerVisibilityGrant: false }, deps),
     ).rejects.toThrow(InvalidPartnerNameError);
     expect(await partnerShares.listByProjectId("project-1")).toHaveLength(0);
   });
@@ -132,12 +160,12 @@ describe("addPartnerShare", () => {
 
     const a = await addPartnerShare(
       "project-1",
-      { name: "Partner A", sharePercent: "50", userId: null },
+      { name: "Partner A", sharePercent: "50", userId: null, subPartnerVisibilityGrant: false },
       deps,
     );
     const b = await addPartnerShare(
       "project-1",
-      { name: "Partner B", sharePercent: "30", userId: null },
+      { name: "Partner B", sharePercent: "30", userId: null, subPartnerVisibilityGrant: false },
       deps,
     );
 
@@ -153,7 +181,7 @@ describe("updatePartnerShare", () => {
 
     const updated = await updatePartnerShare(
       "partner-1",
-      { name: "Partner A", sharePercent: "60", userId: null },
+      { name: "Partner A", sharePercent: "60", userId: null, subPartnerVisibilityGrant: false },
       deps,
     );
 
@@ -175,10 +203,40 @@ describe("updatePartnerShare", () => {
 
     const unlinked = await updatePartnerShare(
       "partner-1",
-      { name: "Partner A", sharePercent: "50", userId: null },
+      { name: "Partner A", sharePercent: "50", userId: null, subPartnerVisibilityGrant: false },
       deps,
     );
     expect(unlinked?.userId).toBeNull();
+  });
+
+  it("full-overwrites subPartnerVisibilityGrant on edit -- toggling it true takes effect on the new version row (Story 2.6)", async () => {
+    const existing = makeShare({ id: "row-1", partnerId: "partner-1", subPartnerVisibilityGrant: false });
+    const partnerShares = createFakePartnerSharePort([existing]);
+    const deps: PartnerShareDeps = { partnerShares };
+
+    const updated = await updatePartnerShare(
+      "partner-1",
+      { name: "Partner A", sharePercent: "50", userId: null, subPartnerVisibilityGrant: true },
+      deps,
+    );
+
+    expect(updated?.subPartnerVisibilityGrant).toBe(true);
+    const oldRow = (await partnerShares.listByProjectId("project-1")).find((r) => r.id === "row-1");
+    expect(oldRow?.subPartnerVisibilityGrant).toBe(false);
+  });
+
+  it("toggling subPartnerVisibilityGrant back to false takes effect on the next version row", async () => {
+    const existing = makeShare({ id: "row-1", partnerId: "partner-1", subPartnerVisibilityGrant: true });
+    const partnerShares = createFakePartnerSharePort([existing]);
+    const deps: PartnerShareDeps = { partnerShares };
+
+    const updated = await updatePartnerShare(
+      "partner-1",
+      { name: "Partner A", sharePercent: "50", userId: null, subPartnerVisibilityGrant: false },
+      deps,
+    );
+
+    expect(updated?.subPartnerVisibilityGrant).toBe(false);
   });
 
   it("always versions even when only the name changes", async () => {
@@ -188,7 +246,7 @@ describe("updatePartnerShare", () => {
 
     const updated = await updatePartnerShare(
       "partner-1",
-      { name: "New Name", sharePercent: "50", userId: null },
+      { name: "New Name", sharePercent: "50", userId: null, subPartnerVisibilityGrant: false },
       deps,
     );
 
@@ -204,7 +262,7 @@ describe("updatePartnerShare", () => {
 
     const result = await updatePartnerShare(
       "unknown-partner",
-      { name: "X", sharePercent: "50", userId: null },
+      { name: "X", sharePercent: "50", userId: null, subPartnerVisibilityGrant: false },
       deps,
     );
 
@@ -217,7 +275,7 @@ describe("updatePartnerShare", () => {
     const deps: PartnerShareDeps = { partnerShares };
 
     await expect(
-      updatePartnerShare("partner-1", { name: "Partner A", sharePercent: "150", userId: null }, deps),
+      updatePartnerShare("partner-1", { name: "Partner A", sharePercent: "150", userId: null, subPartnerVisibilityGrant: false }, deps),
     ).rejects.toThrow(InvalidSharePercentError);
     expect(await partnerShares.listByProjectId("project-1")).toHaveLength(1);
   });

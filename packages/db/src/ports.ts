@@ -77,6 +77,7 @@ function toPartnerShare(row: PartnerShareRow): PartnerShare {
     name: row.name,
     sharePercent: row.sharePercent as Percent,
     userId: row.userId,
+    subPartnerVisibilityGrant: row.subPartnerVisibilityGrant,
     effectiveFrom: row.effectiveFrom.toISOString(),
     createdAt: row.createdAt.toISOString(),
   };
@@ -261,6 +262,7 @@ export function createPartnerSharePort(database: Database = getDb()): PartnerSha
           name: input.name,
           sharePercent: input.sharePercent,
           userId: input.userId,
+          subPartnerVisibilityGrant: input.subPartnerVisibilityGrant,
         })
         .returning();
       if (!row) {

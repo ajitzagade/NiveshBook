@@ -12,6 +12,8 @@ export interface PartnerShareInput {
   sharePercent: string;
   /** Story 2.4: empty string means "no link" -- always sent, never omitted (full-overwrite-per-save, AD-3). */
   linkedUserEmail: string;
+  /** Story 2.6: opt-in grant letting this Partner's own current Sub-partners see the Partner's total Share % -- always sent, never omitted (full-overwrite-per-save, AD-3). */
+  subPartnerVisibilityGrant: boolean;
 }
 
 /** `GET /api/projects/[id]/partner-shares`'s response shape -- the current shares plus the live running total (AD-2's decimal-safe addition, not `%`-suffixed). */

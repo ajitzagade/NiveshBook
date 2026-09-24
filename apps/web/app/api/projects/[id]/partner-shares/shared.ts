@@ -4,30 +4,40 @@ import { UUID_PATTERN } from "@/lib/ids";
 /**
  * Shared between `POST /api/projects/[id]/partner-shares` and
  * `PATCH /api/projects/[id]/partner-shares/[partnerId]` -- both accept the
- * same `{ name, sharePercent, linkedUserEmail }` request-body shape,
- * mirroring `apps/web/app/api/projects/shared.ts`'s pattern for Story 2.1.
- * `linkedUserEmail` is required (Story 2.4) -- an empty string means "no
- * link", never "leave unchanged" (AD-3's full-overwrite-per-save
- * convention, same as `name`/`sharePercent`).
+ * same `{ name, sharePercent, linkedUserEmail, subPartnerVisibilityGrant }`
+ * request-body shape, mirroring `apps/web/app/api/projects/shared.ts`'s
+ * pattern for Story 2.1. `linkedUserEmail` is required (Story 2.4) -- an
+ * empty string means "no link", never "leave unchanged" (AD-3's
+ * full-overwrite-per-save convention, same as `name`/`sharePercent`).
+ * `subPartnerVisibilityGrant` is required (Story 2.6) for the identical
+ * reason -- every save is a full overwrite, so there's no "leave unchanged"
+ * for the grant flag either.
  */
 export const INVALID_REQUEST_MESSAGE =
-  "Request body must be valid JSON with a `name` string, a `sharePercent` string, and a `linkedUserEmail` string (empty for no link).";
+  "Request body must be valid JSON with a `name` string, a `sharePercent` string, a `linkedUserEmail` string (empty for no link), and a `subPartnerVisibilityGrant` boolean.";
 
 export interface ValidPartnerShareBody {
   name: string;
   sharePercent: string;
   linkedUserEmail: string;
+  subPartnerVisibilityGrant: boolean;
 }
 
 export function isValidPartnerShareBody(body: unknown): body is ValidPartnerShareBody {
   if (typeof body !== "object" || body === null) {
     return false;
   }
-  const candidate = body as { name?: unknown; sharePercent?: unknown; linkedUserEmail?: unknown };
+  const candidate = body as {
+    name?: unknown;
+    sharePercent?: unknown;
+    linkedUserEmail?: unknown;
+    subPartnerVisibilityGrant?: unknown;
+  };
   return (
     typeof candidate.name === "string" &&
     typeof candidate.sharePercent === "string" &&
-    typeof candidate.linkedUserEmail === "string"
+    typeof candidate.linkedUserEmail === "string" &&
+    typeof candidate.subPartnerVisibilityGrant === "boolean"
   );
 }
 

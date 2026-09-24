@@ -1,0 +1,1 @@
+ALTER TABLE "partner_shares" ADD COLUMN "sub_partner_visibility_grant" boolean DEFAULT false NOT NULL;

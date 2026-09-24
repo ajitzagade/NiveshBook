@@ -67,6 +67,12 @@ describe("partner_shares table schema (Story 2.2)", () => {
   it("gives userId no implicit default", () => {
     expect(partnerShares.userId.hasDefault).toBe(false);
   });
+
+  it("marks subPartnerVisibilityGrant NOT NULL with a false DB-side default (Story 2.6)", () => {
+    expect(partnerShares.subPartnerVisibilityGrant.notNull).toBe(true);
+    expect(partnerShares.subPartnerVisibilityGrant.hasDefault).toBe(true);
+    expect(partnerShares.subPartnerVisibilityGrant.columnType).toBe("PgBoolean");
+  });
 });
 
 describe("subpartner_shares table schema (Story 2.3)", () => {

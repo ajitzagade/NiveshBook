@@ -18,6 +18,14 @@ export interface PartnerShareInput {
    * branch -- matches `name`/`sharePercent`'s existing convention.
    */
   userId: string | null;
+  /**
+   * Story 2.6: opt-in grant letting this Partner's own *current* Sub-partners
+   * see the Partner's total `sharePercent` -- and nothing else. Always
+   * explicitly provided, full-overwrite, no "carry forward from the previous
+   * version" branch -- mirrors `userId`'s convention exactly, even though
+   * (unlike `sharePercent`) it isn't bound by AD-3's immutability rule.
+   */
+  subPartnerVisibilityGrant: boolean;
 }
 
 /**
@@ -91,6 +99,7 @@ export async function addPartnerShare(
     name,
     sharePercent,
     userId: input.userId,
+    subPartnerVisibilityGrant: input.subPartnerVisibilityGrant,
   });
 }
 
@@ -125,6 +134,7 @@ export async function updatePartnerShare(
     name,
     sharePercent,
     userId: input.userId,
+    subPartnerVisibilityGrant: input.subPartnerVisibilityGrant,
   });
 }
 

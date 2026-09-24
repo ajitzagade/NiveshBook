@@ -190,6 +190,77 @@ describe("authorizeScope — partner_shares:list scopeOwnerIds (Story 2.4)", () 
   });
 });
 
+describe("authorizeScope — partner_shares:view_grant scopeOwnerIds (Story 2.6)", () => {
+  it("allows a sub_partner whose userId is in scopeOwnerIds (linked to this Partner's own current Sub-partners)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "sub-partner-1", role: "sub_partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("sub-partner-1", "partner_shares:view_grant", deps, [
+      "someone-else",
+      "sub-partner-1",
+    ]);
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("matches scopeOwnerIds case-insensitively (UUIDs are case-insensitive)", async () => {
+    const users = createFakeUserPort([
+      makeUser({ id: "0192f5a0-2222-7000-8000-000000000002", role: "sub_partner" }),
+    ]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope(
+      "0192f5a0-2222-7000-8000-000000000002",
+      "partner_shares:view_grant",
+      deps,
+      ["0192F5A0-2222-7000-8000-000000000002"],
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("denies a sub_partner whose userId is not in scopeOwnerIds -- e.g. linked under a different Partner", async () => {
+    const users = createFakeUserPort([makeUser({ id: "sub-partner-1", role: "sub_partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("sub-partner-1", "partner_shares:view_grant", deps, [
+      "some-other-sub-partner",
+    ]);
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies a Partner role whose userId isn't among the scopeOwnerIds -- the route only ever populates scopeOwnerIds from this Partner's own Sub-partners' userIds, never the Partner's own", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("partner-user-1", "partner_shares:view_grant", deps, [
+      "sub-partner-1",
+      "sub-partner-2",
+    ]);
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies when scopeOwnerIds is omitted entirely (backward-compatible, no override)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "sub-partner-1", role: "sub_partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("sub-partner-1", "partner_shares:view_grant", deps);
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("still allows an owner_admin regardless of scopeOwnerIds (role-based check, unaffected)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("owner-1", "partner_shares:view_grant", deps, []);
+
+    expect(result).toEqual({ allowed: true });
+  });
+});
+
 describe("authorize — subpartner_shares:list (Story 2.4, self-access override)", () => {
   it("allows a linked Partner whose userId matches the target Partner Share's userId", async () => {
     const users = createFakeUserPort([makeUser({ id: "partner-user-1", role: "partner" })]);

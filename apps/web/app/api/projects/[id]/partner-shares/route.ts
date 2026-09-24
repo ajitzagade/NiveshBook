@@ -160,7 +160,12 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
   try {
     const share = await addPartnerShare(
       projectId,
-      { name: body.name, sharePercent: body.sharePercent, userId: linked.userId },
+      {
+        name: body.name,
+        sharePercent: body.sharePercent,
+        userId: linked.userId,
+        subPartnerVisibilityGrant: body.subPartnerVisibilityGrant,
+      },
       { partnerShares: partnerSharePort },
     );
     return NextResponse.json(share, { status: 201 });

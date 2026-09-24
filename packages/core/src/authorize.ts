@@ -21,6 +21,7 @@ export type Action =
   | "partner_shares:create"
   | "partner_shares:update"
   | "partner_shares:list"
+  | "partner_shares:view_grant"
   | "subpartner_shares:create"
   | "subpartner_shares:update"
   | "subpartner_shares:list"
@@ -57,6 +58,16 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   "partner_shares:create": new Set(["owner_admin"]),
   "partner_shares:update": new Set(["owner_admin"]),
   "partner_shares:list": new Set(["owner_admin"]),
+  // Story 2.6: single-resource "view this Partner's total Share % via the
+  // grant" -- same all-or-nothing-for-the-role-table shape as the other
+  // `partner_shares:*` actions (Owner/Admin unconditionally, checked at the
+  // route layer against the full row); the actual Sub-partner grant-gated
+  // access is admitted below via `SCOPE_SELF_ACCESS_ACTIONS`, reusing
+  // `authorizeScope()`'s Story 2.4 mechanism one level down (a Partner's
+  // *current Sub-partners'* `userId`s as `scopeOwnerIds`, not a Partner's
+  // own). The `partner.subPartnerVisibilityGrant` flag itself is a separate
+  // condition checked by the route, not by this permission table.
+  "partner_shares:view_grant": new Set(["owner_admin"]),
   // Story 2.3: same story as Story 2.2's Partner Share actions -- no
   // Sub-partner Share-shaped `ResourceRef` yet (that's Stories 2.4-2.6, once
   // the co-partner/sub-partner privacy boundary needs something to scope
@@ -111,8 +122,20 @@ const SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set([
  * `userId` on a *current* Partner Share row for the requested Project) — not
  * every Project (FR7). The route computes `scopeOwnerIds` from the Project's
  * current Partner Shares' `userId`s before calling `authorizeScope()`.
+ *
+ * Story 2.6 adds `partner_shares:view_grant`: a Sub-partner linked to one of
+ * a *specific* Partner's *current* Sub-partner Shares -- `scopeOwnerIds` is
+ * that Partner's current Sub-partner Shares' `userId`s (via
+ * `listCurrentSubPartnerShares`), not the Project's Partner Shares' `userId`s
+ * used by `partner_shares:list` above. This alone only proves "linked to
+ * this Partner's own Sub-partners" -- the route separately checks
+ * `partner.subPartnerVisibilityGrant` before admitting the caller, since the
+ * grant is a business-rule condition this gate itself never sees.
  */
-const SCOPE_SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set(["partner_shares:list"]);
+const SCOPE_SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set([
+  "partner_shares:list",
+  "partner_shares:view_grant",
+]);
 
 export interface AuthorizeDeps {
   users: UserPort;
