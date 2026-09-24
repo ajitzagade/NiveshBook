@@ -321,6 +321,47 @@ describe("computeWithdrawalAdjustment", () => {
     expect(upsert).not.toHaveBeenCalled();
   });
 
+  it("Story 4.6 AC worked example: Partner A withdraws their full 1,25,000, Sub1 withdraws 0, Sub2 withdraws their full 62,500 -- Sub1 shows Keep for Later 62,500, Sub2 shows no adjustment, neither blocks nor forces the other", async () => {
+    const partners = [makePartner({ partnerId: "a", name: "Partner A", sharePercent: "100" as Percent })];
+    const subsByPartnerId = {
+      a: [
+        makeSub({ subPartnerId: "sub-1", partnerId: "a", name: "Sub1", sharePercent: "50" as Percent }),
+        makeSub({ subPartnerId: "sub-2", partnerId: "a", name: "Sub2", sharePercent: "50" as Percent }),
+      ],
+    };
+    const takenByShareKey = {
+      [withdrawalShareKey("partner", "a")]: ["125000"].map(toMoney),
+      // Sub1 withdraws 0 -- no transaction recorded at all, no key present.
+      [withdrawalShareKey("sub_partner", "sub-2")]: ["62500"].map(toMoney),
+    };
+
+    const result = await computeWithdrawalAdjustment(
+      PROJECT_ID,
+      "125000" as Money,
+      partners,
+      subsByPartnerId,
+      takenByShareKey,
+      { withdrawalAdjustments: { upsert, listByProjectId: vi.fn() } },
+    );
+
+    const a = result.find((p) => p.partnerId === "a");
+    expect(a?.canTake).toBe("125000");
+    expect(a?.taken).toBe("125000");
+    expect(a?.adjustmentType).toBe("none");
+
+    const sub1 = a?.subPartners.find((s) => s.subPartnerId === "sub-1");
+    expect(sub1?.canTake).toBe("62500");
+    expect(sub1?.taken).toBe("0");
+    expect(sub1?.adjustmentType).toBe("keep_for_later");
+    expect(sub1?.adjustmentAmount).toBe("62500");
+
+    const sub2 = a?.subPartners.find((s) => s.subPartnerId === "sub-2");
+    expect(sub2?.canTake).toBe("62500");
+    expect(sub2?.taken).toBe("62500");
+    expect(sub2?.adjustmentType).toBe("none");
+    expect(sub2?.adjustmentAmount).toBe("0");
+  });
+
   it("returns the persisted row's values (from the port), not merely the freshly-computed ones", async () => {
     const partners = [makePartner({ partnerId: "a", name: "A", sharePercent: "100" as Percent })];
     const persistingUpsert = vi.fn(async (): Promise<WithdrawalAdjustment> => ({

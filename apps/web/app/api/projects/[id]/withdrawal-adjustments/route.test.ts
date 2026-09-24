@@ -402,6 +402,44 @@ describe("GET /api/projects/[id]/withdrawal-adjustments", () => {
     expect(secondA.taken).toBe("150000");
   });
 
+  it("Story 4.6 AC worked example: Partner A withdraws their full 1,25,000, Sub1 withdraws 0, Sub2 withdraws their full 62,500 -- Sub1 shows Keep for Later 62,500, Sub2 shows no adjustment, neither blocks nor forces the other", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    sumActiveAmountByProjectId.mockResolvedValue("125000");
+    listPartnerSharesByProjectId.mockResolvedValue([
+      makePartnerShareRow({ partnerId: "a", name: "Partner A", sharePercent: "100" }),
+    ]);
+    listSubPartnerSharesByProjectId.mockResolvedValue([
+      makeSubPartnerShareRow({ subPartnerId: "sub-1", partnerId: "a", name: "Sub1", sharePercent: "50" }),
+      makeSubPartnerShareRow({ subPartnerId: "sub-2", partnerId: "a", name: "Sub2", sharePercent: "50" }),
+    ]);
+    listWithdrawalTransactionsByProjectId.mockResolvedValue([
+      makeWithdrawalTransactionRow({ id: "wtx-a", partyType: "partner", shareId: "a", amount: "125000" }),
+      makeWithdrawalTransactionRow({ id: "wtx-sub2", partyType: "sub_partner", shareId: "sub-2", amount: "62500" }),
+    ]);
+
+    const response = await GET(makeRequest(`${SESSION_COOKIE_NAME}=some-token`), makeContext());
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    const a = body.partners.find((p: { partnerId: string }) => p.partnerId === "a");
+    expect(a.canTake).toBe("125000");
+    expect(a.taken).toBe("125000");
+    expect(a.adjustmentType).toBe("none");
+
+    const sub1 = a.subPartners.find((s: { subPartnerId: string }) => s.subPartnerId === "sub-1");
+    expect(sub1.canTake).toBe("62500");
+    expect(sub1.taken).toBe("0");
+    expect(sub1.adjustmentType).toBe("keep_for_later");
+    expect(sub1.adjustmentAmount).toBe("62500");
+
+    const sub2 = a.subPartners.find((s: { subPartnerId: string }) => s.subPartnerId === "sub-2");
+    expect(sub2.canTake).toBe("62500");
+    expect(sub2.taken).toBe("62500");
+    expect(sub2.adjustmentType).toBe("none");
+    expect(sub2.adjustmentAmount).toBe("0");
+  });
+
   it("returns 409 shares_not_fully_allocated when Partner Shares don't total 100%, before any upsert", async () => {
     findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
     findUserById.mockResolvedValue(OWNER_USER);

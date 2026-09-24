@@ -1333,3 +1333,119 @@ describe("authorizeScope — withdrawal_adjustments:view (Story 4.3, identical s
     expect(result).toEqual({ allowed: false });
   });
 });
+
+describe("authorize — withdrawal_status:view (Story 4.6, self-access override, identical shape to investment_status:view)", () => {
+  it("allows an owner_admin to view anyone's Withdrawal status", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "owner-1",
+      "withdrawal_status:view",
+      { ownerId: "partner-user-1" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("allows a Partner to view their own Withdrawal status (resourceRef.ownerId matches their own userId)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "partner-user-1",
+      "withdrawal_status:view",
+      { ownerId: "partner-user-1" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("allows a Sub-partner to view their own Withdrawal status (resourceRef.ownerId matches their own userId)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "sub-partner-1", role: "sub_partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "sub-partner-1",
+      "withdrawal_status:view",
+      { ownerId: "sub-partner-1" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("matches self-access case-insensitively (UUIDs are case-insensitive)", async () => {
+    const users = createFakeUserPort([
+      makeUser({ id: "0192f5a0-2222-7000-8000-000000000001", role: "partner" }),
+    ]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "0192f5a0-2222-7000-8000-000000000001",
+      "withdrawal_status:view",
+      { ownerId: "0192F5A0-2222-7000-8000-000000000001" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("denies a co-Partner attempting to view another Partner's Withdrawal status", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-a", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "partner-user-a",
+      "withdrawal_status:view",
+      { ownerId: "partner-user-b" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies a Sub-partner attempting to view their own parent Partner's Withdrawal status", async () => {
+    const users = createFakeUserPort([makeUser({ id: "sub-partner-1", role: "sub_partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "sub-partner-1",
+      "withdrawal_status:view",
+      { ownerId: "partner-user-a" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies when the target share has no linked user (ownerId is empty)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-a", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "partner-user-a",
+      "withdrawal_status:view",
+      { ownerId: "" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies a nonexistent actor targeting someone else's id -- falls through to the role check (not self-access, since ownerId doesn't match actorUserId), and there's no role to grant it", async () => {
+    const users = createFakeUserPort([]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "ghost",
+      "withdrawal_status:view",
+      { ownerId: "someone-else" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: false });
+  });
+});

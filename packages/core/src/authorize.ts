@@ -39,7 +39,8 @@ export type Action =
   | "can_take:view"
   | "withdrawal_transactions:create"
   | "withdrawal_transactions:list"
-  | "withdrawal_adjustments:view";
+  | "withdrawal_adjustments:view"
+  | "withdrawal_status:view";
 
 /**
  * Role -> allowed-actions permission table. All actions here are
@@ -196,6 +197,13 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // `SELF_ACCESS_ACTIONS`/`SCOPE_SELF_ACCESS_ACTIONS` entry, matching
   // `investment_adjustments:view`'s exact all-or-nothing-for-the-role shape.
   "withdrawal_adjustments:view": new Set(["owner_admin"]),
+  // Story 4.6 (Epic 4): the narrow, self-access-gated single-party view --
+  // `GET .../my-withdrawal-status` -- sits alongside `withdrawal_adjustments:view`
+  // (which stays Owner/Admin-only, unmodified) rather than reopening it. The
+  // role-table entry here still gates the Owner/Admin-acting-for-anyone path;
+  // self-access itself is admitted via `SELF_ACCESS_ACTIONS` below, mirroring
+  // `investment_status:view`'s exact Story 3.6 shape one ledger over.
+  "withdrawal_status:view": new Set(["owner_admin"]),
 };
 
 /**
@@ -256,6 +264,17 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
  * 3.3 precedent). `withdrawal_transactions:list` is deliberately NOT in this
  * set -- listing stays Owner/Admin-only, gated by the role table above
  * alone, mirroring `investment_transactions:list`.
+ *
+ * Story 4.6 adds `withdrawal_status:view`: identical shape to
+ * `investment_status:view` one ledger over -- a Partner or Sub-partner may
+ * view their own Withdrawal Adjustment status (`resourceRef.ownerId` is the
+ * target share's own `userId`, resolved by the route from the Project's
+ * current Partner/Sub-partner Shares the same way beforehand). A Partner's
+ * own entry additionally carries their nested current Sub-partners (the
+ * route's job, not this gate's) -- this single self-access check is enough
+ * to admit both "my own status" and "my own Sub-partners, as part of my own
+ * view", never a separate grant for viewing someone *else's* Sub-partner
+ * directly.
  */
 const SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set([
   "users:view",
@@ -265,6 +284,7 @@ const SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set([
   "investment_status:view",
   "investment_transactions:view_audit",
   "withdrawal_transactions:create",
+  "withdrawal_status:view",
 ]);
 
 /**
