@@ -28,4 +28,12 @@ export interface SubPartnerSharePort {
   findLatestBySubPartnerId(subPartnerId: string): Promise<SubPartnerShare | null>;
   /** Every version row for one Partner's Sub-partners (all Sub-partners, all versions) -- callers reduce to latest-per-`subPartnerId` themselves. */
   listByPartnerId(partnerId: string): Promise<SubPartnerShare[]>;
+  /**
+   * Every version row for a whole Project's Sub-partners, across every
+   * Partner (all Sub-partners, all versions) -- mirrors `PartnerSharePort.listByProjectId`
+   * one level down (Story 3.2). `subpartner_shares` already has a `projectId`
+   * column, so this needs no join through `partner_shares`. Callers reduce to
+   * latest-per-`subPartnerId` themselves, same as `listByPartnerId`.
+   */
+  listByProjectId(projectId: string): Promise<SubPartnerShare[]>;
 }

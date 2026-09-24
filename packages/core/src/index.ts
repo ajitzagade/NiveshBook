@@ -12,3 +12,4 @@ export * from "./subpartner-share";
 export * from "./subpartner-share-port";
 export * from "./investment-requirement";
 export * from "./investment-requirement-port";
+export * from "./should-pay";

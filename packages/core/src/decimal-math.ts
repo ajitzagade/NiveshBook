@@ -111,6 +111,7 @@ export function sumPercents(values: readonly Percent[]): Percent {
 }
 
 const MONEY_DECIMAL_PLACES = 2;
+const MONEY_SCALE = 10 ** MONEY_DECIMAL_PLACES;
 
 /** Thrown by `toMoney` for a value that isn't a non-negative decimal with at most 2 decimal places. */
 export class InvalidMoneyError extends Error {
@@ -171,4 +172,130 @@ export function toMoney(raw: string): Money {
 /** `true` if `value` is exactly zero (e.g. `"0"`, `"0.0"`, `"0.00"`), decimal-safe -- never a `parseFloat`/`Number()` comparison. */
 export function isZeroMoney(value: Money): boolean {
   return parseMoneyScaled(value) === 0;
+}
+
+/** Formats an integer scaled by `MONEY_SCALE` (100, i.e. 2 decimal places) back into a plain decimal string, trimming trailing fractional zeros -- mirrors `formatScaled` one decimal-place-count down. */
+function formatMoneyScaled(scaled: number): string {
+  const whole = Math.trunc(scaled / MONEY_SCALE);
+  const fraction = scaled % MONEY_SCALE;
+  if (fraction === 0) {
+    return String(whole);
+  }
+  const fractionDigits = String(fraction).padStart(MONEY_DECIMAL_PLACES, "0").replace(/0+$/, "");
+  return `${whole}.${fractionDigits}`;
+}
+
+/**
+ * Decimal-safe addition of `Money` values via fixed-point integer math
+ * (scaled by 100) -- never `parseFloat`/`Number()` on the values themselves.
+ * Mirrors `sumPercents` one type down; returns `"0"` for an empty list.
+ */
+export function sumMoney(values: readonly Money[]): Money {
+  const totalScaled = values.reduce((sum, value) => sum + parseMoneyScaled(value), 0);
+  return formatMoneyScaled(totalScaled) as Money;
+}
+
+/**
+ * Thrown by `subtractPercents` when `minuend - subtrahend` would be
+ * negative -- e.g. a Partner's Sub-partner Shares exceeding the Partner's
+ * own `sharePercent`. `should-pay.ts` catches this and rethrows it as its
+ * own domain-specific `SubPartnerSharesOverAllocatedError`.
+ */
+export class NegativePercentResultError extends Error {
+  constructor(minuend: Percent, subtrahend: Percent) {
+    super(`Cannot subtract ${subtrahend}% from ${minuend}% -- the result would be negative.`);
+    this.name = "NegativePercentResultError";
+  }
+}
+
+/**
+ * Decimal-safe subtraction of `Percent` values via fixed-point integer math
+ * -- never `parseFloat`/`Number()` on the values themselves. Throws
+ * `NegativePercentResultError` if the result would be negative, rather than
+ * silently returning a negative `Percent` (a value type that everywhere else
+ * in this codebase is treated as `>= 0`). The result is not itself
+ * range-checked against `0 < x <= 100` -- e.g. a Partner's fully-suballocated
+ * *retained* percent is legitimately `"0"` -- callers needing a stricter
+ * range enforce it themselves (mirrors `sumPercents`'s own note).
+ */
+export function subtractPercents(minuend: Percent, subtrahend: Percent): Percent {
+  const minuendScaled = parseScaled(minuend);
+  const subtrahendScaled = parseScaled(subtrahend);
+  const resultScaled = minuendScaled - subtrahendScaled;
+  if (resultScaled < 0) {
+    throw new NegativePercentResultError(minuend, subtrahend);
+  }
+  return formatScaled(resultScaled) as Percent;
+}
+
+/**
+ * Thrown by `splitMoneyByPercents` when its `percents` list doesn't sum to
+ * exactly `"100"` -- defense in depth (this story's Decisions): every caller
+ * (`should-pay.ts`) already guarantees this by construction before calling
+ * it, so this should never fire in practice, but a `packages/core`
+ * arithmetic primitive silently producing a wrong total for a malformed
+ * input would be a much worse failure mode than an explicit throw.
+ */
+export class SplitPercentTotalError extends Error {
+  constructor(total: Percent) {
+    super(`Cannot split money by percents that don't sum to exactly 100% -- got ${total}%.`);
+    this.name = "SplitPercentTotalError";
+  }
+}
+
+/**
+ * Splits `amount` across `percents` via the largest-remainder method, so the
+ * returned `Money[]` (same length/order as `percents`) always sums to
+ * exactly `amount` -- no leftover/missing paise, ever (this story's core
+ * guarantee, AD-2). Throws `SplitPercentTotalError` if `percents` doesn't
+ * sum to exactly `"100"` first.
+ *
+ * Uses `BigInt` for the `amount * percent` product -- `amount` can have up
+ * to 12 whole-number digits (`toMoney`'s own cap) and `percent` up to 3
+ * (`toPercent`'s cap), so the product can exceed `Number`'s safe-integer
+ * range (unlike `parseMoneyScaled`'s own bounded values, which are never
+ * multiplied against each other). Each entry's exact share is
+ * `floor(amountScaled * percentScaled / (100 * PERCENT_SCALE))`; the paise
+ * left over by flooring (their sum is always a whole number of paise, since
+ * `percents` sums to exactly 100%) are distributed one-by-one to the entries
+ * with the largest fractional remainder, ties broken deterministically by
+ * ascending original index -- the classic largest-remainder allocation.
+ */
+export function splitMoneyByPercents(amount: Money, percents: readonly Percent[]): Money[] {
+  const total = sumPercents(percents);
+  if (total !== "100") {
+    throw new SplitPercentTotalError(total);
+  }
+
+  const amountScaled = BigInt(parseMoneyScaled(amount));
+  const denominator = BigInt(100 * SCALE);
+
+  const entries = percents.map((percent, index) => {
+    const percentScaled = BigInt(parseScaled(percent));
+    const numerator = amountScaled * percentScaled;
+    return {
+      index,
+      share: numerator / denominator,
+      remainder: numerator % denominator,
+    };
+  });
+
+  const allocatedTotal = entries.reduce((sum, entry) => sum + entry.share, 0n);
+  let leftoverPaise = amountScaled - allocatedTotal;
+
+  const byRemainderDesc = [...entries].sort((a, b) => {
+    if (a.remainder === b.remainder) {
+      return a.index - b.index;
+    }
+    return a.remainder > b.remainder ? -1 : 1;
+  });
+
+  const shares = entries.map((entry) => entry.share);
+  for (const entry of byRemainderDesc) {
+    if (leftoverPaise <= 0n) break;
+    shares[entry.index] = (shares[entry.index] ?? 0n) + 1n;
+    leftoverPaise -= 1n;
+  }
+
+  return shares.map((shareScaled) => formatMoneyScaled(Number(shareScaled)) as Money);
 }

@@ -18,6 +18,8 @@ export interface CreateInvestmentRequirementInput {
 export interface InvestmentRequirementPort {
   /** Inserts a new Investment Requirement row. */
   createInvestmentRequirement(input: CreateInvestmentRequirementInput): Promise<InvestmentRequirement>;
-  /** Every Investment Requirement row for a Project, in no particular guaranteed order -- callers sort/display as needed. */
+  /** Every Investment Requirement row for a Project, most-recent `requirementDate` first (ties broken by `createdAt`) -- already ordered by the implementation, callers don't need to re-sort. */
   listByProjectId(projectId: string): Promise<InvestmentRequirement[]>;
+  /** A single Investment Requirement row by its own `id`, or `null` if none exists (Story 3.2, `should-pay` route) -- callers additionally check `.projectId` themselves for the cross-project-mismatch 404 case. */
+  findById(id: string): Promise<InvestmentRequirement | null>;
 }

@@ -27,7 +27,8 @@ export type Action =
   | "subpartner_shares:list"
   | "subpartner_shares:view"
   | "investment_requirements:create"
-  | "investment_requirements:list";
+  | "investment_requirements:list"
+  | "should_pay:view";
 
 /**
  * Role -> allowed-actions permission table. All actions here are
@@ -94,6 +95,15 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // Admin-only in 2.2, only opened to a linked Partner in 2.4).
   "investment_requirements:create": new Set(["owner_admin"]),
   "investment_requirements:list": new Set(["owner_admin"]),
+  // Story 3.2: Should Pay is computed from a funding requirement's amount
+  // plus the current Partner/Sub-partner Shares -- Owner/Admin-only in this
+  // story (spec-3-2's Decisions), mirroring `investment_requirements:list`'s
+  // identical precedent. No `SELF_ACCESS_ACTIONS`/`SCOPE_SELF_ACCESS_ACTIONS`
+  // entry -- how a Partner/Sub-partner eventually sees their own Should Pay
+  // is Epic 5's job (the planned, purpose-built home for a person's own
+  // self-service view), not this gate's, matching Epic 2/3's incremental-
+  // opening pattern.
+  "should_pay:view": new Set(["owner_admin"]),
 };
 
 /**

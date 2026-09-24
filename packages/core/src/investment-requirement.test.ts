@@ -42,6 +42,9 @@ function createFakeInvestmentRequirementPort(seed: InvestmentRequirement[] = [])
     async listByProjectId(projectId: string) {
       return rows.filter((r) => r.projectId === projectId);
     },
+    async findById(id: string) {
+      return rows.find((r) => r.id === id) ?? null;
+    },
   };
 }
 
@@ -188,5 +191,20 @@ describe("listInvestmentRequirements", () => {
 
     expect(result).toHaveLength(1);
     expect(result[0]?.id).toBe("row-1");
+  });
+});
+
+describe("InvestmentRequirementPort.findById (Story 3.2)", () => {
+  it("returns the matching row by its own id", async () => {
+    const one = makeRequirement({ id: "row-1", projectId: "project-1" });
+    const investmentRequirements = createFakeInvestmentRequirementPort([one]);
+
+    expect(await investmentRequirements.findById("row-1")).toEqual(one);
+  });
+
+  it("returns null for an id with no matching row", async () => {
+    const investmentRequirements = createFakeInvestmentRequirementPort();
+
+    expect(await investmentRequirements.findById("nonexistent")).toBeNull();
   });
 });

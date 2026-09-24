@@ -4,6 +4,7 @@ import {
   addSubPartnerShare,
   updateSubPartnerShare,
   listCurrentSubPartnerShares,
+  listCurrentSubPartnerSharesForProject,
   computeSubAllocationTotal,
   InvalidSubPartnerNameError,
   InvalidSubPartnerSharePercentError,
@@ -57,6 +58,9 @@ function createFakeSubPartnerSharePort(seed: SubPartnerShare[] = []): SubPartner
     },
     async listByPartnerId(partnerId: string) {
       return rows.filter((r) => r.partnerId === partnerId);
+    },
+    async listByProjectId(projectId: string) {
+      return rows.filter((r) => r.projectId === projectId);
     },
   };
 }
@@ -297,6 +301,60 @@ describe("listCurrentSubPartnerShares", () => {
     const deps: SubPartnerShareDeps = { subPartnerShares };
 
     expect(await listCurrentSubPartnerShares("partner-1", deps)).toEqual([]);
+  });
+});
+
+describe("listCurrentSubPartnerSharesForProject", () => {
+  it("reduces multiple version rows, across every Partner in the Project, down to the latest per subPartnerId", async () => {
+    const v1 = makeSubShare({
+      id: "row-1",
+      subPartnerId: "subpartner-1",
+      partnerId: "partner-1",
+      projectId: "project-1",
+      sharePercent: "12.5" as Percent,
+      effectiveFrom: new Date(1000).toISOString(),
+    });
+    const v2 = makeSubShare({
+      id: "row-2",
+      subPartnerId: "subpartner-1",
+      partnerId: "partner-1",
+      projectId: "project-1",
+      sharePercent: "20" as Percent,
+      effectiveFrom: new Date(2000).toISOString(),
+    });
+    const otherPartner = makeSubShare({
+      id: "row-3",
+      subPartnerId: "subpartner-2",
+      partnerId: "partner-2",
+      projectId: "project-1",
+      name: "Sub2",
+      sharePercent: "12.5" as Percent,
+      effectiveFrom: new Date(1500).toISOString(),
+    });
+    const otherProject = makeSubShare({
+      id: "row-4",
+      subPartnerId: "subpartner-3",
+      partnerId: "partner-3",
+      projectId: "project-2",
+      sharePercent: "10" as Percent,
+    });
+    const subPartnerShares = createFakeSubPartnerSharePort([v1, v2, otherPartner, otherProject]);
+    const deps: SubPartnerShareDeps = { subPartnerShares };
+
+    const current = await listCurrentSubPartnerSharesForProject("project-1", deps);
+
+    expect(current).toHaveLength(2);
+    const subOne = current.find((s) => s.subPartnerId === "subpartner-1");
+    expect(subOne?.sharePercent).toBe("20");
+    expect(subOne?.id).toBe("row-2");
+    expect(current.some((s) => s.subPartnerId === "subpartner-3")).toBe(false);
+  });
+
+  it("returns an empty list for a project with zero sub-partners", async () => {
+    const subPartnerShares = createFakeSubPartnerSharePort();
+    const deps: SubPartnerShareDeps = { subPartnerShares };
+
+    expect(await listCurrentSubPartnerSharesForProject("project-1", deps)).toEqual([]);
   });
 });
 

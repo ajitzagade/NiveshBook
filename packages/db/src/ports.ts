@@ -360,6 +360,13 @@ export function createSubPartnerSharePort(database: Database = getDb()): SubPart
         .where(eq(subpartnerShares.partnerId, partnerId));
       return rows.map(toSubPartnerShare);
     },
+    async listByProjectId(projectId) {
+      const rows = await database
+        .select()
+        .from(subpartnerShares)
+        .where(eq(subpartnerShares.projectId, projectId));
+      return rows.map(toSubPartnerShare);
+    },
   };
 }
 
@@ -400,6 +407,15 @@ export function createInvestmentRequirementPort(
         // happen to share the same `requirementDate`.
         .orderBy(desc(investmentRequirements.requirementDate), desc(investmentRequirements.createdAt));
       return rows.map(toInvestmentRequirement);
+    },
+    async findById(id) {
+      const rows = await database
+        .select()
+        .from(investmentRequirements)
+        .where(eq(investmentRequirements.id, id))
+        .limit(1);
+      const row = rows[0];
+      return row ? toInvestmentRequirement(row) : null;
     },
   };
 }

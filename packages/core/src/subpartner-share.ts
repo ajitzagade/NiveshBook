@@ -153,6 +153,19 @@ function isNewerVersion(candidate: SubPartnerShare, current: SubPartnerShare): b
   return candidate.id > current.id;
 }
 
+/** Reduces every version row down to the latest `effectiveFrom` per `subPartnerId`. Shared by `listCurrentSubPartnerShares` (Partner-scoped) and `listCurrentSubPartnerSharesForProject` (Story 3.2, Project-scoped) -- the reduction shape is identical, only the source of `allVersions` differs. Mirrors `partner-share.ts`'s `reduceToLatestPerPartnerId` one level down. */
+function reduceToLatestPerSubPartnerId(allVersions: readonly SubPartnerShare[]): SubPartnerShare[] {
+  const latestBySubPartnerId = new Map<string, SubPartnerShare>();
+  for (const version of allVersions) {
+    const current = latestBySubPartnerId.get(version.subPartnerId);
+    if (!current || isNewerVersion(version, current)) {
+      latestBySubPartnerId.set(version.subPartnerId, version);
+    }
+  }
+
+  return [...latestBySubPartnerId.values()];
+}
+
 /**
  * Reduces every version row for a Partner's Sub-partners down to the latest
  * `effectiveFrom` per `subPartnerId` -- the *current* Sub-partner Shares.
@@ -165,16 +178,27 @@ export async function listCurrentSubPartnerShares(
   deps: SubPartnerShareDeps,
 ): Promise<SubPartnerShare[]> {
   const allVersions = await deps.subPartnerShares.listByPartnerId(partnerId);
+  return reduceToLatestPerSubPartnerId(allVersions);
+}
 
-  const latestBySubPartnerId = new Map<string, SubPartnerShare>();
-  for (const version of allVersions) {
-    const current = latestBySubPartnerId.get(version.subPartnerId);
-    if (!current || isNewerVersion(version, current)) {
-      latestBySubPartnerId.set(version.subPartnerId, version);
-    }
-  }
-
-  return [...latestBySubPartnerId.values()];
+/**
+ * Reduces every version row *for a whole Project's Sub-partners, across
+ * every Partner* down to the latest `effectiveFrom` per `subPartnerId` --
+ * the *current* Sub-partner Shares, Project-wide (Story 3.2, `should-pay`
+ * route). Sourced from `deps.subPartnerShares.listByProjectId(projectId)`
+ * instead of `listByPartnerId(partnerId)` -- avoids an N+1 fan-out (one
+ * `listCurrentSubPartnerShares` call per current Partner) that a
+ * single server-side calculation endpoint shouldn't need. Callers group the
+ * result by `partnerId` themselves (`computeShouldPay`'s expected shape) --
+ * this function only reduces to current, mirroring `listCurrentSubPartnerShares`'s
+ * per-Partner scope.
+ */
+export async function listCurrentSubPartnerSharesForProject(
+  projectId: string,
+  deps: SubPartnerShareDeps,
+): Promise<SubPartnerShare[]> {
+  const allVersions = await deps.subPartnerShares.listByProjectId(projectId);
+  return reduceToLatestPerSubPartnerId(allVersions);
 }
 
 /**
