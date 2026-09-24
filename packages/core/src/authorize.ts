@@ -32,6 +32,7 @@ export type Action =
   | "investment_transactions:create"
   | "investment_transactions:list"
   | "investment_transactions:edit"
+  | "investment_transactions:cancel"
   | "investment_transactions:view_audit"
   | "investment_adjustments:view"
   | "investment_status:view";
@@ -129,6 +130,12 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // `investment_transactions:list`'s identical all-or-nothing-for-the-role
   // shape, checked via `authorizeScope()` only.
   "investment_transactions:edit": new Set(["owner_admin"]),
+  // Story 3.8 (FR42): cancelling/reversing a transaction is Owner/Admin-only
+  // -- no self-access, mirroring `investment_transactions:edit`'s identical
+  // all-or-nothing-for-the-role shape exactly (this story's Decisions: the
+  // AC's persona is explicitly "As an Owner/Admin", with no "(or the
+  // transaction's own Partner/Sub-partner)" qualifier, same as `:edit`).
+  "investment_transactions:cancel": new Set(["owner_admin"]),
   // Story 3.7: viewing a transaction's audit trail is deliberately narrower
   // than editing it but broader than `investment_transactions:list` -- the
   // AC explicitly names "Owner/Admin (or the transaction's own Partner/

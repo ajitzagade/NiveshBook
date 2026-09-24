@@ -11,13 +11,17 @@ import type {
 import { SharesNotFullyAllocatedError, SubPartnerSharesOverAllocatedError } from "./should-pay";
 import { computeInvestmentAdjustment, shareKey } from "./investment-adjustment";
 import type {
+  CancelInvestmentTransactionInput,
   CreateInvestmentTransactionInput,
   EditInvestmentTransactionInput,
   InvestmentTransactionPort,
 } from "./investment-transaction-port";
 import {
+  AlreadyCancelledError,
   buildTransactionSnapshot,
+  cancelInvestmentTransaction,
   editInvestmentTransaction,
+  filterActiveTransactions,
   InvalidPaymentModeError,
   InvalidTransactionAmountError,
   InvalidTransactionDateError,
@@ -26,6 +30,7 @@ import {
   MissingIdempotencyKeyError,
   recordInvestmentTransaction,
   ShareNotFoundError,
+  type CancelInvestmentTransactionRequest,
   type EditInvestmentTransactionRequest,
   type RecordInvestmentTransactionInput,
 } from "./investment-transaction";
@@ -120,21 +125,41 @@ function makeInput(overrides: Partial<RecordInvestmentTransactionInput> = {}): R
  * `auditEntries` entry -- so a test calling `editInvestmentTransaction`
  * twice with the same key through this fake genuinely exercises the
  * dedup logic, not just a hand-fed `{edited: false}`.
+ *
+ * Story 3.8 addition: also implements `cancelTransaction` -- mirroring
+ * `editTransaction`'s own check-first-then-replay idempotency handling one
+ * level over, via a second `Map<idempotencyKey, CancelTransactionResult>`.
+ * A genuinely new cancel attempt on an already-`"cancelled"` row (a
+ * different `idempotencyKey`, or none tracked yet) throws
+ * `AlreadyCancelledError`, mirroring `packages/db`'s own already-cancelled
+ * contract -- this fake deliberately does NOT attempt to simulate the
+ * FOR-UPDATE-based concurrent-double-submit race itself (that mechanism is
+ * `packages/db`'s own job, and it has no meaning against a single-threaded
+ * in-memory array); it only proves the *idempotency*
+ * (same-key-twice-is-a-no-op-replay) and already-cancelled-rejection
+ * contracts this domain-layer module depends on.
  */
 function createFakeInvestmentTransactionPort(): InvestmentTransactionPort & {
   calls: CreateInvestmentTransactionInput[];
   editCalls: EditInvestmentTransactionInput[];
+  cancelCalls: CancelInvestmentTransactionInput[];
   rows: InvestmentTransaction[];
   auditEntries: AuditLogEntry[];
 } {
   const calls: CreateInvestmentTransactionInput[] = [];
   const editCalls: EditInvestmentTransactionInput[] = [];
+  const cancelCalls: CancelInvestmentTransactionInput[] = [];
   const rows: InvestmentTransaction[] = [];
   const auditEntries: AuditLogEntry[] = [];
   const appliedEditsByIdempotencyKey = new Map<string, InvestmentTransaction>();
+  const appliedCancelsByIdempotencyKey = new Map<
+    string,
+    { originalTransaction: InvestmentTransaction; reversalTransaction: InvestmentTransaction }
+  >();
   return {
     calls,
     editCalls,
+    cancelCalls,
     rows,
     auditEntries,
     async recordTransaction(input) {
@@ -152,6 +177,8 @@ function createFakeInvestmentTransactionPort(): InvestmentTransactionPort & {
         paymentMode: input.paymentMode,
         referenceNumber: input.referenceNumber,
         notes: input.notes,
+        status: "active",
+        reversalOfTransactionId: null,
         createdAt: new Date().toISOString(),
       };
       rows.push(transaction);
@@ -215,6 +242,54 @@ function createFakeInvestmentTransactionPort(): InvestmentTransactionPort & {
     },
     async findAuditLogByTransactionId(transactionId) {
       return auditEntries.filter((entry) => entry.entityId === transactionId);
+    },
+    async cancelTransaction(input) {
+      cancelCalls.push(input);
+
+      const alreadyApplied = appliedCancelsByIdempotencyKey.get(input.idempotencyKey);
+      if (alreadyApplied) {
+        // Idempotent replay -- mirrors `editTransaction`'s check-first path
+        // one level over: return the already-cancelled state, no new
+        // mutation, no new reversal row, no new audit entry.
+        return { ...alreadyApplied, cancelled: false };
+      }
+
+      const index = rows.findIndex((row) => row.id === input.transactionId);
+      const existing = rows[index];
+      if (!existing) {
+        throw new Error(`No fake row for transactionId ${input.transactionId}`);
+      }
+      if (existing.status === "cancelled") {
+        throw new AlreadyCancelledError();
+      }
+
+      const updatedOriginal: InvestmentTransaction = { ...existing, status: "cancelled" };
+      rows[index] = updatedOriginal;
+
+      const reversal: InvestmentTransaction = {
+        ...existing,
+        id: `tx-${rows.length + 1}`,
+        status: "cancelled",
+        reversalOfTransactionId: updatedOriginal.id,
+        createdAt: new Date().toISOString(),
+      };
+      rows.push(reversal);
+
+      auditEntries.push({
+        id: `audit-${auditEntries.length + 1}`,
+        entityType: "investment_transaction",
+        entityId: updatedOriginal.id,
+        action: "cancel",
+        actorUserId: input.actorUserId,
+        oldValue: existing,
+        newValue: updatedOriginal,
+        reason: input.reason,
+        createdAt: new Date().toISOString(),
+      });
+
+      const result = { originalTransaction: updatedOriginal, reversalTransaction: reversal };
+      appliedCancelsByIdempotencyKey.set(input.idempotencyKey, result);
+      return { ...result, cancelled: true };
     },
   };
 }
@@ -820,6 +895,283 @@ describe("editInvestmentTransaction — Story 3.7", () => {
     // entry exists for this transaction, not two.
     const entries = await listAuditLogForTransaction(seeded.id, { investmentTransactions: port });
     expect(entries.filter((entry) => entry.action === "edit")).toHaveLength(1);
+  });
+});
+
+describe("editInvestmentTransaction — Story 3.8 already-cancelled guard", () => {
+  function makeCancelInput(
+    overrides: Partial<CancelInvestmentTransactionRequest> = {},
+  ): CancelInvestmentTransactionRequest {
+    return { idempotencyKey: "cancel-idem-1", reason: null, ...overrides };
+  }
+
+  it("throws AlreadyCancelledError before any amount/date/paymentMode/idempotencyKey validation, no write", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const seeded = await seedTransaction(port);
+    await cancelInvestmentTransaction(seeded.id, makeCancelInput(), "owner-1", {
+      investmentTransactions: port,
+    });
+
+    // Every field below is individually invalid (negative amount, malformed
+    // date, unrecognized mode, blank key) -- AlreadyCancelledError must win
+    // regardless, proving the guard runs BEFORE normalizeAmount/
+    // normalizeTransactionDate/normalizePaymentMode/normalizeIdempotencyKey.
+    await expect(
+      editInvestmentTransaction(
+        seeded.id,
+        makeEditInput({ amount: "-500", transactionDate: "not-a-date", paymentMode: "bitcoin", idempotencyKey: "   " }),
+        "owner-1",
+        { investmentTransactions: port },
+      ),
+    ).rejects.toThrow(AlreadyCancelledError);
+    expect(port.editCalls).toHaveLength(0);
+  });
+
+  it("still edits normally when the transaction is active", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const seeded = await seedTransaction(port);
+
+    const result = await editInvestmentTransaction(seeded.id, makeEditInput(), "owner-1", {
+      investmentTransactions: port,
+    });
+
+    expect(result.edited).toBe(true);
+  });
+
+  it("skips the guard (falls through to the port's own not-found behavior) when no row exists for transactionId", async () => {
+    const port = createFakeInvestmentTransactionPort();
+
+    await expect(
+      editInvestmentTransaction("tx-none", makeEditInput(), "owner-1", {
+        investmentTransactions: port,
+      }),
+    ).rejects.toThrow(/No fake row for transactionId/);
+  });
+});
+
+describe("cancelInvestmentTransaction — Story 3.8, FR42", () => {
+  function makeCancelInput(
+    overrides: Partial<CancelInvestmentTransactionRequest> = {},
+  ): CancelInvestmentTransactionRequest {
+    return { idempotencyKey: "cancel-idem-1", reason: "recorded by mistake", ...overrides };
+  }
+
+  it("rejects a missing/blank idempotencyKey with MissingIdempotencyKeyError, no write", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const seeded = await seedTransaction(port);
+
+    await expect(
+      cancelInvestmentTransaction(seeded.id, makeCancelInput({ idempotencyKey: "   " }), "owner-1", {
+        investmentTransactions: port,
+      }),
+    ).rejects.toThrow(MissingIdempotencyKeyError);
+    expect(port.cancelCalls).toHaveLength(0);
+  });
+
+  it("AC1: flips the original row's status to 'cancelled' and creates a linked reversal row carrying the same requirementId/projectId/partyType/shareId/paymentMode/amount, with exactly one 'cancel' audit_log entry", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const seeded = await seedTransaction(port); // amount "700000", paymentMode "neft"
+
+    const result = await cancelInvestmentTransaction(seeded.id, makeCancelInput(), "owner-1", {
+      investmentTransactions: port,
+    });
+
+    expect(result.cancelled).toBe(true);
+    expect(result.originalTransaction.status).toBe("cancelled");
+    expect(result.originalTransaction.id).toBe(seeded.id);
+    // Every other field on the original is untouched (FR42: "the original record is preserved").
+    expect(result.originalTransaction.amount).toBe(seeded.amount);
+    expect(result.originalTransaction.paymentMode).toBe(seeded.paymentMode);
+    expect(result.originalTransaction.requirementId).toBe(seeded.requirementId);
+
+    expect(result.reversalTransaction.status).toBe("cancelled");
+    expect(result.reversalTransaction.reversalOfTransactionId).toBe(seeded.id);
+    expect(result.reversalTransaction.requirementId).toBe(seeded.requirementId);
+    expect(result.reversalTransaction.projectId).toBe(seeded.projectId);
+    expect(result.reversalTransaction.partyType).toBe(seeded.partyType);
+    expect(result.reversalTransaction.shareId).toBe(seeded.shareId);
+    expect(result.reversalTransaction.paymentMode).toBe(seeded.paymentMode);
+    expect(result.reversalTransaction.amount).toBe(seeded.amount);
+    expect(result.reversalTransaction.id).not.toBe(seeded.id);
+
+    const entries = await listAuditLogForTransaction(seeded.id, { investmentTransactions: port });
+    const cancelEntries = entries.filter((entry) => entry.action === "cancel");
+    expect(cancelEntries).toHaveLength(1);
+    expect(cancelEntries[0]?.reason).toBe("recorded by mistake");
+  });
+
+  it("AC1: GET-equivalent listing still returns both the (now-cancelled) original and the reversal row -- never hard-deleted", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const seeded = await seedTransaction(port);
+
+    await cancelInvestmentTransaction(seeded.id, makeCancelInput(), "owner-1", {
+      investmentTransactions: port,
+    });
+
+    const transactions = await listInvestmentTransactions(seeded.requirementId, {
+      investmentTransactions: port,
+    });
+
+    expect(transactions).toHaveLength(2);
+    expect(transactions.every((t) => t.status === "cancelled")).toBe(true);
+  });
+
+  it("AC3-equivalent (this story): cancelling an already-cancelled transaction with a genuinely different idempotencyKey throws AlreadyCancelledError, no second reversal row", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const seeded = await seedTransaction(port);
+    await cancelInvestmentTransaction(seeded.id, makeCancelInput({ idempotencyKey: "key-1" }), "owner-1", {
+      investmentTransactions: port,
+    });
+
+    await expect(
+      cancelInvestmentTransaction(seeded.id, makeCancelInput({ idempotencyKey: "key-2" }), "owner-1", {
+        investmentTransactions: port,
+      }),
+    ).rejects.toThrow(AlreadyCancelledError);
+
+    const transactions = await listInvestmentTransactions(seeded.requirementId, {
+      investmentTransactions: port,
+    });
+    // Still just the original + its ONE reversal -- no second reversal row.
+    expect(transactions).toHaveLength(2);
+  });
+
+  /**
+   * The idempotency-replay guarantee (this story's I/O matrix, AD-5) --
+   * calling `cancelInvestmentTransaction` twice with the SAME
+   * `idempotencyKey` must apply the cancel exactly once, mirroring
+   * `editInvestmentTransaction`'s identical replay test one level over.
+   */
+  it("applies a genuine cancel only once when the SAME idempotencyKey is used twice (idempotent replay) -- exactly one reversal row, one audit_log entry", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const seeded = await seedTransaction(port);
+    const input = makeCancelInput({ idempotencyKey: "replay-key-1" });
+
+    const first = await cancelInvestmentTransaction(seeded.id, input, "owner-1", {
+      investmentTransactions: port,
+    });
+    const second = await cancelInvestmentTransaction(seeded.id, input, "owner-1", {
+      investmentTransactions: port,
+    });
+
+    expect(first.cancelled).toBe(true);
+    expect(second.cancelled).toBe(false);
+    expect(second.originalTransaction).toEqual(first.originalTransaction);
+    expect(second.reversalTransaction).toEqual(first.reversalTransaction);
+
+    // The port's cancelTransaction was genuinely called twice (this function
+    // performs no dedup of its own -- that's the port's job) ...
+    expect(port.cancelCalls).toHaveLength(2);
+    // ... but only ONE cancel was actually applied: exactly one reversal row,
+    // and exactly one "cancel" audit_log entry.
+    const transactions = await listInvestmentTransactions(seeded.requirementId, {
+      investmentTransactions: port,
+    });
+    expect(transactions).toHaveLength(2);
+    const entries = await listAuditLogForTransaction(seeded.id, { investmentTransactions: port });
+    expect(entries.filter((entry) => entry.action === "cancel")).toHaveLength(1);
+  });
+
+  it("normalizes an explicit empty-string/whitespace-only reason to null", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const seeded = await seedTransaction(port);
+
+    await cancelInvestmentTransaction(seeded.id, makeCancelInput({ reason: "   " }), "owner-1", {
+      investmentTransactions: port,
+    });
+
+    const entries = await listAuditLogForTransaction(seeded.id, { investmentTransactions: port });
+    expect(entries.find((entry) => entry.action === "cancel")?.reason).toBeNull();
+  });
+});
+
+describe("filterActiveTransactions — Story 3.8, FR42", () => {
+  it("keeps only status: 'active' rows, excluding both a cancelled original and its reversal", () => {
+    const active = { status: "active" } as InvestmentTransaction;
+    const cancelledOriginal = { status: "cancelled" } as InvestmentTransaction;
+    const reversal = { status: "cancelled", reversalOfTransactionId: "orig-1" } as InvestmentTransaction;
+
+    const result = filterActiveTransactions([active, cancelledOriginal, reversal]);
+
+    expect(result).toEqual([active]);
+  });
+
+  it("returns an empty array unchanged for an empty input", () => {
+    expect(filterActiveTransactions([])).toEqual([]);
+  });
+
+  it("returns every row unchanged when all are active", () => {
+    const a = { status: "active", id: "a" } as InvestmentTransaction;
+    const b = { status: "active", id: "b" } as InvestmentTransaction;
+
+    expect(filterActiveTransactions([a, b])).toEqual([a, b]);
+  });
+});
+
+/**
+ * Proves Story 3.4's `computeInvestmentAdjustment`, `should-pay.ts`, and
+ * `recommended-amount.ts` are LITERALLY untouched by Story 3.8 (the spec's
+ * Intent: "zero new arithmetic") -- not merely asserted. This test cancels a
+ * transaction, then calls the EXISTING, unmodified `computeInvestmentAdjustment`
+ * with a `filterActiveTransactions`-filtered list (exactly as `apps/web`'s
+ * `adjustments/route.ts`/`my-investment-status/route.ts` now do), and
+ * confirms the cancelled amount no longer counts -- mirroring Story 3.7's
+ * own "reflects an edited amount with no new recompute logic" test one
+ * story over.
+ */
+describe("Story 3.4's computeInvestmentAdjustment reflects a cancelled transaction with no new recompute logic", () => {
+  it("excludes the cancelled amount (and its reversal) from actualPaid on the next view", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const seeded = await seedTransaction(port); // amount "700000"
+
+    await cancelInvestmentTransaction(
+      seeded.id,
+      { idempotencyKey: "cancel-idem-1", reason: null },
+      "owner-1",
+      { investmentTransactions: port },
+    );
+
+    const requirement = makeRequirement();
+    const partners = [makePartner({ partnerId: "a", name: "A", sharePercent: "100" as Percent })];
+
+    const transactions = await listInvestmentTransactions("req-1", { investmentTransactions: port });
+    // Both the cancelled original and its reversal exist in the raw list --
+    // proving the filter (not an absence of rows) is what excludes them.
+    expect(transactions).toHaveLength(2);
+
+    const byShareKey: Record<string, Money[]> = {};
+    for (const transaction of filterActiveTransactions(transactions)) {
+      const key = shareKey(transaction.partyType, transaction.shareId);
+      byShareKey[key] = [...(byShareKey[key] ?? []), transaction.amount];
+    }
+
+    let counter = 0;
+    const upsert = async (input: {
+      projectId: string;
+      partyType: "partner" | "sub_partner";
+      shareId: string;
+      requirementId: string;
+      shouldPay: Money;
+      actualPaid: Money;
+      adjustmentType: "pending" | "extra_paid" | "none";
+      adjustmentAmount: Money;
+    }) => {
+      counter += 1;
+      return {
+        id: `adj-${counter}`,
+        ...input,
+        updatedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      };
+    };
+
+    const results = await computeInvestmentAdjustment(requirement, partners, {}, byShareKey, {
+      investmentAdjustments: { upsert, listByProjectId: async () => [] },
+    });
+
+    // No active transaction remains for this share at all -- actualPaid is "0".
+    expect(results[0]?.actualPaid).toBe("0");
+    expect(results[0]?.actualPaid).not.toBe("700000");
   });
 });
 

@@ -3,6 +3,7 @@ import {
   getSession,
   authorizeScope,
   editInvestmentTransaction,
+  AlreadyCancelledError,
   InvalidTransactionAmountError,
   InvalidTransactionDateError,
   InvalidPaymentModeError,
@@ -162,6 +163,15 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       // doc comments) -- never silently return the mismatched row.
       return NextResponse.json(
         { code: "idempotency_key_conflict", message: error.message },
+        { status: 409 },
+      );
+    }
+    if (error instanceof AlreadyCancelledError) {
+      // Story 3.8: `editInvestmentTransaction`'s new early guard -- a
+      // cancelled transaction is a closed financial record and can no
+      // longer be edited.
+      return NextResponse.json(
+        { code: "already_cancelled", message: error.message },
         { status: 409 },
       );
     }

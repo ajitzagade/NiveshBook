@@ -9,6 +9,7 @@ import {
   timestamp,
   unique,
   uuid,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
 /**
@@ -210,6 +211,20 @@ export type InvestmentRequirementRow = typeof investmentRequirements.$inferSelec
  * amount (this story's Decisions). `idempotencyKey` is UNIQUE at the DB
  * level (this story's Decisions) -- the actual double-submit protection
  * mechanism, not merely an application-layer check.
+ *
+ * Story 3.8 (FR42) adds `status`/`reversalOfTransactionId`: cancelling flips
+ * an existing row's `status` to `'cancelled'` in place (every other field
+ * untouched) and inserts a brand-new row -- the linked "reversal" -- carrying
+ * the same `requirementId`/`projectId`/`partyType`/`shareId`/`paymentMode`/
+ * `amount` as the original, `status: 'cancelled'` too, with
+ * `reversalOfTransactionId` pointing back at the original row's `id`. Never a
+ * `DELETE` -- both rows stay forever (this story's Boundaries). `status`
+ * defaults `'active'` so every pre-Story-3.8 row (and every ordinary
+ * create/edit) needs no migration-time backfill logic beyond the column
+ * default. `reversalOfTransactionId` is nullable and self-referencing
+ * (Drizzle's documented `AnyPgColumn`-typed callback form, since the table
+ * can't reference its own not-yet-fully-defined `id` column directly) --
+ * `null` on every row except a reversal row itself.
  */
 export const investmentTransactions = pgTable(
   "investment_transactions",
@@ -231,6 +246,10 @@ export const investmentTransactions = pgTable(
     referenceNumber: text("reference_number"),
     notes: text("notes"),
     idempotencyKey: text("idempotency_key").notNull().unique(),
+    status: text("status").notNull().default("active"),
+    reversalOfTransactionId: uuid("reversal_of_transaction_id").references(
+      (): AnyPgColumn => investmentTransactions.id,
+    ),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -240,6 +259,11 @@ export const investmentTransactions = pgTable(
     // in this story queries by it yet.
     index("investment_transactions_requirement_id_idx").on(table.requirementId),
     index("investment_transactions_share_id_project_id_idx").on(table.shareId, table.projectId),
+    // Story 3.8: `cancelTransaction`'s idempotent-replay/concurrent-race
+    // recovery paths look up a reversal row by its `reversalOfTransactionId`.
+    index("investment_transactions_reversal_of_transaction_id_idx").on(
+      table.reversalOfTransactionId,
+    ),
   ],
 );
 

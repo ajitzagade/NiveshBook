@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
-import { IdempotencyKeyConflictError } from "@niveshbook/core";
+import { AlreadyCancelledError, IdempotencyKeyConflictError } from "@niveshbook/core";
 import { PATCH } from "./route";
 import { SESSION_COOKIE_NAME } from "@/lib/session";
 
@@ -134,8 +134,13 @@ const EXISTING_TRANSACTION = {
   paymentMode: "neft",
   referenceNumber: "REF-1",
   notes: null,
+  status: "active",
+  reversalOfTransactionId: null,
   createdAt: new Date().toISOString(),
 };
+
+/** Story 3.8: the same transaction, already cancelled -- drives `editInvestmentTransaction`'s (`@niveshbook/core`, NOT mocked in this file) real already-cancelled guard end-to-end via `findTransactionById`. */
+const CANCELLED_TRANSACTION = { ...EXISTING_TRANSACTION, status: "cancelled" };
 
 function makeEditBody(overrides: Record<string, unknown> = {}) {
   return {
@@ -517,5 +522,55 @@ describe("PATCH .../transactions/[transactionId]", () => {
 
     expect(response.status).toBe(409);
     expect((await response.json()).code).toBe("idempotency_key_conflict");
+  });
+
+  /**
+   * Story 3.8, spec-3-8's Review Triage Log row 4: unlike the test below (a
+   * mocked-away port rejection, which only proves the route's `catch` block
+   * maps `AlreadyCancelledError` correctly), this drives the REAL
+   * `editInvestmentTransaction` (`@niveshbook/core`, not mocked in this
+   * file) end-to-end: `findTransactionById` -- the mock standing in for the
+   * port's `findById`, which `editInvestmentTransaction` itself calls as
+   * its already-cancelled guard's data source -- returns a `status:
+   * "cancelled"` transaction, so the REAL guard fires and throws
+   * `AlreadyCancelledError` before ever reaching the (mocked) port's
+   * `editTransaction`. Confirms both the 409 mapping AND that the guard
+   * short-circuits before any write is even attempted.
+   */
+  it("Story 3.8: returns 409 already_cancelled end-to-end when the fetched transaction is already cancelled -- via the REAL editInvestmentTransaction guard, not a mocked-away port error", async () => {
+    ownerSession();
+    findTransactionById.mockResolvedValue(CANCELLED_TRANSACTION);
+
+    const response = await PATCH(
+      makeRequest({ cookie: `${SESSION_COOKIE_NAME}=t`, body: makeEditBody() }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe("already_cancelled");
+    expect(editTransaction).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Complements the test above: proves the route's `catch` block correctly
+   * maps `AlreadyCancelledError` to 409 `already_cancelled` regardless of
+   * WHERE it's thrown from -- here simulating the port-level guard firing
+   * (the race-closing check added inside `editTransaction`'s own
+   * `database.transaction()`, per spec-3-8's Review Triage Log row 1, which
+   * cannot be exercised through this fully-mocked `@niveshbook/db` without a
+   * live Postgres connection; see this story's live-verification script for
+   * that coverage).
+   */
+  it("returns 409 already_cancelled when the port itself rejects with AlreadyCancelledError (e.g. the race-closing FOR UPDATE guard), no changes applied", async () => {
+    ownerSession();
+    editTransaction.mockRejectedValue(new AlreadyCancelledError());
+
+    const response = await PATCH(
+      makeRequest({ cookie: `${SESSION_COOKIE_NAME}=t`, body: makeEditBody() }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe("already_cancelled");
   });
 });

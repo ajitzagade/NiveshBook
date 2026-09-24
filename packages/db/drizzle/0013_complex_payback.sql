@@ -1,0 +1,4 @@
+ALTER TABLE "investment_transactions" ADD COLUMN "status" text DEFAULT 'active' NOT NULL;--> statement-breakpoint
+ALTER TABLE "investment_transactions" ADD COLUMN "reversal_of_transaction_id" uuid;--> statement-breakpoint
+ALTER TABLE "investment_transactions" ADD CONSTRAINT "investment_transactions_reversal_of_transaction_id_investment_transactions_id_fk" FOREIGN KEY ("reversal_of_transaction_id") REFERENCES "public"."investment_transactions"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "investment_transactions_reversal_of_transaction_id_idx" ON "investment_transactions" USING btree ("reversal_of_transaction_id");

@@ -583,6 +583,49 @@ describe("authorizeScope — investment_transactions:edit (Story 3.7, Owner/Admi
   });
 });
 
+describe("authorizeScope — investment_transactions:cancel (Story 3.8, Owner/Admin-only, no self-access)", () => {
+  it("allows an owner_admin to cancel a transaction", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("owner-1", "investment_transactions:cancel", deps);
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it.each(["partner", "sub_partner", "project_admin"] as const)(
+    "denies a %s from cancelling a transaction -- Owner/Admin-only, no self/scope override, mirrors investment_transactions:edit exactly",
+    async (role) => {
+      const users = createFakeUserPort([makeUser({ id: "actor-1", role })]);
+      const deps: AuthorizeDeps = { users };
+
+      const result = await authorizeScope("actor-1", "investment_transactions:cancel", deps);
+
+      expect(result).toEqual({ allowed: false });
+    },
+  );
+
+  it("denies a partner even when their own userId is passed as scopeOwnerIds -- not a SCOPE_SELF_ACCESS_ACTIONS entry", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("partner-user-1", "investment_transactions:cancel", deps, [
+      "partner-user-1",
+    ]);
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies an actor that no longer exists", async () => {
+    const users = createFakeUserPort([]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("ghost", "investment_transactions:cancel", deps);
+
+    expect(result).toEqual({ allowed: false });
+  });
+});
+
 describe("authorizeScope — investment_adjustments:view (Story 3.4)", () => {
   it("allows an owner_admin to view Investment Adjustments", async () => {
     const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);

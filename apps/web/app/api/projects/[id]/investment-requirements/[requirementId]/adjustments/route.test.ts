@@ -165,6 +165,8 @@ function makeTransactionRow(overrides: Record<string, unknown> = {}) {
     paymentMode: "neft",
     referenceNumber: null,
     notes: null,
+    status: "active",
+    reversalOfTransactionId: null,
     createdAt: now,
     ...overrides,
   };
@@ -475,5 +477,38 @@ describe("GET .../investment-requirements/[requirementId]/adjustments", () => {
     const body = await response.json();
     expect(body.code).toBe("sub_partner_shares_over_allocated");
     expect(upsertAdjustment).not.toHaveBeenCalled();
+  });
+
+  it("Story 3.8: excludes a cancelled transaction and its reversal row from actualPaid -- only the still-active amount counts", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    listTransactionsByRequirementId.mockResolvedValue([
+      makeTransactionRow({ id: "tx-1", partyType: "partner", shareId: "a", amount: "300000" }),
+      makeTransactionRow({
+        id: "tx-2",
+        partyType: "partner",
+        shareId: "a",
+        amount: "200000",
+        status: "cancelled",
+      }),
+      makeTransactionRow({
+        id: "tx-2-reversal",
+        partyType: "partner",
+        shareId: "a",
+        amount: "200000",
+        status: "cancelled",
+        reversalOfTransactionId: "tx-2",
+      }),
+    ]);
+
+    const response = await GET(makeRequest(`${SESSION_COOKIE_NAME}=some-token`), makeContext());
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    const a = body.partners.find((p: { partnerId: string }) => p.partnerId === "a");
+    // Should Pay is 500000 (100% of 500000) -- only the still-active 300000 counts.
+    expect(a.actualPaid).toBe("300000");
+    expect(a.adjustmentType).toBe("pending");
+    expect(a.adjustmentAmount).toBe("200000");
   });
 });

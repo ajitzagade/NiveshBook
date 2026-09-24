@@ -13,6 +13,7 @@ import {
   listInvestmentTransactions,
   computeInvestmentAdjustment,
   extractInvestmentStatus,
+  filterActiveTransactions,
   shareKey,
   moneyEquals,
   SharesNotFullyAllocatedError,
@@ -222,7 +223,10 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
       requirement,
       partnerShares,
       groupByPartnerId(subPartnerShares),
-      groupTransactionsByShareKey(transactions),
+      // Story 3.8: mirrors `adjustments/route.ts`'s identical additive
+      // filter step -- excludes cancelled transactions (and their reversal
+      // rows) before `computeInvestmentAdjustment` ever sees them.
+      groupTransactionsByShareKey(filterActiveTransactions(transactions)),
       { investmentAdjustments: investmentAdjustmentPort },
     );
 

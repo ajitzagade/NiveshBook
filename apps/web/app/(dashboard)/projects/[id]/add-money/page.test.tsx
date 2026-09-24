@@ -36,10 +36,14 @@ vi.mock("@/lib/should-pay", () => ({
 
 const listInvestmentTransactions = vi.fn();
 const recordInvestmentTransaction = vi.fn();
+const editInvestmentTransaction = vi.fn();
+const cancelInvestmentTransaction = vi.fn();
 
 vi.mock("@/lib/investment-transactions", () => ({
   listInvestmentTransactions: (...args: unknown[]) => listInvestmentTransactions(...args),
   recordInvestmentTransaction: (...args: unknown[]) => recordInvestmentTransaction(...args),
+  editInvestmentTransaction: (...args: unknown[]) => editInvestmentTransaction(...args),
+  cancelInvestmentTransaction: (...args: unknown[]) => cancelInvestmentTransaction(...args),
 }));
 
 const REQUIREMENT = {
@@ -280,5 +284,129 @@ describe("AddMoneyPage -- Record Payment idempotency key reuse across a retry (r
     const firstCallKey = recordInvestmentTransaction.mock.calls[0]?.[3] as string;
     const secondCallKey = recordInvestmentTransaction.mock.calls[1]?.[3] as string;
     expect(secondCallKey).not.toBe(firstCallKey);
+  });
+});
+
+function makeTransaction(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "tx-1",
+    requirementId: "req-1",
+    projectId: "project-1",
+    partyType: "partner",
+    shareId: "a",
+    sharePercentSnapshot: "50",
+    shouldPaySnapshot: "500000",
+    amount: "300000",
+    transactionDate: "2026-10-05",
+    paymentMode: "cash",
+    referenceNumber: null,
+    notes: null,
+    status: "active",
+    reversalOfTransactionId: null,
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+/**
+ * Narrow regression coverage for the Cancel UI's new surface (spec-3-8's
+ * Review Triage Log, rows 2 and 5) -- not full-page coverage (row 5 is
+ * explicit that only what a bug was found in warrants a test, mirroring
+ * this file's own established precedent for spec-3-2/3-3's rows above).
+ */
+describe("AddMoneyPage -- Cancel UI (regression, spec-3-8 Review Triage rows 2/5)", () => {
+  beforeEach(() => {
+    listInvestmentRequirements.mockReset().mockResolvedValue({ requirements: [REQUIREMENT] });
+    getShouldPay.mockReset().mockResolvedValue(SHOULD_PAY_RESPONSE);
+    listInvestmentTransactions.mockReset();
+    recordInvestmentTransaction.mockReset();
+    editInvestmentTransaction.mockReset();
+    cancelInvestmentTransaction.mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("hides the 'Edit' button (and the 'Cancel' button) for an already-cancelled transaction -- regression for row 2 (Edit wasn't gated on status the way Cancel was)", async () => {
+    listInvestmentTransactions.mockResolvedValue({
+      transactions: [makeTransaction({ id: "tx-cancelled", status: "cancelled" })],
+    });
+
+    await renderAndExpand();
+
+    await waitFor(() => {
+      expect(screen.getByText("Cancelled")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+  });
+
+  it("shows both 'Edit' and 'Cancel' for a still-active transaction, and no 'Cancelled' chip", async () => {
+    listInvestmentTransactions.mockResolvedValue({
+      transactions: [makeTransaction({ id: "tx-active", status: "active" })],
+    });
+
+    await renderAndExpand();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(screen.queryByText("Cancelled")).not.toBeInTheDocument();
+  });
+
+  it("does not call cancelInvestmentTransaction just from opening the confirmation dialog -- only after the explicit 'Confirm Cancel' step", async () => {
+    listInvestmentTransactions.mockResolvedValue({
+      transactions: [makeTransaction({ id: "tx-active", status: "active" })],
+    });
+    cancelInvestmentTransaction.mockResolvedValue({
+      originalTransaction: makeTransaction({ id: "tx-active", status: "cancelled" }),
+      reversalTransaction: makeTransaction({
+        id: "tx-reversal",
+        status: "cancelled",
+        reversalOfTransactionId: "tx-active",
+      }),
+    });
+
+    const user = await renderAndExpand();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    // The confirmation dialog is open -- confirming the request has NOT
+    // fired yet, since this is a destructive-feeling action requiring an
+    // explicit confirm step (this story's Decisions/Boundaries).
+    await screen.findByText("Cancel this payment?");
+    expect(cancelInvestmentTransaction).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Confirm Cancel" }));
+
+    await waitFor(() => {
+      expect(cancelInvestmentTransaction).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("firing 'Back' instead of 'Confirm Cancel' closes the dialog without ever calling cancelInvestmentTransaction", async () => {
+    listInvestmentTransactions.mockResolvedValue({
+      transactions: [makeTransaction({ id: "tx-active", status: "active" })],
+    });
+
+    const user = await renderAndExpand();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await screen.findByText("Cancel this payment?");
+
+    await user.click(screen.getByRole("button", { name: "Back" }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("Cancel this payment?")).not.toBeInTheDocument();
+    });
+    expect(cancelInvestmentTransaction).not.toHaveBeenCalled();
   });
 });

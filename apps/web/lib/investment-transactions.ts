@@ -129,6 +129,41 @@ export async function editInvestmentTransaction(
   return (await response.json()) as InvestmentTransaction;
 }
 
+/** `POST .../transactions/[transactionId]/cancel`'s response shape (Story 3.8, FR42). */
+export interface CancelInvestmentTransactionResult {
+  originalTransaction: InvestmentTransaction;
+  reversalTransaction: InvestmentTransaction;
+}
+
+/**
+ * Cancels/reverses a previously recorded transaction (Story 3.8, FR42, AD-5)
+ * -- Owner/Admin-only. `idempotencyKey` mirrors `editInvestmentTransaction`'s
+ * exact lifecycle contract one level over: the caller mints one fresh key
+ * per *logical* cancel attempt (e.g. when the confirmation dialog opens) and
+ * reuses that same key across a retry of that same attempt. This function
+ * never generates or mutates the key.
+ */
+export async function cancelInvestmentTransaction(
+  projectId: string,
+  requirementId: string,
+  transactionId: string,
+  reason: string | null,
+  idempotencyKey: string,
+): Promise<CancelInvestmentTransactionResult> {
+  const response = await fetch(
+    `/api/projects/${projectId}/investment-requirements/${requirementId}/transactions/${transactionId}/cancel`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idempotencyKey, reason }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as CancelInvestmentTransactionResult;
+}
+
 /** Fetches every audit-trail entry (the original `"create"` plus any `"edit"`s) for one transaction (Story 3.7). */
 export async function getAuditLog(
   projectId: string,

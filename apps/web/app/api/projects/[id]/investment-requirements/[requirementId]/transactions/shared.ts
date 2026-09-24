@@ -194,3 +194,37 @@ export function isValidEditTransactionBody(body: unknown): body is ValidEditTran
 
   return true;
 }
+
+/**
+ * `POST .../transactions/[transactionId]/cancel`'s body shape (Story 3.8,
+ * FR42) -- deliberately minimal, unlike `ValidEditTransactionBody`:
+ * cancelling never changes amount/date/paymentMode/reference/notes, so the
+ * only caller-supplied content is the idempotency key plus an optional
+ * reason. The actual `idempotencyKey` presence/blank check happens inside
+ * `packages/core`'s `cancelInvestmentTransaction`, not this type guard --
+ * this only rejects a structurally malformed body before ever reaching the
+ * domain layer.
+ */
+export const CANCEL_INVALID_REQUEST_MESSAGE =
+  'Request body must be valid JSON with an `idempotencyKey` string and an optional `reason` string.';
+
+export interface ValidCancelTransactionBody {
+  idempotencyKey: string;
+  reason: string | null;
+}
+
+export function isValidCancelTransactionBody(body: unknown): body is ValidCancelTransactionBody {
+  if (typeof body !== "object" || body === null) {
+    return false;
+  }
+  const candidate = body as { idempotencyKey?: unknown; reason?: unknown };
+
+  if (typeof candidate.idempotencyKey !== "string") {
+    return false;
+  }
+  if (candidate.reason !== undefined && candidate.reason !== null && typeof candidate.reason !== "string") {
+    return false;
+  }
+
+  return true;
+}

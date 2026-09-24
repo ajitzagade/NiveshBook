@@ -1,6 +1,7 @@
 import type {
   AuditLogEntry,
   InvestmentRequirement,
+  InvestmentTransaction,
   Money,
   PartnerShare,
   PaymentMode,
@@ -10,6 +11,8 @@ import type {
 import { toMoney, InvalidMoneyError } from "./decimal-math";
 import { computeShouldPay } from "./should-pay";
 import type {
+  CancelInvestmentTransactionInput,
+  CancelTransactionResult,
   CreateInvestmentTransactionInput,
   EditInvestmentTransactionInput,
   EditTransactionResult,
@@ -133,6 +136,25 @@ export class IdempotencyKeyConflictError extends Error {
       "This idempotency key was already used for a different payment request -- generate a new key for this submission.",
     );
     this.name = "IdempotencyKeyConflictError";
+  }
+}
+
+/**
+ * Thrown by `packages/db`'s `createInvestmentTransactionPort.cancelTransaction`
+ * (Story 3.8, FR42) when the target transaction's `status` is already
+ * `"cancelled"` at write time, and the attempt is NOT a concurrent-race
+ * replay of the exact same `idempotencyKey` (see `packages/db`'s own
+ * implementation doc comment for how that race is distinguished from a
+ * genuinely new cancel attempt) -- i.e. someone is trying to cancel an
+ * already-void transaction a second, genuinely different time. The route
+ * layer maps this to 409 `already_cancelled`. Also thrown by
+ * `editInvestmentTransaction`'s new early guard (this story's Decisions) --
+ * a cancelled transaction can no longer be edited either.
+ */
+export class AlreadyCancelledError extends Error {
+  constructor() {
+    super("This transaction has already been cancelled.");
+    this.name = "AlreadyCancelledError";
   }
 }
 
@@ -353,6 +375,29 @@ export interface EditInvestmentTransactionRequest {
  * belongs to *this* Project/requirement -- callers (the route handler) must
  * resolve and confirm that first, both to surface the 404 case and because
  * this function has no requirement/project context to check against.
+ *
+ * Story 3.8 addition: fetches the transaction's *current* state first and
+ * throws `AlreadyCancelledError` immediately if its `status` is already
+ * `"cancelled"` -- before any amount/date/paymentMode/idempotencyKey
+ * validation runs (fail fast on the most fundamental precondition first). A
+ * cancelled transaction is a closed financial record; letting an edit slip
+ * through afterward would silently corrupt it. If no row is found at all,
+ * this guard is skipped and the existing not-found behavior (the port's own
+ * error, surfaced by the route's already-established 404 check beforehand)
+ * is unchanged.
+ *
+ * IMPORTANT (spec-3-8's Review Triage Log, row 1): this check is a
+ * fast-fail OPTIMIZATION for the common non-racing case only -- it is a
+ * plain, non-locking read in a separate round trip from the port's own
+ * write, so it cannot by itself prevent a concurrent `cancelTransaction`
+ * call from cancelling this same row between this check and the port's
+ * later `UPDATE`. The AUTHORITATIVE guard that actually closes that race
+ * lives in `packages/db`'s `editTransaction` implementation itself, inside
+ * the same locked `database.transaction()` as the `UPDATE` it protects (see
+ * that method's own doc comment on `InvestmentTransactionPort`). Removing
+ * this early check would only cost an extra DB round trip on the
+ * already-cancelled path, never correctness; removing the port-level check
+ * would reopen the race.
  */
 export async function editInvestmentTransaction(
   transactionId: string,
@@ -360,6 +405,11 @@ export async function editInvestmentTransaction(
   actorUserId: string,
   deps: InvestmentTransactionDeps,
 ): Promise<EditTransactionResult> {
+  const current = await deps.investmentTransactions.findById(transactionId);
+  if (current && current.status === "cancelled") {
+    throw new AlreadyCancelledError();
+  }
+
   const amount = normalizeAmount(input.amount);
   const transactionDate = normalizeTransactionDate(input.transactionDate);
   const paymentMode = normalizePaymentMode(input.paymentMode);
@@ -394,4 +444,80 @@ export async function listAuditLogForTransaction(
   deps: InvestmentTransactionDeps,
 ): Promise<AuditLogEntry[]> {
   return deps.investmentTransactions.findAuditLogByTransactionId(transactionId);
+}
+
+/**
+ * Raw, unvalidated cancel request (Story 3.8, FR42) -- mirrors
+ * `EditInvestmentTransactionRequest`'s "raw input, validated by this
+ * module's own normalize helpers" shape one level over, deliberately
+ * narrower: cancelling never touches amount/date/paymentMode/reference/notes.
+ */
+export interface CancelInvestmentTransactionRequest {
+  /** Required, non-empty -- reuses `audit_log.idempotencyKey` unchanged from Story 3.7 (this story's Decisions). */
+  idempotencyKey: string;
+  /** Optional -- `audit_log.reason` is nullable (Story 3.3); no AC requires one for a cancel either. */
+  reason: string | null;
+}
+
+/**
+ * Cancels/reverses a previously recorded transaction (Story 3.8, FR42):
+ * validates `idempotencyKey` via the same `normalizeIdempotencyKey` helper
+ * `recordInvestmentTransaction`/`editInvestmentTransaction` use (400-mappable
+ * `MissingIdempotencyKeyError`), then calls the port -- whose atomicity/
+ * idempotency/already-cancelled contract is documented on
+ * `InvestmentTransactionPort.cancelTransaction` itself.
+ *
+ * Needs no new recompute of Story 3.4's Investment Adjustment: the *routes*
+ * that build its transaction-summing map call the new `filterActiveTransactions`
+ * (below) on the fetched list before grouping, so a cancelled amount (and its
+ * reversal, also `status: "cancelled"`) simply drops out of the sum the next
+ * time anyone views the ledger, with zero new logic here or in
+ * `computeInvestmentAdjustment` itself.
+ *
+ * Callers must run `authorizeScope()` for `"investment_transactions:cancel"`
+ * (Owner/Admin-only, no self-access -- this story's Decisions, mirrors
+ * `"investment_transactions:edit"` exactly) before calling this -- it
+ * performs no permission check of its own (AD-1's gate lives at the route
+ * layer), and it never validates that `transactionId` belongs to *this*
+ * Project/requirement -- callers (the route handler) must resolve and
+ * confirm that first, both to surface the 404 case and because this function
+ * has no requirement/project context to check against.
+ */
+export async function cancelInvestmentTransaction(
+  transactionId: string,
+  input: CancelInvestmentTransactionRequest,
+  actorUserId: string,
+  deps: InvestmentTransactionDeps,
+): Promise<CancelTransactionResult> {
+  const idempotencyKey = normalizeIdempotencyKey(input.idempotencyKey);
+  const reason = normalizeOptionalText(input.reason);
+
+  const portInput: CancelInvestmentTransactionInput = {
+    transactionId,
+    idempotencyKey,
+    reason,
+    actorUserId,
+  };
+
+  return deps.investmentTransactions.cancelTransaction(portInput);
+}
+
+/**
+ * Pure filter excluding every `status: "cancelled"` row (Story 3.8, FR42) --
+ * this is the ENTIRE mechanism by which a cancelled transaction (and its
+ * reversal row, also `status: "cancelled"`) stops counting toward Paid Now:
+ * called by the *routes* that build `computeInvestmentAdjustment`'s
+ * transaction-summing map (`adjustments/route.ts`, `my-investment-status/route.ts`)
+ * before grouping, never inside `computeInvestmentAdjustment`/`should-pay.ts`/
+ * `recommended-amount.ts` themselves, which stay entirely unmodified
+ * (Open/Closed: extend via a new function, never edit the stable
+ * calculation). Deliberately NOT applied to `listInvestmentTransactions`
+ * (Story 3.3's plain recorded-payments list) -- Owner/Admin needs to *see*
+ * that a transaction was cancelled (and its reversal), not have it silently
+ * vanish (this story's Decisions).
+ */
+export function filterActiveTransactions(
+  transactions: readonly InvestmentTransaction[],
+): InvestmentTransaction[] {
+  return transactions.filter((transaction) => transaction.status === "active");
 }

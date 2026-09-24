@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, gt } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
 import {
+  AlreadyCancelledError,
   IdempotencyKeyConflictError,
   moneyEquals,
   type UserPort,
@@ -13,6 +14,7 @@ import {
   type InvestmentTransactionPort,
   type CreateInvestmentTransactionInput,
   type EditInvestmentTransactionInput,
+  type CancelInvestmentTransactionInput,
   type InvestmentAdjustmentPort,
   type RecommendedAmountPort,
 } from "@niveshbook/core";
@@ -152,6 +154,8 @@ function toInvestmentTransaction(row: InvestmentTransactionRow): InvestmentTrans
     paymentMode: row.paymentMode as PaymentMode,
     referenceNumber: row.referenceNumber,
     notes: row.notes,
+    status: row.status as InvestmentTransaction["status"],
+    reversalOfTransactionId: row.reversalOfTransactionId,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -638,6 +642,24 @@ export function matchesEditRequest(
 }
 
 /**
+ * `true` if `entry` (an `audit_log` row found by `idempotencyKey`) actually
+ * represents the *same* logical cancel request as `input` -- the
+ * `cancelTransaction` (Story 3.8) analog of `matchesEditRequest` one level
+ * over. Unlike an edit's request body, a cancel request carries no other
+ * caller-supplied content to compare (amount/date/paymentMode/etc. never
+ * change) -- `entry.entityId` matching `input.transactionId` (the same
+ * transaction being cancelled) is the entire check: a mismatch means a
+ * genuine key collision with some unrelated edit/cancel request, never a
+ * legitimate replay of *this* cancel.
+ */
+export function matchesCancelRequest(
+  entry: Pick<AuditLogRow, "entityId">,
+  input: Pick<CancelInvestmentTransactionInput, "transactionId">,
+): boolean {
+  return entry.entityId === input.transactionId;
+}
+
+/**
  * Drizzle-backed implementation of `packages/core`'s `InvestmentTransactionPort`
  * (Story 3.3) -- the first port method in this codebase to use Drizzle's
  * `database.transaction(async (tx) => {...})` API, implementing AD-5's
@@ -688,12 +710,33 @@ export function createInvestmentTransactionPort(
     return row ? toInvestmentTransaction(row) : null;
   }
 
-  /** Shared by `editTransaction`'s straightforward-replay and concurrent-race-recovery paths. */
+  /** Shared by `editTransaction`'s/`cancelTransaction`'s straightforward-replay and concurrent-race-recovery paths. */
   async function findAuditEntryByIdempotencyKey(idempotencyKey: string): Promise<AuditLogRow | null> {
     const rows = await database
       .select()
       .from(auditLog)
       .where(eq(auditLog.idempotencyKey, idempotencyKey))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  /**
+   * The reversal row linked to one original transaction (Story 3.8) -- shared
+   * by `cancelTransaction`'s straightforward-replay path (queried against
+   * `database`, outside any transaction) and its concurrent-race-recovery
+   * paths (queried against `tx`, so a request unblocked by another's
+   * just-committed `FOR UPDATE` lock sees that same commit's reversal row).
+   * `executor` accepts either since both `Database` and a Drizzle transaction
+   * handle (`tx`) expose the identical `.select()` query-builder shape.
+   */
+  async function findReversalRow(
+    executor: Pick<Database, "select">,
+    originalTransactionId: string,
+  ): Promise<InvestmentTransactionRow | null> {
+    const rows = await executor
+      .select()
+      .from(investmentTransactions)
+      .where(eq(investmentTransactions.reversalOfTransactionId, originalTransactionId))
       .limit(1);
     return rows[0] ?? null;
   }
@@ -819,6 +862,23 @@ export function createInvestmentTransactionPort(
           if (!previousRow) {
             throw new Error("Failed to edit investment transaction: not found");
           }
+          // Story 3.8 fix (spec-3-8's Review Triage Log, row 1): the
+          // AUTHORITATIVE already-cancelled check -- must run inside this
+          // same locked transaction, immediately after acquiring the
+          // `FOR UPDATE` lock, mirroring `cancelTransaction`'s own
+          // `originalRow.status === "cancelled"` check one level over. A
+          // non-locking check in `packages/core`'s `editInvestmentTransaction`
+          // (a separate, earlier round trip) is NOT sufficient on its own:
+          // it can pass against a still-`active` row, then lose a race to a
+          // concurrent `cancelTransaction` call that acquires this row's
+          // lock first, flips its status, and commits before this edit ever
+          // reaches its own `FOR UPDATE` read -- silently mutating a closed
+          // financial record and diverging it from its own reversal row's
+          // pre-edit snapshot. This check, under the lock, is what actually
+          // closes that race.
+          if (previousRow.status === "cancelled") {
+            throw new AlreadyCancelledError();
+          }
 
           const [updatedRow] = await tx
             .update(investmentTransactions)
@@ -876,6 +936,177 @@ export function createInvestmentTransactionPort(
         )
         .orderBy(asc(auditLog.createdAt));
       return rows.map(toAuditLogEntry);
+    },
+    /**
+     * Story 3.8's `cancelTransaction` (FR42) -- mirrors `editTransaction`'s
+     * check-first-then-write-then-recover idempotency structure, plus one
+     * more piece `editTransaction` doesn't need: an already-cancelled guard.
+     *
+     * 1. `SELECT` `audit_log` by `idempotencyKey` first -- a straightforward
+     *    replay, mirroring `editTransaction`'s identical first step.
+     * 2. Otherwise, inside one `database.transaction()`: `SELECT ... FOR
+     *    UPDATE` the original row (mirrors `editTransaction`'s Story 3.7
+     *    patch-round fix exactly, for the identical concurrency-correctness
+     *    reason -- see that `.for("update")` call's own doc comment above).
+     *    If its `status` is already `"cancelled"`, this is either (a) a
+     *    genuinely new cancel attempt on an already-void transaction --
+     *    `AlreadyCancelledError` -- or (b) the concurrent-double-submit race:
+     *    another request carrying this EXACT `idempotencyKey` won the lock
+     *    first and already committed its cancel+reversal+audit_log write
+     *    before this request's `FOR UPDATE` unblocked. (b) is detected by
+     *    finding an `audit_log` "cancel" entry for this transaction with
+     *    this exact `idempotencyKey` (queried against `tx`, so it sees that
+     *    just-committed row) -- if found, this call resolves to the same
+     *    idempotent-replay result (`cancelled: false`) instead of throwing.
+     * 3. Otherwise (still active), `UPDATE` the original row's `status` to
+     *    `"cancelled"`, `INSERT` the reversal row (a fresh `idempotencyKey`
+     *    of its own -- `investment_transactions.idempotencyKey` is NOT NULL
+     *    UNIQUE, but this system-generated row was never a caller-submitted
+     *    request in its own right, so it needs no caller-facing identity),
+     *    `INSERT` the paired `audit_log` "cancel" entry.
+     * 4. Defense in depth, mirroring `editTransaction`'s final catch block
+     *    exactly: if the `audit_log` insert still throws a unique-violation
+     *    (a same-`idempotencyKey`-but-different-`transactionId` collision --
+     *    two different rows can't race under the same `FOR UPDATE` lock, so
+     *    this is the one race `FOR UPDATE` alone can't prevent), catch it,
+     *    re-`SELECT` by `idempotencyKey`, and apply `matchesCancelRequest`:
+     *    match -> replay result; mismatch -> `IdempotencyKeyConflictError`.
+     */
+    async cancelTransaction(input) {
+      const existingEntry = await findAuditEntryByIdempotencyKey(input.idempotencyKey);
+      if (existingEntry) {
+        if (!matchesCancelRequest(existingEntry, input)) {
+          throw new IdempotencyKeyConflictError();
+        }
+        const original = await findTransactionById(input.transactionId);
+        const reversal = original ? await findReversalRow(database, input.transactionId) : null;
+        if (!original || !reversal) {
+          throw new Error(
+            "Failed to replay investment transaction cancel: original or reversal transaction no longer exists",
+          );
+        }
+        return {
+          originalTransaction: original,
+          reversalTransaction: toInvestmentTransaction(reversal),
+          cancelled: false,
+        };
+      }
+
+      try {
+        return await database.transaction(async (tx) => {
+          const existingRows = await tx
+            .select()
+            .from(investmentTransactions)
+            .where(eq(investmentTransactions.id, input.transactionId))
+            .for("update")
+            .limit(1);
+          const originalRow = existingRows[0];
+          if (!originalRow) {
+            throw new Error("Failed to cancel investment transaction: not found");
+          }
+
+          if (originalRow.status === "cancelled") {
+            const raceWinnerRows = await tx
+              .select()
+              .from(auditLog)
+              .where(
+                and(
+                  eq(auditLog.entityType, "investment_transaction"),
+                  eq(auditLog.entityId, input.transactionId),
+                  eq(auditLog.idempotencyKey, input.idempotencyKey),
+                ),
+              )
+              .limit(1);
+            if (!raceWinnerRows[0]) {
+              throw new AlreadyCancelledError();
+            }
+            const reversalRow = await findReversalRow(tx, input.transactionId);
+            if (!reversalRow) {
+              throw new Error(
+                "Failed to recover investment transaction cancel: reversal transaction no longer exists",
+              );
+            }
+            return {
+              originalTransaction: toInvestmentTransaction(originalRow),
+              reversalTransaction: toInvestmentTransaction(reversalRow),
+              cancelled: false,
+            };
+          }
+
+          const [updatedOriginal] = await tx
+            .update(investmentTransactions)
+            .set({ status: "cancelled" })
+            .where(eq(investmentTransactions.id, input.transactionId))
+            .returning();
+          if (!updatedOriginal) {
+            throw new Error("Failed to cancel investment transaction");
+          }
+
+          const [reversalRow] = await tx
+            .insert(investmentTransactions)
+            .values({
+              id: uuidv7(),
+              requirementId: originalRow.requirementId,
+              projectId: originalRow.projectId,
+              partyType: originalRow.partyType,
+              shareId: originalRow.shareId,
+              sharePercentSnapshot: originalRow.sharePercentSnapshot,
+              shouldPaySnapshot: originalRow.shouldPaySnapshot,
+              amount: originalRow.amount,
+              transactionDate: originalRow.transactionDate,
+              paymentMode: originalRow.paymentMode,
+              referenceNumber: originalRow.referenceNumber,
+              notes: originalRow.notes,
+              idempotencyKey: uuidv7(),
+              status: "cancelled",
+              reversalOfTransactionId: input.transactionId,
+            })
+            .returning();
+          if (!reversalRow) {
+            throw new Error("Failed to create reversal transaction");
+          }
+
+          await tx.insert(auditLog).values({
+            id: uuidv7(),
+            entityType: "investment_transaction",
+            entityId: input.transactionId,
+            action: "cancel",
+            actorUserId: input.actorUserId,
+            oldValue: originalRow,
+            newValue: updatedOriginal,
+            reason: input.reason,
+            idempotencyKey: input.idempotencyKey,
+          });
+
+          return {
+            originalTransaction: toInvestmentTransaction(updatedOriginal),
+            reversalTransaction: toInvestmentTransaction(reversalRow),
+            cancelled: true,
+          };
+        });
+      } catch (error) {
+        if (error instanceof AlreadyCancelledError) {
+          throw error;
+        }
+        if (isUniqueViolation(error)) {
+          const winner = await findAuditEntryByIdempotencyKey(input.idempotencyKey);
+          if (winner) {
+            if (!matchesCancelRequest(winner, input)) {
+              throw new IdempotencyKeyConflictError();
+            }
+            const original = await findTransactionById(input.transactionId);
+            const reversal = original ? await findReversalRow(database, input.transactionId) : null;
+            if (original && reversal) {
+              return {
+                originalTransaction: original,
+                reversalTransaction: toInvestmentTransaction(reversal),
+                cancelled: false,
+              };
+            }
+          }
+        }
+        throw error;
+      }
     },
   };
 }

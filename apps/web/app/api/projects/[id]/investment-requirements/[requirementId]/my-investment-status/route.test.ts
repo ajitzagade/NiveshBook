@@ -227,6 +227,8 @@ function makeTransactionRow(overrides: Record<string, unknown> = {}) {
     paymentMode: "neft",
     referenceNumber: null,
     notes: null,
+    status: "active",
+    reversalOfTransactionId: null,
     createdAt: now,
     ...overrides,
   };
@@ -640,6 +642,40 @@ describe("GET .../investment-requirements/[requirementId]/my-investment-status",
     });
     expect(body.status).not.toHaveProperty("partnerId");
     expect(body.status).not.toHaveProperty("subPartners");
+  });
+
+  it("Story 3.8: excludes a cancelled transaction and its reversal row from actualPaid -- only the still-active amount counts", async () => {
+    ownerSession();
+    // Partner A: 50% of 1,000,000 Should Pay -- 500,000.
+    listTransactionsByRequirementId.mockResolvedValue([
+      makeTransactionRow({ id: "tx-active", partyType: "partner", shareId: "a", amount: "500000" }),
+      makeTransactionRow({
+        id: "tx-cancelled",
+        partyType: "partner",
+        shareId: "a",
+        amount: "300000",
+        status: "cancelled",
+      }),
+      makeTransactionRow({
+        id: "tx-cancelled-reversal",
+        partyType: "partner",
+        shareId: "a",
+        amount: "300000",
+        status: "cancelled",
+        reversalOfTransactionId: "tx-cancelled",
+      }),
+    ]);
+
+    const response = await GET(
+      makeRequest({ cookie: `${SESSION_COOKIE_NAME}=t`, partyType: "partner", shareId: "a" }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.status.shouldPay).toBe("500000");
+    expect(body.status.actualPaid).toBe("500000");
+    expect(body.status.adjustmentType).toBe("none");
   });
 
   it("returns 409 shares_not_fully_allocated when Partner Shares don't total 100%", async () => {

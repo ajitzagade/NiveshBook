@@ -89,6 +89,49 @@ export interface EditTransactionResult {
 }
 
 /**
+ * The cancel request (Story 3.8, FR42) -- deliberately minimal: unlike
+ * `EditInvestmentTransactionInput`, cancelling never changes any of the
+ * original row's own recorded fields (amount/date/paymentMode/etc.) -- it
+ * only flips `status` to `"cancelled"` in place and creates a linked
+ * reversal row (see `CancelTransactionResult`'s own doc comment).
+ */
+export interface CancelInvestmentTransactionInput {
+  /** The existing transaction's id -- already confirmed to exist (and belong to this requirement/project) by the route layer before this port is called. */
+  transactionId: string;
+  /**
+   * Enforced UNIQUE-when-present at the DB level, on `audit_log.idempotencyKey`
+   * -- mirrors `EditInvestmentTransactionInput.idempotencyKey`'s exact role
+   * one level over (this story's Decisions: reuses Story 3.7's mechanism
+   * unchanged, not a new column).
+   */
+  idempotencyKey: string;
+  /** The acting user's id -- written onto the paired `audit_log` row (`actorUserId`), never a column on `investment_transactions` itself. */
+  actorUserId: string;
+  /** Optional -- written onto the paired `audit_log` row's `reason` column, mirroring `EditInvestmentTransactionInput.reason`. */
+  reason: string | null;
+}
+
+export interface CancelTransactionResult {
+  /** The original transaction, `status` now `"cancelled"` -- every other field untouched (FR42: "the original record is preserved"). */
+  originalTransaction: InvestmentTransaction;
+  /**
+   * The newly-created linked reversal row -- carries the same
+   * `requirementId`/`projectId`/`partyType`/`shareId`/`paymentMode`/`amount`
+   * as `originalTransaction`, `status: "cancelled"` too (so it never counts
+   * toward Paid Now either), `reversalOfTransactionId` pointing back at
+   * `originalTransaction.id`.
+   */
+  reversalTransaction: InvestmentTransaction;
+  /**
+   * `true` only when this call genuinely performed the cancel (flipped the
+   * original row and inserted the reversal row). `false` when it resolved to
+   * an idempotent replay of an already-applied cancel -- mirrors
+   * `EditTransactionResult.edited`'s exact shape one level over.
+   */
+  cancelled: boolean;
+}
+
+/**
  * Port for reading/writing Investment Transaction rows (Story 3.3) --
  * implemented by `packages/db` against Postgres; `packages/core` never
  * imports a DB driver directly (AD-9).
@@ -139,7 +182,26 @@ export interface InvestmentTransactionPort {
    * `audit_log.idempotencyKey` instead of `investment_transactions.idempotencyKey`
    * (since an edit updates an existing row rather than inserting a new one,
    * there's no natural row-level UNIQUE column on `investment_transactions`
-   * itself to dedupe against).
+   * itself to dedupe against). This idempotency check runs BEFORE the
+   * already-cancelled check below, so a `PATCH` whose `idempotencyKey`
+   * matches a PRIOR edit that succeeded before a later cancel still replays
+   * correctly (`edited: false`) -- it never re-applies anything, so there is
+   * nothing for the already-cancelled guard to protect against there.
+   *
+   * Already-cancelled contract (Story 3.8, spec-3-8's Review Triage Log row
+   * 1): for a genuinely new edit attempt (not the idempotent-replay case
+   * above), this is the AUTHORITATIVE already-cancelled check -- performed
+   * INSIDE the same `database.transaction()`, immediately after the
+   * `SELECT ... FOR UPDATE` read of the row being edited (mirroring
+   * `cancelTransaction`'s own `originalRow.status === "cancelled"` check one
+   * level over): if the locked row's `status` is already `"cancelled"`,
+   * throws `AlreadyCancelledError` before the `UPDATE` ever runs. This is
+   * what actually closes the race where a non-locking pre-check (e.g.
+   * `packages/core`'s own early guard, a separate/earlier round trip) could
+   * pass against a still-`active` row that a concurrent `cancelTransaction`
+   * call then cancels before this edit acquires its own lock -- without the
+   * lock-scoped check here, that race would silently mutate a closed
+   * financial record.
    */
   editTransaction(input: EditInvestmentTransactionInput): Promise<EditTransactionResult>;
   /**
@@ -151,4 +213,35 @@ export interface InvestmentTransactionPort {
    * the transaction's origin too).
    */
   findAuditLogByTransactionId(transactionId: string): Promise<AuditLogEntry[]>;
+  /**
+   * Atomicity contract (AD-5), mirroring `editTransaction`'s exact shape one
+   * level over: a successful call (1) updates the original
+   * `investment_transactions` row's `status` to `"cancelled"` (nothing else
+   * on it), (2) inserts exactly one new `investment_transactions` row (the
+   * reversal, see `CancelTransactionResult`), and (3) inserts exactly one
+   * paired `audit_log` row (`entityType: "investment_transaction"`,
+   * `entityId` = `input.transactionId`, `action: "cancel"`, `actorUserId` =
+   * `input.actorUserId`, `oldValue` = the original row before the flip,
+   * `newValue` = the original row after the flip, `reason` = `input.reason`,
+   * `idempotencyKey` = `input.idempotencyKey`) -- all inside a single DB
+   * transaction, never a subset. No `DELETE` is ever issued.
+   *
+   * Idempotency contract, mirroring `editTransaction`'s exactly: if an
+   * `audit_log` entry with `input.idempotencyKey` already exists (and its
+   * `entityId` matches `input.transactionId`), this call does NOT re-apply
+   * the cancel -- it returns the already-cancelled original plus its
+   * existing reversal row (`cancelled: false`), without writing anything. If
+   * an entry exists but its `entityId` does NOT match (a genuine key
+   * collision with an unrelated cancel/edit request), throws
+   * `IdempotencyKeyConflictError`.
+   *
+   * Already-cancelled contract: if `input.transactionId`'s current `status`
+   * is already `"cancelled"` at write time, and this is NOT a
+   * concurrent-race replay of the exact same `idempotencyKey` (see
+   * `packages/db`'s own implementation doc comment for how that race is
+   * distinguished from a genuinely new cancel attempt), throws
+   * `AlreadyCancelledError` -- no second reversal row, no second
+   * `audit_log` entry.
+   */
+  cancelTransaction(input: CancelInvestmentTransactionInput): Promise<CancelTransactionResult>;
 }

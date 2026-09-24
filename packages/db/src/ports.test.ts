@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { InvestmentTransaction, Money, Percent } from "@niveshbook/types";
-import { isUniqueViolation, matchesEditRequest, matchesRequest } from "./ports";
+import { isUniqueViolation, matchesCancelRequest, matchesEditRequest, matchesRequest } from "./ports";
 
 function makeExistingTransaction(overrides: Partial<InvestmentTransaction> = {}): InvestmentTransaction {
   return {
@@ -16,6 +16,8 @@ function makeExistingTransaction(overrides: Partial<InvestmentTransaction> = {})
     paymentMode: "neft",
     referenceNumber: null,
     notes: null,
+    status: "active",
+    reversalOfTransactionId: null,
     createdAt: new Date().toISOString(),
     ...overrides,
   };
@@ -301,5 +303,23 @@ describe("matchesEditRequest", () => {
     expect(matchesEditRequest(makeAuditEntry({ newValue: { amount: 750000 } }), makeEditInput())).toBe(
       false,
     );
+  });
+});
+
+/**
+ * Narrowly-scoped unit tests for `matchesCancelRequest` -- the
+ * `cancelTransaction` (Story 3.8) analog of `matchesEditRequest` one level
+ * over. A cancel request carries no other caller-supplied content to
+ * compare (amount/date/paymentMode/etc. never change) -- unlike
+ * `matchesEditRequest`, this is a bare `entityId`-vs-`transactionId`
+ * equality check.
+ */
+describe("matchesCancelRequest", () => {
+  it("matches when entityId equals transactionId", () => {
+    expect(matchesCancelRequest({ entityId: "tx-1" }, { transactionId: "tx-1" })).toBe(true);
+  });
+
+  it("rejects a mismatched entityId -- a genuine key collision with an unrelated request, not a replay of this cancel", () => {
+    expect(matchesCancelRequest({ entityId: "tx-2" }, { transactionId: "tx-1" })).toBe(false);
   });
 });

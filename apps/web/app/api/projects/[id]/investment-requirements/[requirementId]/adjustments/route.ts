@@ -7,6 +7,7 @@ import {
   listCurrentSubPartnerSharesForProject,
   listInvestmentTransactions,
   computeInvestmentAdjustment,
+  filterActiveTransactions,
   shareKey,
   SharesNotFullyAllocatedError,
   SubPartnerSharesOverAllocatedError,
@@ -153,7 +154,11 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
       requirement,
       partnerShares,
       groupByPartnerId(subPartnerShares),
-      groupTransactionsByShareKey(transactions),
+      // Story 3.8: excludes cancelled transactions (and their reversal
+      // rows, also `status: "cancelled"`) BEFORE `computeInvestmentAdjustment`
+      // -- itself unmodified -- ever sees them, so a cancelled amount stops
+      // counting toward Paid Now the next time this ledger is viewed.
+      groupTransactionsByShareKey(filterActiveTransactions(transactions)),
       { investmentAdjustments: investmentAdjustmentPort },
     );
     return NextResponse.json({ partners });

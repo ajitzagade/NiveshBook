@@ -151,7 +151,7 @@ describe("investment_requirements table schema (Story 3.1)", () => {
   });
 });
 
-describe("investment_transactions table schema (Story 3.3)", () => {
+describe("investment_transactions table schema (Story 3.3; status/reversalOfTransactionId columns added Story 3.8)", () => {
   it("marks requirementId/projectId/partyType/shareId/sharePercentSnapshot/shouldPaySnapshot/amount/transactionDate/paymentMode/idempotencyKey NOT NULL", () => {
     expect(investmentTransactions.requirementId.notNull).toBe(true);
     expect(investmentTransactions.projectId.notNull).toBe(true);
@@ -202,6 +202,30 @@ describe("investment_transactions table schema (Story 3.3)", () => {
   it("marks createdAt NOT NULL with a DB-side default", () => {
     expect(investmentTransactions.createdAt.notNull).toBe(true);
     expect(investmentTransactions.createdAt.hasDefault).toBe(true);
+  });
+
+  it("marks status NOT NULL with an 'active' DB-side default (Story 3.8, FR42) -- every pre-Story-3.8 row, and every ordinary create/edit, needs no migration-time backfill", () => {
+    expect(investmentTransactions.status.notNull).toBe(true);
+    expect(investmentTransactions.status.hasDefault).toBe(true);
+    expect(investmentTransactions.status.columnType).toBe("PgText");
+    expect(investmentTransactions.status.default).toBe("active");
+  });
+
+  it("leaves reversalOfTransactionId nullable with no implicit default -- null on every row except a reversal row itself (Story 3.8)", () => {
+    expect(investmentTransactions.reversalOfTransactionId.notNull).toBe(false);
+    expect(investmentTransactions.reversalOfTransactionId.hasDefault).toBe(false);
+    expect(investmentTransactions.reversalOfTransactionId.columnType).toBe("PgUUID");
+  });
+
+  it("self-references investment_transactions.id via reversalOfTransactionId (Story 3.8) -- the linked-reversal-row FK", () => {
+    const { foreignKeys } = getTableConfig(investmentTransactions);
+    const reversalFk = foreignKeys.find((fk) =>
+      fk.reference().columns.some((column) => column.name === "reversal_of_transaction_id"),
+    );
+    expect(reversalFk).toBeDefined();
+    const ref = reversalFk!.reference();
+    expect(ref.foreignTable).toBe(investmentTransactions);
+    expect(ref.foreignColumns.map((column) => column.name)).toEqual(["id"]);
   });
 });
 

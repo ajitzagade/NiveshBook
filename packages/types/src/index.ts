@@ -212,6 +212,21 @@ export interface InvestmentTransaction {
   paymentMode: PaymentMode;
   referenceNumber: string | null;
   notes: string | null;
+  /**
+   * `"active"` (default) counts toward Paid Now; `"cancelled"` (Epic 3, Story
+   * 3.8, FR42) never does -- set on the *original* row when it's cancelled,
+   * and also on the newly-created *reversal* row itself (so neither ever
+   * double-counts). Never hard-deleted either way -- `GET .../transactions`
+   * still returns every row regardless of `status`.
+   */
+  status: "active" | "cancelled";
+  /**
+   * Present only on a reversal row (Story 3.8) -- the id of the *original*
+   * transaction this row reverses. `null` on every other row, including a
+   * cancelled original itself (the link is one-directional: the reversal
+   * points at the original, never the reverse).
+   */
+  reversalOfTransactionId: string | null;
   /** ISO 8601 timestamp */
   createdAt: string;
 }
