@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
-import Link from "next/link";
+import { Percent } from "lucide-react";
 import type { PartnerShare, SubPartnerShare } from "@niveshbook/types";
 import {
   Button,
@@ -13,10 +13,12 @@ import {
   DialogTitle,
   DialogDescription,
   DistributedCheck,
+  EmptyState,
   Field,
   Helper,
   Input,
   Label,
+  PageHeader,
   ShareList,
   ShareRow,
 } from "@niveshbook/ui";
@@ -385,19 +387,13 @@ export default function PartnerSharesPage() {
 
   return (
     <div>
-      <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <Link href="/projects" className="text-[12.6px] text-ink-soft hover:underline">
-            ← Projects
-          </Link>
-          <h1 className="mt-1 text-[22px]">Partner Shares</h1>
-          <p className="mt-1 text-[13.4px] text-ink-soft">
-            Add Partners with a Share % of this Project. The total is checked against 100%, but you
-            can save at any point -- Partners are often added over time.
-          </p>
-        </div>
-        <Button onClick={openAddDialog}>+ Add Partner</Button>
-      </div>
+      <PageHeader
+        backHref="/projects"
+        backLabel="← Projects"
+        title="Partner Shares"
+        description="Add Partners with a Share % of this Project. The total is checked against 100%, but you can save at any point -- Partners are often added over time."
+        action={<Button onClick={openAddDialog}>+ Add Partner</Button>}
+      />
 
       <Card>
         {state.status === "loading" ? (
@@ -407,14 +403,16 @@ export default function PartnerSharesPage() {
             {state.message}
           </p>
         ) : state.shares.length === 0 ? (
-          <div>
-            <p className="mb-3 text-[13.4px] text-ink-soft">
-              No Partner Shares yet. Add the first Partner to get started.
-            </p>
-            <Button variant="ghost" onClick={openAddDialog}>
-              + Add Partner
-            </Button>
-          </div>
+          <EmptyState
+            icon={<Percent size={22} />}
+            title="No Partner Shares yet"
+            description="Add the first Partner and their Share % to start tracking this Project's ownership."
+            action={
+              <Button variant="ghost" onClick={openAddDialog}>
+                + Add Partner
+              </Button>
+            }
+          />
         ) : (
           <ShareList>
             {state.shares.map((share) => {

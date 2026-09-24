@@ -11,7 +11,7 @@ Monorepo (pnpm + Turborepo) for NiveshBook, a partner/investment-tracking app. A
 - Import direction is enforced by `pnpm lint` (`dependency-cruiser`, `.dependency-cruiser.cjs`): `packages/core` → `packages/types` only, never `packages/db` or `apps/web`; `packages/db` → `packages/core`/`packages/types` only, never `apps/web`. A violation fails lint, not just code review.
 - Every `app/api/**/route.ts` handler calls `packages/core`'s `authorize()`/`authorizeScope()` before touching data (AD-1) — never infer a permission from client-supplied data.
 - `.github/workflows/ci.yml` runs `pnpm lint` (incl. `eslint-plugin-security`), `typecheck`, `test`, `build`, and `pnpm audit` on every push to `main` and every PR — required green before merge, not advisory.
-- UI work reuses `packages/ui`'s existing components (Button, Card, StatusChip, Amount, StatCard, WalletHero, Table, ShareRow/DistributedCheck, SplitRow, AdjustPersonCard, Trail/TraceBanner, ReportTile, NavItem, Helper, Toaster, Dialog/Popover/DropdownMenu) — never hand-roll a duplicate inline in `apps/web`. Same Open/Closed discipline as above: a story needing UI not yet covered adds it to `packages/ui` first, so the next story reuses it too, instead of forking a one-off version.
+- UI work reuses `packages/ui`'s existing components (Button, Card, PageHeader, EmptyState, StatusChip, Amount, StatCard, WalletHero, Table, ShareRow/DistributedCheck, SplitRow, AdjustPersonCard, Trail/TraceBanner, ReportTile, NavItem, Helper, Toaster, Dialog/Popover/DropdownMenu) — never hand-roll a duplicate inline in `apps/web`. In particular: every screen's title block uses `PageHeader`, and every list screen's "nothing here yet" state uses `EmptyState` — a 2026-09-24 UI audit found both re-implemented ad hoc per page, which is exactly the drift this rule exists to prevent. Same Open/Closed discipline as above: a story needing UI not yet covered adds it to `packages/ui` first, so the next story reuses it too, instead of forking a one-off version.
 
 ## Where things are
 
@@ -23,3 +23,13 @@ Monorepo (pnpm + Turborepo) for NiveshBook, a partner/investment-tracking app. A
 - Dashboards, Money History, and report views must return in under 2 seconds at expected data volume (NFR10) — no automated perf check exists yet; treat this as a manual review criterion on any story touching those views until one is added.
 
 <!-- /bmad:context -->
+
+## UI build gotchas (read before touching `packages/ui` styling)
+
+- `packages/ui` ships as source with no build step (`package.json`'s `"main": "./src/index.tsx"`) — `apps/web` consumes it straight through the pnpm workspace symlink at `node_modules/@niveshbook/ui`. Tailwind v4's automatic content detection excludes `node_modules` by default, so any utility class used *only* inside `packages/ui/src` (i.e. not coincidentally duplicated somewhere in `apps/web`'s own files) silently produces no CSS at all — no error, no warning. `packages/ui/src/styles/tokens.css` has `@source "../";` specifically to force that scan. Do not remove or narrow it; if the CSS entry file ever moves or `packages/ui`'s structure changes, re-verify the `@source` path still covers the new location.
+- This class of bug is invisible to every normal check: the className string looks correct, typecheck/lint/tests all stay green, and a quick screenshot glance can still look "close enough" — a 2026-09-24 audit shipped `NavItem`'s badge rendering at 14px instead of the specified 22px, and every `Card`'s padding at 0px instead of 20px, both for weeks, undetected. Before calling a new fixed-size, padding, or spacing value in a `packages/ui` component done, measure it in an actual build — `getBoundingClientRect()` / computed style via Playwright — not just an eyeballed screenshot. A wrong-by-8px badge or a collapsed padding is easy to miss at a glance and easy to catch with one measurement.
+
+## Concurrency note
+
+- An autonomous build agent may run against this same working tree in the background, committing story work directly to `main` (stash/reset/amend cycles). If a `git status`/`git diff` check on your own in-progress edits comes back unexpectedly clean or reverted mid-session, don't assume you lost work — re-check a few seconds later; it's very likely a transient snapshot caught mid-cycle, not a real loss (seen twice in the 2026-09-24 session, both times transient). Never run a destructive git command (`reset --hard`, `checkout .`, `clean -f`) to "fix" an apparent collision — just re-verify.
+

@@ -1,6 +1,6 @@
 ---
 name: NiveshBook
-description: Plain-English system of record for partnership investment money. Reconciled against a founder-provided screen-mockup artifact (imports/founder-mockup.html, all 11 screens) -- tokens below are sourced from that mockup's own CSS custom properties, not invented. shadcn/ui supplies interactive primitives (Dialog, Popover, Sheet, Combobox) the static mockup doesn't demonstrate; those inherit shadcn defaults except where noted. Tailwind CSS + Next.js 16 + React 19.
+description: Plain-English system of record for partnership investment money. Reconciled against a founder-provided screen-mockup artifact (imports/founder-mockup.html, 11 screens) -- tokens below are sourced from that mockup's own CSS custom properties, not invented. Expanded in mockups/all-screens-demo.html to all 14 screens (adds Users, Permissions, Audit History, plus a Trail Quick View), same tokens, for stakeholder demo purposes. shadcn/ui supplies interactive primitives (Dialog, Popover, Sheet, Combobox) the static mockup doesn't demonstrate; those inherit shadcn defaults except where noted. Tailwind CSS + Next.js 16 + React 19.
 status: draft
 updated: 2026-09-23
 colors:
@@ -77,6 +77,19 @@ components:
     border: '{colors.border}'
     radius: '{rounded.card}'
     shadow: '0 1px 2px rgba(30,41,59,0.04), 0 8px 20px rgba(30,41,59,0.05)'
+  nav-item:
+    # Corrected 2026-09-24 after a code-level UI audit found the shipped
+    # sidebar drifted from a comfortable touch/click target: row height was
+    # ~38px (py-2 + the 22px badge) and the icon glyph was rendered at 12px,
+    # visibly small inside its own 22px badge. Row height and icon-label gap
+    # are real, changeable CSS; the 22px badge size itself is NOT changed
+    # here (it is the confirmed founder-mockup size) -- so the icon glyph
+    # goes to 14px (fills the fixed badge better) rather than the more
+    # generic 18-20px a size-agnostic checklist would suggest, which would
+    # no longer fit inside the approved 22px badge without enlarging it.
+    height: '44-46px (py-3 vertical padding on the 22px badge)'
+    icon-size: '14px'
+    icon-label-gap: '12px'
   nav-badge:
     radius: '{rounded.el}'
     size: '22px'
@@ -96,15 +109,56 @@ components:
     dot-size: '14px'
     connector: '2px solid {colors.border}'
     # dot color = the transaction/movement type at that node, not a fixed color
+  trail-branch:
+    # Horizontal alternate to trail-node, added for the "Trail Quick View" toggle
+    # -- same trail data, laid out as branching boxes + connector lines instead
+    # of a vertical list. Layout inspired by a founder-supplied reference image
+    # (dark theme, unconfirmed as a palette direction) -- colors below stay
+    # NiveshBook's own light tokens; only the branching-box layout is adopted.
+    box:
+      background: '{colors.surface}'
+      border: '2px solid {colors.border}'
+      radius: '{rounded.card}'
+      # left border recolors per node type, matching trail-node's dot color
+    connector: '2px solid {colors.border}'
   button-primary:
     background: '{colors.accent}'
     foreground: '#FFFFFF'
     radius: '{rounded.el}'
+    # Padding corrected 2026-09-24: 9px 15px measured ~34-38px tall in the
+    # shipped app -- short of a comfortable click target. 11px 18px lands in
+    # the 40-44px range without changing font-size, weight, or radius.
+    padding: '11px 18px'
   button-ghost:
     background: '{colors.surface}'
     foreground: '{colors.ink-soft}'
     border: '{colors.border}'
     radius: '{rounded.el}'
+    padding: '11px 18px'
+  page-header:
+    # Added 2026-09-24, extracted from a pattern every real screen (Projects,
+    # Partner Shares, Add Money, Edit Project) had already independently
+    # implemented identically -- centralized as `packages/ui`'s `PageHeader`
+    # so it can't drift per-page again. Shape: optional back-link (12.6px,
+    # ink-soft) above an h1 (22px), an optional description (13.4px,
+    # ink-soft) below it, and a right-aligned primary action -- wraps to a
+    # new line under the title on narrow viewports rather than compressing.
+    title-size: '22px'
+    description-size: '13.4px'
+    back-link-size: '12.6px'
+    margin-bottom: '24px'
+  empty-state:
+    # Added 2026-09-24 to replace a bare line of text as the "nothing here
+    # yet" pattern (the Projects/Partner Shares/Add Money list screens'
+    # original empty state) -- centered icon + heading + description +
+    # optional primary action, generous vertical padding so it reads as a
+    # considered state rather than a stray sentence in an otherwise-empty
+    # Card.
+    icon-size: '22px'
+    icon-badge: 'surface-alt circle, 48px'
+    title-size: '14.5px, weight 650'
+    description-size: '13px, max-width 360px'
+    vertical-padding: '48px (py-12)'
 ---
 
 ## Brand & Style
@@ -155,10 +209,14 @@ Two radii cover the whole surface: `{rounded.card}` (14px) for cards, stat tiles
 - **Share row** — name + editable percent input + neutral "Edit" chip, stacked in a `share-list`; always paired with a **Distributed/Allocated check** bar below (success-soft background, "100% ✓" or "Remaining 0%" pattern) — this exact component also does duty as the Withdrawal Destination screen's "Distributed: ₹X / ₹Y ✓" bar (UJ-4).
 - **Split row** — a destination-split line item: colored dest-icon (26px, radius `el`) + label, amount input on the right. Used only on the Withdrawal Destination screen.
 - **Adjust person card** — name + one or two label/value lines + a resolution chip (`success` "Reduce by ₹X" / `danger` "Add ₹X" / `violet` "Keep for Later ₹X"), grouped in an Investment column and a Withdrawal column side by side, never merged (PRD: adjustments are independent, never netted).
-- **Trail (vertical)** — a left-bordered vertical timeline, each node a small colored dot (`{colors}` per the node's transaction type, not a fixed color) + a what/meta/amount row. Paired with a **trace banner** above it (muted `surface-alt` bar showing "Trace ID: X" + an `info`-chip link) when viewing a specific money trail.
+- **Trail (vertical)** — a left-bordered vertical timeline, each node a small colored dot (`{colors}` per the node's transaction type, not a fixed color) + a what/meta/amount row. Paired with a **trace banner** above it (muted `surface-alt` bar showing "Trace ID: X" + an `info`-chip link) when viewing a specific money trail. This is the default/primary trail pattern.
+- **Trail Quick View (horizontal branching)** — an alternate, expanded rendering of the same trail data as boxes connected by lines, arranged left-to-right in generations (origin → withdrawal → its direct destinations → any of those destinations' own further splits), so a viewer sees the branching shape at a glance instead of reading a flat chronological list. Each box uses `{components.trail-branch}` — white card, `{rounded.card}`, a 3px left border colored per `{colors}` for that node's transaction type (same color mapping as the vertical trail's dots). Toggled via the existing "Trail Quick View" control next to Money History's trail (`DESIGN.md.Do's and Don'ts`: still one hero visualization per screen — this replaces the vertical trail in place when active, it doesn't add a second one alongside it).
 - **Report tile** — colored icon badge (30px, radius `el`) + name + one-line description, in the 3-up report grid.
-- **Button** — `primary` (accent fill, white text) and `ghost` (white fill, border, `ink-soft` text) only; both `{rounded.el}`, `9px 15px` padding, weight 650.
-- **Nav badge** — 22px square, `{rounded.el}`, colored per the mapping in frontmatter — 5 of 9 items get a semantic color, the rest (Home, Adjust Next Time, Money History, Reports) are neutral slate `#475569`. Icons in the mockup are unicode glyph placeholders (⌂ ▤ % + − ₹ ↻ ☰ ▦); the real build should replace these with a real icon set (`lucide-react` — the standard shadcn companion, MIT-licensed, covers all 9 semantically: Home, LayoutGrid, Percent, Plus, Minus, Wallet, RotateCcw, History, BarChart3).
+- **Button** — `primary` (accent fill, white text) and `ghost` (white fill, border, `ink-soft` text) only; both `{rounded.el}`, `11px 18px` padding (corrected 2026-09-24 from `9px 15px` — see `{components.button-primary}`), weight 650.
+- **Nav badge** — 22px square, `{rounded.el}`, colored per the mapping in frontmatter — 5 of 9 items get a semantic color, the rest (Home, Adjust Next Time, Money History, Reports) are neutral slate `#475569`. Real build uses `lucide-react` icons at **14px** (corrected 2026-09-24 from an unintentional 12px) inside the fixed 22px badge, `12px` gap to the label, `44-46px` nav-item row height (`{components.nav-item}`) — covers all 9 semantically: Home, LayoutGrid, Percent, Plus, Minus, Wallet, RotateCcw, History, BarChart3.
+- **Logo / brand mark** (added 2026-09-24, `packages/ui`'s `Logo`) — the mockup's `.brand-mark`: a 2x2 grid of 9px squares (2px gap, 3px radius each) in `accent`/`success`/`info`/`amber`, in that exact order. This existed in the source mockup from the start but was never actually built into the real app (only the "NiveshBook" wordmark was) — now used next to the wordmark on the login screen and the sidebar, everywhere the wordmark appears.
+- **Page header** (added 2026-09-24, `packages/ui`'s `PageHeader`) — every screen's title block: optional back-link, 22px `h1`, optional 13.4px description, right-aligned primary action. Extracted from a pattern four screens had already implemented independently and identically — use this component for any new screen's header rather than reimplementing the div/h1/p/button shape inline (`{components.page-header}`).
+- **Empty state** (added 2026-09-24, `packages/ui`'s `EmptyState`) — the "nothing here yet" pattern for any list screen: centered icon (lucide, 22px, in a 48px `surface-alt` circle) + 14.5px heading + optional 13px description (max-width 360px) + optional primary action, `48px` vertical padding. Replaces a bare sentence of text as the empty-state treatment for Projects, Partner Shares, Add Money, and any future list screen (`{components.empty-state}`).
 
 **Not in the mockup — shadcn/ui, unmodified**, used for interactions the static prototype can't demonstrate: `Dialog`, `Sheet` (mobile nav), `Popover`, `DropdownMenu` (Export ⌄ on Money History), `Combobox` (searchable Project/Partner/Person pickers — NFR15's "clear-selection affordance" requirement).
 
@@ -173,4 +231,8 @@ Two radii cover the whole surface: `{rounded.card}` (14px) for cards, stat tiles
 | Pair every status chip with a text label | Ship a color-only status indicator |
 | Indent a sub-row once, with `↳` | Nest a second level of sub-rows inside a sub-row |
 | Determine role/visibility server-side (AD-1) | Build any client-side role switcher, even for a demo/admin surface |
+| Use `packages/ui`'s `PageHeader` for every screen's title block | Re-implement the title/description/action header markup inline per page |
+| Use `packages/ui`'s `EmptyState` for a list screen with nothing in it yet | Ship a bare sentence of text as an empty state |
+| Fix a spacing/sizing inconsistency at the token or shared-component level (`tokens.css`, `packages/ui`) | Patch one page's CSS in isolation, leaving the same value wrong everywhere else |
 | Use `lucide-react` icons matched to the mockup's badge colors | Ship literal unicode glyphs (⌂ ▤ %) as the production icon set |
+| Measure a new fixed-size/padding/spacing value in `packages/ui` against an actual build (computed style, not a screenshot glance) before calling it done | Assume a Tailwind class compiled correctly just because the className string is correct in source — see AGENTS.md's "UI build gotchas": `packages/ui` is consumed as raw source, and a class used only there can silently generate no CSS at all |

@@ -6,6 +6,19 @@
  */
 @import "tailwindcss";
 
+/*
+ * @niveshbook/ui ships as source (no build step, consumed straight from
+ * node_modules/@niveshbook/ui via the pnpm workspace symlink -- see
+ * package.json's "main"). Tailwind v4's automatic content detection
+ * excludes node_modules by default, so any utility class that appears
+ * ONLY in this package's .tsx files (and isn't coincidentally duplicated
+ * in apps/web's own source) was silently never generated -- e.g. Card's
+ * `p-5` rendered as 0px padding everywhere, and NavItem's `h-[22px]
+ * w-[22px]` badge collapsed to the icon's size. Explicit @source forces
+ * the scan regardless of the node_modules exclusion.
+ */
+@source "../";
+
 @theme {
   --color-ink: #1e293b;
   --color-ink-soft: #64748b;
@@ -76,7 +89,7 @@
   .nb-btn {
     border: none;
     border-radius: var(--radius-el);
-    padding: 9px 15px;
+    padding: 11px 18px;
     font-size: 13.2px;
     font-weight: 650;
     cursor: pointer;

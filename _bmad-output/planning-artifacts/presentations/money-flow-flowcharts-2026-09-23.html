@@ -1,0 +1,506 @@
+<title>NiveshBook — Money Flow &amp; Ownership Flowcharts</title>
+<style>
+  :root {
+    --ink: #1E293B; --ink-soft: #64748B; --ink-faint: #94A3B8;
+    --ground: #F3F5F9; --surface: #FFFFFF; --surface-alt: #F7F9FC; --border: #E7EBF1;
+    --accent: #2F6FED; --accent-strong: #1E54C7; --accent-soft: #E7EFFE;
+    --success: #17A566; --success-soft: #E3F8EC;
+    --danger: #E5484D; --danger-soft: #FCEAEA;
+    --info: #0EA5A5; --info-soft: #E1F7F5;
+    --violet: #8B5CF6; --violet-soft: #F1EAFE;
+    --amber: #B7791F; --amber-soft: #FCF1DC; --amber-line: #E8A317;
+    --radius-card: 14px; --radius-el: 9px;
+    --shadow: 0 1px 2px rgba(30,41,59,0.04), 0 8px 20px rgba(30,41,59,0.05);
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  :root[data-theme="dark"] {
+    --ink: #E8ECF4; --ink-soft: #9FAEC4; --ink-faint: #6B7A93;
+    --ground: #0E1320; --surface: #161B2E; --surface-alt: #1B2137; --border: #2A3350;
+    --accent: #5C8DFB; --accent-strong: #8FB0FF; --accent-soft: #1C2B52;
+    --success: #35C787; --success-soft: #133527;
+    --danger: #FF6B6F; --danger-soft: #3A1E20;
+    --info: #3FCBC9; --info-soft: #123333;
+    --violet: #A98BFA; --violet-soft: #271F45;
+    --amber: #F0B848; --amber-soft: #3A2C12; --amber-line: #E8A317;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #E8ECF4; --ink-soft: #9FAEC4; --ink-faint: #6B7A93;
+      --ground: #0E1320; --surface: #161B2E; --surface-alt: #1B2137; --border: #2A3350;
+      --accent: #5C8DFB; --accent-strong: #8FB0FF; --accent-soft: #1C2B52;
+      --success: #35C787; --success-soft: #133527;
+      --danger: #FF6B6F; --danger-soft: #3A1E20;
+      --info: #3FCBC9; --info-soft: #123333;
+      --violet: #A98BFA; --violet-soft: #271F45;
+      --amber: #F0B848; --amber-soft: #3A2C12; --amber-line: #E8A317;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { background: var(--ground); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+  h1, h2, h3, h4 { font-weight: 650; text-wrap: balance; margin: 0; color: var(--ink); }
+  .num { font-variant-numeric: tabular-nums; }
+  code { background: var(--surface-alt); border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; font-size: 0.92em; }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px 90px; }
+
+  .masthead { padding: 44px 0 26px; }
+  .brand-row { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
+  .brand-mark { display: grid; grid-template-columns: repeat(2, 10px); grid-template-rows: repeat(2, 10px); gap: 2px; }
+  .brand-mark span { border-radius: 3px; }
+  .brand-mark span:nth-child(1) { background: var(--accent); }
+  .brand-mark span:nth-child(2) { background: var(--success); }
+  .brand-mark span:nth-child(3) { background: var(--info); }
+  .brand-mark span:nth-child(4) { background: var(--amber-line); }
+  .brand-name { font-weight: 700; font-size: 14px; letter-spacing: 0.01em; color: var(--ink-soft); }
+  .eyebrow { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent-strong); margin-bottom: 10px; }
+  .masthead h1 { font-size: 30px; letter-spacing: -0.015em; max-width: 24ch; }
+  .masthead p.lede { font-size: 15.5px; color: var(--ink-soft); max-width: 74ch; margin-top: 14px; }
+
+  .quicknav { position: sticky; top: 0; z-index: 30; background: var(--ground); border-bottom: 1px solid var(--border); }
+  .quicknav-inner { max-width: 1080px; margin: 0 auto; padding: 0 24px; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+  .quicknav-inner::-webkit-scrollbar { display: none; }
+  .quicknav a { flex-shrink: 0; padding: 12px 12px; font-size: 12.4px; font-weight: 600; color: var(--ink-soft); text-decoration: none; white-space: nowrap; }
+  .quicknav a:hover { color: var(--accent-strong); }
+
+  /* ---- Findings ---- */
+  .finding { display: flex; gap: 14px; padding: 16px 18px; border-radius: var(--radius-card); margin-bottom: 14px; box-shadow: var(--shadow); }
+  .finding.ok { background: var(--success-soft); border: 1px solid transparent; }
+  .finding.new { background: var(--info-soft); }
+  .finding.conflict { background: var(--amber-soft); border: 1px solid var(--amber-line); }
+  .finding .f-icon { font-size: 18px; flex-shrink: 0; line-height: 1.4; }
+  .finding .f-title { font-weight: 700; font-size: 14.5px; margin-bottom: 4px; }
+  .finding.ok .f-title { color: var(--success); }
+  .finding.new .f-title { color: var(--info); }
+  .finding.conflict .f-title { color: var(--amber); }
+  .finding .f-body { font-size: 13.3px; color: var(--ink); line-height: 1.55; }
+  .finding .f-body p { margin: 0 0 8px; }
+  .finding .f-body p:last-child { margin-bottom: 0; }
+  .finding .f-body code { font-size: 0.88em; }
+
+  .compare-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12.6px; background: var(--surface); border-radius: 10px; overflow: hidden; }
+  .compare-table th, .compare-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: right; }
+  .compare-table th:first-child, .compare-table td:first-child { text-align: left; }
+  .compare-table th { background: var(--surface-alt); color: var(--ink-faint); font-size: 10.6px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .compare-table tr:last-child td { border-bottom: none; font-weight: 700; }
+
+  /* ---- Diagram sections ---- */
+  section.diagram { padding: 46px 0 6px; border-top: 1px solid var(--border); scroll-margin-top: 54px; }
+  .diagram-head { margin-bottom: 4px; }
+  .diagram-num { font-size: 11.5px; font-weight: 700; color: var(--ink-faint); letter-spacing: 0.04em; margin-bottom: 4px; }
+  .diagram-head h2 { font-size: 20px; }
+  .diagram-desc { font-size: 13.4px; color: var(--ink-soft); max-width: 74ch; margin-top: 6px; }
+  .diagram-note { font-size: 12px; color: var(--ink-faint); margin-top: 8px; background: var(--surface-alt); border: 1px solid var(--border); border-radius: 8px; padding: 8px 11px; max-width: 74ch; }
+
+  .flow-canvas { position: relative; overflow-x: auto; padding: 20px 4px 22px; margin-top: 18px; }
+  .flow-svg { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 0; overflow: visible; }
+  .flow-cols { display: flex; align-items: center; gap: 44px; position: relative; z-index: 1; width: max-content; }
+  .flow-col { display: flex; flex-direction: column; gap: 14px; flex-shrink: 0; justify-content: center; }
+  .flow-box {
+    background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--ink-faint);
+    border-radius: var(--radius-card); box-shadow: var(--shadow); padding: 11px 14px; min-width: 152px;
+    position: relative; z-index: 1;
+  }
+  .flow-box.level-project { border-left-color: var(--ink); }
+  .flow-box.level-main { border-left-color: var(--accent); }
+  .flow-box.level-sub { border-left-color: var(--info); }
+  .flow-label { font-size: 10.3px; color: var(--ink-faint); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 4px; }
+  .flow-amt { font-size: 14.6px; font-weight: 700; }
+  .flow-meta { font-size: 11.3px; color: var(--ink-soft); margin-top: 3px; }
+  .flow-chip-row { margin-top: 6px; display: flex; gap: 5px; flex-wrap: wrap; }
+
+  .chip { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 10.6px; font-weight: 700; white-space: nowrap; }
+  .chip.success { background: var(--success-soft); color: var(--success); }
+  .chip.danger { background: var(--danger-soft); color: var(--danger); }
+  .chip.violet { background: var(--violet-soft); color: var(--violet); }
+  .chip.neutral { background: var(--surface-alt); color: var(--ink-faint); border: 1px solid var(--border); }
+
+  .legend-row { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 12px; font-size: 11.6px; color: var(--ink-soft); }
+  .legend-row span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend-swatch { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+
+  .quad-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 34px 20px; margin-top: 6px; }
+  @media (max-width: 860px) { .quad-grid { grid-template-columns: 1fr; } }
+  .quad-item h3 { font-size: 15px; margin-bottom: 2px; }
+  .quad-sub { font-size: 12px; color: var(--ink-faint); margin-bottom: 8px; }
+
+  footer { margin-top: 54px; padding-top: 20px; border-top: 1px solid var(--border); font-size: 11.8px; color: var(--ink-faint); }
+</style>
+
+<div class="quicknav">
+  <div class="quicknav-inner">
+    <a href="#findings">Findings</a>
+    <a href="#d1">Ownership tree</a>
+    <a href="#d2">Round 1 — funding</a>
+    <a href="#d3">Round 2 — variance</a>
+    <a href="#d4">Withdrawal</a>
+    <a href="#d5">4-project combinations</a>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="masthead">
+    <div class="brand-row">
+      <div class="brand-mark"><span></span><span></span><span></span><span></span></div>
+      <span class="brand-name">NIVESHBOOK</span>
+    </div>
+    <div class="eyebrow">Money Flow &amp; Ownership Flowcharts</div>
+    <h1>Same tree, followed as ownership, as an investment round, and as a withdrawal</h1>
+    <p class="lede">Built from your two sketches — the single-project ownership/money tree, and the four-project partner-combination sheet — as actual box-and-arrow flowcharts, the same visual language as the live demo's money trail. Every diagram below is drawn from real numbers, not summarized in prose.</p>
+  </div>
+
+  <!-- FINDINGS -->
+  <section id="findings">
+    <div class="finding ok">
+      <div class="f-icon">✅</div>
+      <div>
+        <div class="f-title">Confirmed — different projects can have entirely different partners</div>
+        <div class="f-body"><p>A partner's share is a row in <code>partner_shares</code>, keyed to one <code>project_id</code> — never a global relationship. This is already coded (not just planned): the table has no cross-project link at all. Project A's roster and Project B's roster can overlap fully, partially, or not at all, each at its own percentage. Demonstrated live in the interactive demo (Project A vs. Project B).</p></div>
+      </div>
+    </div>
+
+    <div class="finding new">
+      <div class="f-icon">🔎</div>
+      <div>
+        <div class="f-title">Newly confirmed — the same person can be a main partner in one project and a sub-partner in another</div>
+        <div class="f-body"><p>Checked directly against <code>packages/db/src/schema.ts</code>: <code>partner_shares.partner_id</code> and <code>subpartner_shares.sub_partner_id</code> are freestanding IDs with no foreign key to a shared "person" table and no exclusivity constraint between them. Nothing in the schema or the core authorization logic ties one identity to only ever being a "main partner" or only ever a "sub-partner."</p><p>This is exactly the pattern your four-project sheet uses — Sandip Z is a main partner (50%) in Project A, but a sub-partner under Chandrakant Z in Project B. That's not something anyone had to specifically build for it to work; it falls out of shares being per-project records, not per-person roles. It isn't a written, tested scenario yet though — worth adding as an explicit acceptance criterion once account-to-share linking is built.</p></div>
+      </div>
+    </div>
+
+    <div class="finding conflict">
+      <div class="f-icon">⚠️</div>
+      <div>
+        <div class="f-title">A real conflict — how a sub-partner's percentage is measured</div>
+        <div class="f-body">
+          <p>Your sketches compute a sub-partner's rupee amount as a percentage <strong>of their parent partner's share</strong>. Example from your own notes: Partner B holds 50% of the project; SubPB2 is entered as <strong>60%</strong>, and gets ₹30,000 out of Partner B's ₹50,000 (60% of ₹50,000).</p>
+          <p>The database schema already built for this (Story 2.3) does the opposite on purpose — a code comment states the sub-partner's percentage is <em>"always a percentage of the full Project... never a fraction of the parent Partner's own share."</em> Under that rule, to land on the identical ₹30,000, SubPB2 would need to be entered as <strong>30%</strong> (of the whole project), not 60%.</p>
+          <p>Both rules can produce the split you want — they just require typing a different number into the same field. Concretely, for Partner B's ₹50,000 (50% of the project):</p>
+          <table class="compare-table">
+            <thead><tr><th>Sub-partner</th><th>Your sketch (% of Partner B)</th><th>App as built (% of whole project)</th><th>Same ₹ result</th></tr></thead>
+            <tbody>
+              <tr><td>Partner B (own)</td><td>20%</td><td>10%</td><td class="num">₹10,000</td></tr>
+              <tr><td>SubPB1</td><td>10%</td><td>5%</td><td class="num">₹5,000</td></tr>
+              <tr><td>SubPB2</td><td>60%</td><td>30%</td><td class="num">₹30,000</td></tr>
+              <tr><td>SubPB3</td><td>10%</td><td>5%</td><td class="num">₹5,000</td></tr>
+              <tr><td>Total</td><td>100% of Partner B's 50%</td><td>50% of the project</td><td class="num">₹50,000</td></tr>
+            </tbody>
+          </table>
+          <p style="margin-top:10px">Every diagram below uses the <strong>app-as-built</strong> column, so the rupee outcomes match your intent exactly — but the percentage labels are the "of the whole project" ones. This needs an explicit decision before Story 2.3 (already in review) goes further: if the current schema stays, sub-partner percentages need to always be entered as their eventual share of the whole project, not of their parent's slice.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DIAGRAM 1: OWNERSHIP TREE -->
+  <section class="diagram" id="d1">
+    <div class="diagram-head">
+      <div class="diagram-num">Diagram 1 of 5</div>
+      <h2>Ownership tree — one project, structure only</h2>
+      <p class="diagram-desc">Your first sketch, redrawn. Percentages are the "app as built" values from the table above — same real split, different label on SubPB2.</p>
+    </div>
+    <div class="flow-canvas" id="c1">
+      <svg id="s1" class="flow-svg"></svg>
+      <div class="flow-cols">
+        <div class="flow-col">
+          <div class="flow-box level-project" id="p1-project"><div class="flow-label">Project</div><div class="flow-amt">100%</div></div>
+        </div>
+        <div class="flow-col">
+          <div class="flow-box level-main" id="p1-a"><div class="flow-label">Partner A</div><div class="flow-amt">25%</div></div>
+          <div class="flow-box level-main" id="p1-b"><div class="flow-label">Partner B</div><div class="flow-amt">50%</div></div>
+          <div class="flow-box level-main" id="p1-c"><div class="flow-label">Partner C</div><div class="flow-amt">25%</div></div>
+        </div>
+        <div class="flow-col">
+          <div class="flow-box level-sub" id="p1-bown"><div class="flow-label">Partner B (own)</div><div class="flow-amt">10%</div><div class="flow-meta">of the project</div></div>
+          <div class="flow-box level-sub" id="p1-sub1"><div class="flow-label">SubPB1</div><div class="flow-amt">5%</div><div class="flow-meta">of the project</div></div>
+          <div class="flow-box level-sub" id="p1-sub2"><div class="flow-label">SubPB2</div><div class="flow-amt">30%</div><div class="flow-meta">of the project</div></div>
+          <div class="flow-box level-sub" id="p1-sub3"><div class="flow-label">SubPB3</div><div class="flow-amt">5%</div><div class="flow-meta">of the project</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="legend-row">
+      <span><span class="legend-swatch" style="background:var(--ink)"></span>Project</span>
+      <span><span class="legend-swatch" style="background:var(--accent)"></span>Main partner</span>
+      <span><span class="legend-swatch" style="background:var(--info)"></span>Sub-partner</span>
+    </div>
+  </section>
+
+  <!-- DIAGRAM 2: ROUND 1 -->
+  <section class="diagram" id="d2">
+    <div class="diagram-head">
+      <div class="diagram-num">Diagram 2 of 5</div>
+      <h2>Investment Round 1 — the same tree, carrying real money</h2>
+      <p class="diagram-desc">Project A needs ₹1,00,000. Every box shows Should Pay; in this baseline round everyone pays exactly their Should Pay, so there's no adjustment chip yet — that comes in Round 2.</p>
+    </div>
+    <div class="flow-canvas" id="c2">
+      <svg id="s2" class="flow-svg"></svg>
+      <div class="flow-cols">
+        <div class="flow-col">
+          <div class="flow-box level-project" id="p2-project"><div class="flow-label">Project A needs</div><div class="flow-amt num">₹1,00,000</div></div>
+        </div>
+        <div class="flow-col">
+          <div class="flow-box level-main" id="p2-a"><div class="flow-label">Partner A · 25%</div><div class="flow-amt num">₹25,000</div><div class="flow-chip-row"><span class="chip neutral">Paid in full</span></div></div>
+          <div class="flow-box level-main" id="p2-b"><div class="flow-label">Partner B · 50%</div><div class="flow-amt num">₹50,000</div><div class="flow-chip-row"><span class="chip neutral">Paid in full</span></div></div>
+          <div class="flow-box level-main" id="p2-c"><div class="flow-label">Partner C · 25%</div><div class="flow-amt num">₹25,000</div><div class="flow-chip-row"><span class="chip neutral">Paid in full</span></div></div>
+        </div>
+        <div class="flow-col">
+          <div class="flow-box level-sub" id="p2-bown"><div class="flow-label">Partner B (own) · 10%</div><div class="flow-amt num">₹10,000</div></div>
+          <div class="flow-box level-sub" id="p2-sub1"><div class="flow-label">SubPB1 · 5%</div><div class="flow-amt num">₹5,000</div></div>
+          <div class="flow-box level-sub" id="p2-sub2"><div class="flow-label">SubPB2 · 30%</div><div class="flow-amt num">₹30,000</div></div>
+          <div class="flow-box level-sub" id="p2-sub3"><div class="flow-label">SubPB3 · 5%</div><div class="flow-amt num">₹5,000</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DIAGRAM 3: ROUND 2 WITH VARIANCE -->
+  <section class="diagram" id="d3">
+    <div class="diagram-head">
+      <div class="diagram-num">Diagram 3 of 5</div>
+      <h2>Investment Round 2 — same tree, the project grows, and real life happens</h2>
+      <p class="diagram-desc">Project A now needs ₹1,50,000. Should Pay recalculates automatically at the same percentages. What actually gets paid varies — some pay extra, some fall short, some pay exactly right — at every level of the tree, main partners and sub-partners alike.</p>
+    </div>
+    <div class="flow-canvas" id="c3">
+      <svg id="s3" class="flow-svg"></svg>
+      <div class="flow-cols">
+        <div class="flow-col">
+          <div class="flow-box level-project" id="p3-project"><div class="flow-label">Project A needs</div><div class="flow-amt num">₹1,50,000</div></div>
+        </div>
+        <div class="flow-col">
+          <div class="flow-box level-main" id="p3-a"><div class="flow-label">Partner A · 25%</div><div class="flow-meta">Should Pay <strong class="num">₹37,500</strong></div><div class="flow-amt num">Paid ₹50,000</div><div class="flow-chip-row"><span class="chip success">Extra ₹12,500</span></div></div>
+          <div class="flow-box level-main" id="p3-b"><div class="flow-label">Partner B · 50%</div><div class="flow-meta">Should Pay <strong class="num">₹75,000</strong></div><div class="flow-amt num">Paid ₹82,500</div><div class="flow-chip-row"><span class="chip success">Extra ₹7,500</span></div></div>
+          <div class="flow-box level-main" id="p3-c"><div class="flow-label">Partner C · 25%</div><div class="flow-meta">Should Pay <strong class="num">₹37,500</strong></div><div class="flow-amt num">Paid ₹20,000</div><div class="flow-chip-row"><span class="chip danger">Pending ₹17,500</span></div></div>
+        </div>
+        <div class="flow-col">
+          <div class="flow-box level-sub" id="p3-bown"><div class="flow-label">Partner B (own) · 10%</div><div class="flow-meta">Should Pay <strong class="num">₹15,000</strong></div><div class="flow-amt num">Paid ₹15,000</div><div class="flow-chip-row"><span class="chip neutral">Exact</span></div></div>
+          <div class="flow-box level-sub" id="p3-sub1"><div class="flow-label">SubPB1 · 5%</div><div class="flow-meta">Should Pay <strong class="num">₹7,500</strong></div><div class="flow-amt num">Paid ₹0</div><div class="flow-chip-row"><span class="chip danger">Pending ₹7,500</span></div></div>
+          <div class="flow-box level-sub" id="p3-sub2"><div class="flow-label">SubPB2 · 30%</div><div class="flow-meta">Should Pay <strong class="num">₹45,000</strong></div><div class="flow-amt num">Paid ₹60,000</div><div class="flow-chip-row"><span class="chip success">Extra ₹15,000</span></div></div>
+          <div class="flow-box level-sub" id="p3-sub3"><div class="flow-label">SubPB3 · 5%</div><div class="flow-meta">Should Pay <strong class="num">₹7,500</strong></div><div class="flow-amt num">Paid ₹7,500</div><div class="flow-chip-row"><span class="chip neutral">Exact</span></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="diagram-note">Notice Partner B's own row: ₹15,000 (own) + ₹0 (SubPB1) + ₹60,000 (SubPB2) + ₹7,500 (SubPB3) = ₹82,500 actually collected under Partner B — which is exactly what Partner B's own box shows as Paid. The tree always reconciles, even when every branch behaves differently.</div>
+  </section>
+
+  <!-- DIAGRAM 4: WITHDRAWAL -->
+  <section class="diagram" id="d4">
+    <div class="diagram-head">
+      <div class="diagram-num">Diagram 4 of 5</div>
+      <h2>Withdrawal — the same tree, running the other direction</h2>
+      <p class="diagram-desc">₹80,000 is available to withdraw from Project A. Can Take is the same percentages applied the other way; what's actually taken varies just as freely — including one Owner-approved Extra Withdrawal beyond a partner's normal entitlement.</p>
+    </div>
+    <div class="flow-canvas" id="c4">
+      <svg id="s4" class="flow-svg"></svg>
+      <div class="flow-cols">
+        <div class="flow-col">
+          <div class="flow-box level-project" id="p4-project"><div class="flow-label">Available to withdraw</div><div class="flow-amt num">₹80,000</div></div>
+        </div>
+        <div class="flow-col">
+          <div class="flow-box level-main" id="p4-a"><div class="flow-label">Partner A · 25%</div><div class="flow-meta">Can Take <strong class="num">₹20,000</strong></div><div class="flow-amt num">Took ₹20,000</div><div class="flow-chip-row"><span class="chip neutral">Taken in full</span></div></div>
+          <div class="flow-box level-main" id="p4-b"><div class="flow-label">Partner B · 50%</div><div class="flow-meta">Can Take <strong class="num">₹40,000</strong></div><div class="flow-amt num">Took ₹33,000</div><div class="flow-chip-row"><span class="chip violet">Keep for Later ₹7,000</span></div></div>
+          <div class="flow-box level-main" id="p4-c"><div class="flow-label">Partner C · 25%</div><div class="flow-meta">Can Take <strong class="num">₹20,000</strong></div><div class="flow-amt num">Took ₹0</div><div class="flow-chip-row"><span class="chip violet">Keep for Later ₹20,000</span></div></div>
+        </div>
+        <div class="flow-col">
+          <div class="flow-box level-sub" id="p4-bown"><div class="flow-label">Partner B (own) · 10%</div><div class="flow-meta">Can Take <strong class="num">₹8,000</strong></div><div class="flow-amt num">Took ₹13,000</div><div class="flow-chip-row"><span class="chip danger">Extra Withdrawal +₹5,000</span></div></div>
+          <div class="flow-box level-sub" id="p4-sub1"><div class="flow-label">SubPB1 · 5%</div><div class="flow-meta">Can Take <strong class="num">₹4,000</strong></div><div class="flow-amt num">Took ₹0</div><div class="flow-chip-row"><span class="chip violet">Keep for Later ₹4,000</span></div></div>
+          <div class="flow-box level-sub" id="p4-sub2"><div class="flow-label">SubPB2 · 30%</div><div class="flow-meta">Can Take <strong class="num">₹24,000</strong></div><div class="flow-amt num">Took ₹24,000</div><div class="flow-chip-row"><span class="chip neutral">Taken in full</span></div></div>
+          <div class="flow-box level-sub" id="p4-sub3"><div class="flow-label">SubPB3 · 5%</div><div class="flow-meta">Can Take <strong class="num">₹4,000</strong></div><div class="flow-amt num">Took ₹4,000</div><div class="flow-chip-row"><span class="chip neutral">Taken in full</span></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="diagram-note">Partner B (own)'s ₹5,000 Extra Withdrawal beyond their ₹8,000 Can Take required an explicit Owner/Admin approval (FR25) — a bigger number typed into the field alone would have been rejected. It now reduces Partner B (own)'s entitlement in the next withdrawal cycle.</div>
+  </section>
+
+  <!-- DIAGRAM 5: 4 PROJECTS -->
+  <section class="diagram" id="d5">
+    <div class="diagram-head">
+      <div class="diagram-num">Diagram 5 of 5</div>
+      <h2>Four projects, one pool of eight people — your second sketch, redrawn</h2>
+      <p class="diagram-desc">Same 8 people (Sandip Z, Rushikesh Z, Mahesh Z, Chandrakant Z, Abas Z, Atul Z, Rohit Z, Ajit Z), four completely different ownership structures. Sub-partner percentages below are translated to "of the whole project" per the finding above — same ownership intent as your sketch, different number in the field.</p>
+    </div>
+
+    <div class="quad-grid">
+
+      <div class="quad-item">
+        <h3>Project A</h3>
+        <div class="quad-sub">4 main partners · Sandip Z has 3 sub-partners</div>
+        <div class="flow-canvas" id="c5a">
+          <svg id="s5a" class="flow-svg"></svg>
+          <div class="flow-cols">
+            <div class="flow-col"><div class="flow-box level-project" id="a-root"><div class="flow-label">Project A</div></div></div>
+            <div class="flow-col">
+              <div class="flow-box level-main" id="a-sandip"><div class="flow-label">Sandip Z</div><div class="flow-amt">20%</div><div class="flow-meta">own, after sub-split</div></div>
+              <div class="flow-box level-main" id="a-rushi"><div class="flow-label">Rushikesh Z</div><div class="flow-amt">20%</div></div>
+              <div class="flow-box level-main" id="a-mahesh"><div class="flow-label">Mahesh Z</div><div class="flow-amt">20%</div></div>
+              <div class="flow-box level-main" id="a-chandra"><div class="flow-label">Chandrakant Z</div><div class="flow-amt">10%</div></div>
+            </div>
+            <div class="flow-col">
+              <div class="flow-box level-sub" id="a-abas"><div class="flow-label">Abas Z</div><div class="flow-amt">15%</div><div class="flow-meta">of project</div></div>
+              <div class="flow-box level-sub" id="a-atul"><div class="flow-label">Atul Z</div><div class="flow-amt">10%</div><div class="flow-meta">of project</div></div>
+              <div class="flow-box level-sub" id="a-rohit"><div class="flow-label">Rohit Z</div><div class="flow-amt">5%</div><div class="flow-meta">of project</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="quad-item">
+        <h3>Project B</h3>
+        <div class="quad-sub">3 main partners · Chandrakant Z has 3 sub-partners, incl. Sandip Z</div>
+        <div class="flow-canvas" id="c5b">
+          <svg id="s5b" class="flow-svg"></svg>
+          <div class="flow-cols">
+            <div class="flow-col"><div class="flow-box level-project" id="b-root"><div class="flow-label">Project B</div></div></div>
+            <div class="flow-col">
+              <div class="flow-box level-main" id="b-rushi"><div class="flow-label">Rushikesh Z</div><div class="flow-amt">20%</div></div>
+              <div class="flow-box level-main" id="b-mahesh"><div class="flow-label">Mahesh Z</div><div class="flow-amt">20%</div></div>
+              <div class="flow-box level-main" id="b-chandra"><div class="flow-label">Chandrakant Z</div><div class="flow-amt">30%</div><div class="flow-meta">own, after sub-split</div></div>
+            </div>
+            <div class="flow-col">
+              <div class="flow-box level-sub" id="b-sandip"><div class="flow-label">Sandip Z</div><div class="flow-amt">18%</div><div class="flow-meta">of project · sub-partner here</div></div>
+              <div class="flow-box level-sub" id="b-rohit"><div class="flow-label">Rohit Z</div><div class="flow-amt">6%</div><div class="flow-meta">of project</div></div>
+              <div class="flow-box level-sub" id="b-ajit"><div class="flow-label">Ajit Z</div><div class="flow-amt">6%</div><div class="flow-meta">of project</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="quad-item">
+        <h3>Project C</h3>
+        <div class="quad-sub">3 main partners · Rushikesh Z has 2 sub-partners, incl. Sandip Z again</div>
+        <div class="flow-canvas" id="c5c">
+          <svg id="s5c" class="flow-svg"></svg>
+          <div class="flow-cols">
+            <div class="flow-col"><div class="flow-box level-project" id="c-root"><div class="flow-label">Project C</div></div></div>
+            <div class="flow-col">
+              <div class="flow-box level-main" id="c-ajit"><div class="flow-label">Ajit Z</div><div class="flow-amt">25%</div></div>
+              <div class="flow-box level-main" id="c-rushi"><div class="flow-label">Rushikesh Z</div><div class="flow-amt">30%</div><div class="flow-meta">own, after sub-split</div></div>
+              <div class="flow-box level-main" id="c-rohit"><div class="flow-label">Rohit Z</div><div class="flow-amt">25%</div></div>
+            </div>
+            <div class="flow-col">
+              <div class="flow-box level-sub" id="c-mahesh"><div class="flow-label">Mahesh Z</div><div class="flow-amt">10%</div><div class="flow-meta">of project · sub-partner here</div></div>
+              <div class="flow-box level-sub" id="c-sandip"><div class="flow-label">Sandip Z</div><div class="flow-amt">10%</div><div class="flow-meta">of project · sub-partner here</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="quad-item">
+        <h3>Project D</h3>
+        <div class="quad-sub">5 main partners · Chandrakant Z has 3 sub-partners, incl. Rushikesh Z</div>
+        <div class="flow-canvas" id="c5d">
+          <svg id="s5d" class="flow-svg"></svg>
+          <div class="flow-cols">
+            <div class="flow-col"><div class="flow-box level-project" id="d-root"><div class="flow-label">Project D</div></div></div>
+            <div class="flow-col">
+              <div class="flow-box level-main" id="d-abas"><div class="flow-label">Abas Z</div><div class="flow-amt">5%</div></div>
+              <div class="flow-box level-main" id="d-sandip"><div class="flow-label">Sandip Z</div><div class="flow-amt">20%</div></div>
+              <div class="flow-box level-main" id="d-rohit"><div class="flow-label">Rohit Z</div><div class="flow-amt">5%</div></div>
+              <div class="flow-box level-main" id="d-mahesh"><div class="flow-label">Mahesh Z</div><div class="flow-amt">20%</div></div>
+              <div class="flow-box level-main" id="d-chandra"><div class="flow-label">Chandrakant Z</div><div class="flow-amt">32.5%</div><div class="flow-meta">own, after sub-split</div></div>
+            </div>
+            <div class="flow-col">
+              <div class="flow-box level-sub" id="d-ajit"><div class="flow-label">Ajit Z</div><div class="flow-amt">5%</div><div class="flow-meta">of project</div></div>
+              <div class="flow-box level-sub" id="d-atul"><div class="flow-label">Atul Z</div><div class="flow-amt">2.5%</div><div class="flow-meta">of project</div></div>
+              <div class="flow-box level-sub" id="d-rushi"><div class="flow-label">Rushikesh Z</div><div class="flow-amt">10%</div><div class="flow-meta">of project · sub-partner here</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="diagram-note" style="margin-top:26px; max-width:none">
+      <strong>The role-flexibility scenario, made concrete:</strong>
+      Sandip Z is a <strong>main partner</strong> in Project A (20% after his own sub-split) and Project D (20%), but a <strong>sub-partner</strong> in Project B (18%, under Chandrakant Z) and Project C (10%, under Rushikesh Z).
+      Rushikesh Z is a main partner in three projects, but a sub-partner in Project D, under Chandrakant Z.
+      Mahesh Z is main in three projects, sub-partner in Project C. Nothing in the app has to treat these four people differently to make this work — each project's tree is independent, and a "role" is just a position in one project's tree, not a label attached to the person.
+    </div>
+  </section>
+
+  <footer>
+    All amounts and percentages are worked examples built from your two sketches (single-project ownership + investment/withdrawal tree; four-project partner-combination sheet), translated where noted to the percentage basis in the current schema (<code>packages/db/src/schema.ts</code>). Findings verified directly against that schema and <code>packages/core/src/partner-share.ts</code> / <code>subpartner-share.ts</code> — not assumed from the PRD or architecture docs alone.
+  </footer>
+</div>
+
+<script>
+  function drawFlow(canvasId, svgId, edges) {
+    var canvas = document.getElementById(canvasId);
+    var svg = document.getElementById(svgId);
+    if (!canvas || !svg) return;
+    var w = canvas.scrollWidth, h = canvas.scrollHeight;
+    if (w === 0 || h === 0) return;
+    svg.setAttribute("width", w);
+    svg.setAttribute("height", h);
+    svg.setAttribute("viewBox", "0 0 " + w + " " + h);
+    var cRect = canvas.getBoundingClientRect();
+    var colors = {};
+    edges.forEach(function (e) { colors[e[2]] = true; });
+    var defs = "<defs>";
+    Object.keys(colors).forEach(function (color) {
+      var id = "arrow-" + canvasId + "-" + color.replace("#", "");
+      defs += '<marker id="' + id + '" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse">' +
+        '<path d="M0,0 L7,3 L0,6 z" fill="' + color + '"></path></marker>';
+    });
+    defs += "</defs>";
+    var paths = "";
+    edges.forEach(function (e) {
+      var from = document.getElementById(e[0]);
+      var to = document.getElementById(e[1]);
+      if (!from || !to) return;
+      var fr = from.getBoundingClientRect(), tr = to.getBoundingClientRect();
+      var x1 = fr.right - cRect.left + canvas.scrollLeft;
+      var y1 = fr.top - cRect.top + canvas.scrollTop + fr.height / 2;
+      var x2 = tr.left - cRect.left + canvas.scrollLeft - 7;
+      var y2 = tr.top - cRect.top + canvas.scrollTop + tr.height / 2;
+      var dx = Math.max(20, (x2 - x1) / 2);
+      var d = "M " + x1 + " " + y1 + " C " + (x1 + dx) + " " + y1 + ", " + (x2 - dx) + " " + y2 + ", " + x2 + " " + y2;
+      var mid = "arrow-" + canvasId + "-" + e[2].replace("#", "");
+      paths += '<path d="' + d + '" stroke="' + e[2] + '" stroke-width="1.5" fill="none" opacity="0.85" marker-end="url(#' + mid + ')"></path>';
+    });
+    svg.innerHTML = defs + paths;
+  }
+
+  var ACCENT = "#2F6FED", INFO = "#0EA5A5", INK = "#64748B";
+
+  var FLOWS = [
+    { canvas: "c1", svg: "s1", edges: [
+      ["p1-project", "p1-a", INK], ["p1-project", "p1-b", INK], ["p1-project", "p1-c", INK],
+      ["p1-b", "p1-bown", ACCENT], ["p1-b", "p1-sub1", ACCENT], ["p1-b", "p1-sub2", ACCENT], ["p1-b", "p1-sub3", ACCENT]
+    ]},
+    { canvas: "c2", svg: "s2", edges: [
+      ["p2-project", "p2-a", INK], ["p2-project", "p2-b", INK], ["p2-project", "p2-c", INK],
+      ["p2-b", "p2-bown", ACCENT], ["p2-b", "p2-sub1", ACCENT], ["p2-b", "p2-sub2", ACCENT], ["p2-b", "p2-sub3", ACCENT]
+    ]},
+    { canvas: "c3", svg: "s3", edges: [
+      ["p3-project", "p3-a", INK], ["p3-project", "p3-b", INK], ["p3-project", "p3-c", INK],
+      ["p3-b", "p3-bown", ACCENT], ["p3-b", "p3-sub1", ACCENT], ["p3-b", "p3-sub2", ACCENT], ["p3-b", "p3-sub3", ACCENT]
+    ]},
+    { canvas: "c4", svg: "s4", edges: [
+      ["p4-project", "p4-a", INK], ["p4-project", "p4-b", INK], ["p4-project", "p4-c", INK],
+      ["p4-b", "p4-bown", ACCENT], ["p4-b", "p4-sub1", ACCENT], ["p4-b", "p4-sub2", ACCENT], ["p4-b", "p4-sub3", ACCENT]
+    ]},
+    { canvas: "c5a", svg: "s5a", edges: [
+      ["a-root", "a-sandip", INK], ["a-root", "a-rushi", INK], ["a-root", "a-mahesh", INK], ["a-root", "a-chandra", INK],
+      ["a-sandip", "a-abas", ACCENT], ["a-sandip", "a-atul", ACCENT], ["a-sandip", "a-rohit", ACCENT]
+    ]},
+    { canvas: "c5b", svg: "s5b", edges: [
+      ["b-root", "b-rushi", INK], ["b-root", "b-mahesh", INK], ["b-root", "b-chandra", INK],
+      ["b-chandra", "b-sandip", ACCENT], ["b-chandra", "b-rohit", ACCENT], ["b-chandra", "b-ajit", ACCENT]
+    ]},
+    { canvas: "c5c", svg: "s5c", edges: [
+      ["c-root", "c-ajit", INK], ["c-root", "c-rushi", INK], ["c-root", "c-rohit", INK],
+      ["c-rushi", "c-mahesh", ACCENT], ["c-rushi", "c-sandip", ACCENT]
+    ]},
+    { canvas: "c5d", svg: "s5d", edges: [
+      ["d-root", "d-abas", INK], ["d-root", "d-sandip", INK], ["d-root", "d-rohit", INK], ["d-root", "d-mahesh", INK], ["d-root", "d-chandra", INK],
+      ["d-chandra", "d-ajit", ACCENT], ["d-chandra", "d-atul", ACCENT], ["d-chandra", "d-rushi", ACCENT]
+    ]}
+  ];
+
+  function drawAllFlows() {
+    FLOWS.forEach(function (f) { drawFlow(f.canvas, f.svg, f.edges); });
+  }
+  window.addEventListener("load", function () { requestAnimationFrame(function () { requestAnimationFrame(drawAllFlows); }); });
+  window.addEventListener("resize", drawAllFlows);
+</script>

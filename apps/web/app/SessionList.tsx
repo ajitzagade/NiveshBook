@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Button, Card, StatusChip } from "@niveshbook/ui";
 
 export interface SessionListItem {
   id: string;
@@ -65,58 +66,51 @@ export function SessionList({ sessions: initialSessions, currentSessionId }: Ses
   }
 
   return (
-    <section style={{ marginTop: 32 }}>
-      <h2 style={{ fontSize: 18 }}>Active Sessions</h2>
+    <Card>
+      <h2 className="mb-3.5 text-[15.5px]">Active Sessions</h2>
       {error ? (
-        <p role="alert" style={{ color: "#c0392b", margin: "0 0 8px" }}>
+        <p role="alert" className="mb-3 text-[13.4px] text-danger">
           {error}
         </p>
       ) : null}
       {sessions.length === 0 ? (
-        <p>No active sessions.</p>
+        <p className="text-[13.4px] text-ink-soft">No active sessions.</p>
       ) : (
-        <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+        <ul>
           {sessions.map((s) => {
             const isCurrent = s.id === currentSessionId;
             return (
               <li
                 key={s.id}
-                style={{
-                  padding: "12px 0",
-                  borderBottom: "1px solid #e0e0e0",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
+                className="flex items-center justify-between gap-3 border-b border-border py-3 last:border-b-0"
               >
                 <div>
-                  <div>
+                  <div className="flex items-center gap-2 text-[13.6px] font-semibold text-ink">
                     {isCurrent ? "This session" : `Session ${s.id}`}
                     {isCurrent ? (
-                      <span style={{ fontSize: 12, color: "#2d6cdf", marginLeft: 8 }}>
-                        (this device, right now)
-                      </span>
+                      <StatusChip variant="info">this device, right now</StatusChip>
                     ) : null}
                   </div>
-                  <div style={{ fontSize: 13, color: "#555" }}>
+                  <div className="mt-0.5 text-[11.8px] text-ink-faint">
                     Created: {formatDate(s.createdAt)}
                   </div>
-                  <div style={{ fontSize: 13, color: "#555" }}>
+                  <div className="text-[11.8px] text-ink-faint">
                     Expires: {formatDate(s.expiresAt)}
                   </div>
                 </div>
-                <button
+                <Button
+                  type="button"
+                  variant="ghost"
                   onClick={() => handleRevoke(s.id)}
                   disabled={revokingId === s.id}
-                  style={{ padding: 8 }}
                 >
                   {revokingId === s.id ? "Revoking…" : "Revoke"}
-                </button>
+                </Button>
               </li>
             );
           })}
         </ul>
       )}
-    </section>
+    </Card>
   );
 }

@@ -11,11 +11,12 @@ This document provides the complete epic and story breakdown for NiveshBook, dec
 
 ### Decisions Locked at Sprint Planning
 
-Three items were open going into Sprint Planning (PRD Open Question 2, Story 2.6's grant scope, and Architecture's deferred test-framework choice). Resolved so no dev agent has to invent them mid-story:
+Four items were open going into Sprint Planning (PRD Open Question 2, Story 2.6's grant scope, Architecture's deferred test-framework choice, and — resolved later, on 2026-09-23, after FR-9/Story 2.4 turned out to be silent on it — Story 2.4's co-partner top-line visibility). Resolved so no dev agent has to invent them mid-story:
 
 1. **Project Admin (PRD Open Question 2):** ships in v1 as a supported role, **disabled by default** — toggled on per client via `client.config` (AD-7), same mechanism as any other enabled-module flag. Affects Stories 1.5, 1.6, 1.8.
 2. **Sub-partner visibility grant scope (Story 2.6):** limited to the Partner's **total Share %** only — no adjustment, payment, or balance detail is included in the grant. Affects Story 2.6's acceptance criteria.
 3. **Test framework:** **Vitest**, across `packages/core`, `packages/db`, and `apps/web` — first-class Next.js 16/TS support, no separate config layer needed. Every story's implementation is expected to include Vitest tests for its acceptance criteria, particularly the money-math and authorization-gate stories (1.5, 2.4, 2.5, 3.2, 3.4, 4.1, 4.3).
+4. **Co-partner top-line visibility (Story 2.4) — genuinely undecided until now, resolved 2026-09-23:** FR-9 and Story 2.4 as originally written block a co-partner's *sub-partner structure, split %, transaction detail, balance, and adjustments*, but never stated whether a co-partner's plain project-level total (e.g. "Partner B has paid ₹3,00,000 into Project A") is visible to other main partners on the same Project. Decision: **yes, visible** — same-level main partners on a Project can see each other's project-level investment/withdrawal totals; the privacy boundary applies only to each partner's internal sub-partner structure and transaction/adjustment detail, never to their top-line participation in the Project they're jointly on. Affects Story 2.4's acceptance criteria (new AC added). Separately, no story previously stated that a person's role and visibility are evaluated independently per Project (a Partner Share in Project A and a Sub-partner Share in Project B are unrelated records) — also resolved 2026-09-23, new AC added to Stories 2.2 and 2.4.
 
 ## Requirements Inventory
 
@@ -425,6 +426,10 @@ So that **ownership is never left mis-allocated**.
 **When** Owner/Admin edits the percentage
 **Then** a new versioned row is created with an effective-from date rather than overwriting the old value (AD-3) — past transactions keep referencing the share percent in effect when they happened
 
+**Given** a person who already holds a Sub-partner Share in Project B
+**When** they are added as a Main Partner in Project A instead (or vice versa, in a different combination)
+**Then** both records are created and stored independently — nothing in Partner Shares requires or infers a single global role for a person across every Project (Decisions Locked #4)
+
 *(Creates: `partner_shares` table.)*
 
 ### Story 2.3: Sub-partner Allocation as % of Full Project
@@ -472,6 +477,14 @@ So that **I can trust the system with sensitive information**.
 **Given** Owner/Admin
 **When** they view any partner's data
 **Then** full visibility is retained — Owner/Admin is exempt from the co-partner boundary by design
+
+**Given** Partner A and Partner B on the same Project A
+**When** Partner B views Project A's partner-wise summary
+**Then** Partner B sees Partner A's plain project-level totals (e.g. total invested, total withdrawn) — this is explicitly *not* part of the privacy boundary (Decisions Locked #4); only Partner A's sub-partner structure, split percentages, and transaction/adjustment detail stay hidden from Partner B
+
+**Given** a person holds a Partner Share in Project A and, separately, a Sub-partner Share in Project B
+**When** their access is evaluated in each Project
+**Then** the evaluation is entirely independent per Project — their Project A role/visibility never carries over to, or is inferred from, their Project B role, and vice versa (Decisions Locked #4)
 
 ### Story 2.5: Sub-partner Own-Data Visibility
 

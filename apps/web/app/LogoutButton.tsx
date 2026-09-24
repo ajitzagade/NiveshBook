@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Button } from "@niveshbook/ui";
 
 export function LogoutButton() {
   const router = useRouter();
@@ -24,13 +25,13 @@ export function LogoutButton() {
   return (
     <div>
       {error ? (
-        <p role="alert" style={{ color: "#c0392b", margin: "0 0 8px" }}>
+        <p role="alert" className="mb-2 text-[13.4px] text-danger">
           {error}
         </p>
       ) : null}
-      <button onClick={handleLogout} disabled={submitting} style={{ padding: 10 }}>
+      <Button type="button" variant="ghost" onClick={handleLogout} disabled={submitting}>
         {submitting ? "Logging out…" : "Log out"}
-      </button>
+      </Button>
     </div>
   );
 }

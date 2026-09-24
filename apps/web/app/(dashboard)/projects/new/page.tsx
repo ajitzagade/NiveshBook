@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Card, Field, FieldHint, Input, Label, Textarea } from "@niveshbook/ui";
+import { Button, Card, Field, FieldHint, Input, Label, PageHeader, Textarea } from "@niveshbook/ui";
 import { createProject } from "@/lib/projects";
 
 /**
@@ -35,13 +35,10 @@ export default function NewProjectPage() {
 
   return (
     <div>
-      <div className="mb-5">
-        <h1 className="text-[22px]">New Project</h1>
-        <p className="mt-1 text-[13.4px] text-ink-soft">
-          Create a Project with a name and description — Partner Shares are added later, in a
-          separate step.
-        </p>
-      </div>
+      <PageHeader
+        title="New Project"
+        description="Create a Project with a name and description — Partner Shares are added later, in a separate step."
+      />
 
       <Card className="max-w-[520px]">
         <form onSubmit={handleSubmit}>

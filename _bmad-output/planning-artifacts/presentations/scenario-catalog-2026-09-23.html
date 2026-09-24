@@ -1,0 +1,544 @@
+<title>NiveshBook — Scenario Reference</title>
+<style>
+  :root {
+    --ink: #1E293B; --ink-soft: #64748B; --ink-faint: #94A3B8;
+    --ground: #F3F5F9; --surface: #FFFFFF; --surface-alt: #F7F9FC; --border: #E7EBF1;
+    --accent: #2F6FED; --accent-strong: #1E54C7; --accent-soft: #E7EFFE;
+    --success: #17A566; --success-soft: #E3F8EC;
+    --danger: #E5484D; --danger-soft: #FCEAEA;
+    --info: #0EA5A5; --info-soft: #E1F7F5;
+    --violet: #8B5CF6; --violet-soft: #F1EAFE;
+    --amber: #B7791F; --amber-soft: #FCF1DC; --amber-line: #E8A317;
+    --radius-card: 14px; --radius-el: 9px;
+    --shadow: 0 1px 2px rgba(30,41,59,0.04), 0 8px 20px rgba(30,41,59,0.05);
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  :root[data-theme="dark"] {
+    --ink: #E8ECF4; --ink-soft: #9FAEC4; --ink-faint: #6B7A93;
+    --ground: #0E1320; --surface: #161B2E; --surface-alt: #1B2137; --border: #2A3350;
+    --accent: #5C8DFB; --accent-strong: #8FB0FF; --accent-soft: #1C2B52;
+    --success: #35C787; --success-soft: #133527;
+    --danger: #FF6B6F; --danger-soft: #3A1E20;
+    --info: #3FCBC9; --info-soft: #123333;
+    --violet: #A98BFA; --violet-soft: #271F45;
+    --amber: #F0B848; --amber-soft: #3A2C12; --amber-line: #E8A317;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #E8ECF4; --ink-soft: #9FAEC4; --ink-faint: #6B7A93;
+      --ground: #0E1320; --surface: #161B2E; --surface-alt: #1B2137; --border: #2A3350;
+      --accent: #5C8DFB; --accent-strong: #8FB0FF; --accent-soft: #1C2B52;
+      --success: #35C787; --success-soft: #133527;
+      --danger: #FF6B6F; --danger-soft: #3A1E20;
+      --info: #3FCBC9; --info-soft: #123333;
+      --violet: #A98BFA; --violet-soft: #271F45;
+      --amber: #F0B848; --amber-soft: #3A2C12; --amber-line: #E8A317;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { background: var(--ground); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+  h1, h2, h3, h4 { font-weight: 650; text-wrap: balance; margin: 0; color: var(--ink); }
+  .num, .tabular { font-variant-numeric: tabular-nums; }
+  a { color: var(--accent-strong); }
+
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px 90px; }
+
+  /* ---- Masthead ---- */
+  .masthead { padding: 46px 0 30px; }
+  .brand-row { display: flex; align-items: center; gap: 10px; margin-bottom: 22px; }
+  .brand-mark { display: grid; grid-template-columns: repeat(2, 10px); grid-template-rows: repeat(2, 10px); gap: 2px; }
+  .brand-mark span { border-radius: 3px; }
+  .brand-mark span:nth-child(1) { background: var(--accent); }
+  .brand-mark span:nth-child(2) { background: var(--success); }
+  .brand-mark span:nth-child(3) { background: var(--info); }
+  .brand-mark span:nth-child(4) { background: var(--amber-line); }
+  .brand-name { font-weight: 700; font-size: 14px; letter-spacing: 0.01em; color: var(--ink-soft); }
+  .eyebrow { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent-strong); margin-bottom: 10px; }
+  .masthead h1 { font-size: 32px; letter-spacing: -0.015em; max-width: 20ch; }
+  .masthead p.lede { font-size: 16px; color: var(--ink-soft); max-width: 62ch; margin-top: 14px; }
+  .masthead .meta { margin-top: 18px; font-size: 12.6px; color: var(--ink-faint); }
+  .demo-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 18px; padding: 9px 15px; background: var(--accent); color: #fff; border-radius: var(--radius-el); font-size: 13px; font-weight: 650; text-decoration: none; }
+  .demo-link:hover { background: var(--accent-strong); }
+
+  /* ---- Status legend ---- */
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 20px; padding: 16px 0 6px; border-top: 1px solid var(--border); margin-top: 8px; }
+  .legend-item { display: flex; align-items: center; gap: 7px; font-size: 12.3px; color: var(--ink-soft); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+  /* ---- Sticky quick nav ---- */
+  .quicknav { position: sticky; top: 0; z-index: 30; background: var(--ground); border-bottom: 1px solid var(--border); backdrop-filter: blur(6px); }
+  .quicknav-inner { max-width: 980px; margin: 0 auto; padding: 0 24px; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+  .quicknav-inner::-webkit-scrollbar { display: none; }
+  .quicknav a { flex-shrink: 0; padding: 12px 12px; font-size: 12.6px; font-weight: 600; color: var(--ink-soft); text-decoration: none; border-bottom: 2px solid transparent; white-space: nowrap; }
+  .quicknav a:hover { color: var(--accent-strong); }
+
+  /* ---- Flexibility strip ---- */
+  .flex-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 28px 0 10px; }
+  @media (max-width: 720px) { .flex-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 480px) { .flex-grid { grid-template-columns: 1fr; } }
+  .flex-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-card); box-shadow: var(--shadow); padding: 15px 16px; }
+  .flex-card .flex-title { font-size: 13.4px; font-weight: 700; margin-bottom: 5px; }
+  .flex-card .flex-desc { font-size: 12.4px; color: var(--ink-soft); line-height: 1.5; }
+
+  /* ---- Section / branch ---- */
+  section.branch { padding: 44px 0 6px; border-top: 1px solid var(--border); scroll-margin-top: 54px; }
+  section.branch:first-of-type { border-top: none; }
+  .branch-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 6px; }
+  .branch-head h2 { font-size: 21px; }
+  .branch-num { font-size: 12px; font-weight: 700; color: var(--ink-faint); letter-spacing: 0.04em; margin-bottom: 4px; }
+  .branch-goal { font-size: 13.6px; color: var(--ink-soft); max-width: 66ch; margin-top: 6px; }
+
+  .status { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 8px; border-radius: 999px; font-size: 11.3px; font-weight: 700; white-space: nowrap; }
+  .status .dot { width: 7px; height: 7px; }
+  .status.live { background: var(--success-soft); color: var(--success); }
+  .status.dev { background: var(--info-soft); color: var(--info); }
+  .status.spec { background: var(--amber-soft); color: var(--amber); }
+  .status.deferred { background: var(--surface-alt); color: var(--ink-faint); border: 1px solid var(--border); }
+
+  /* ---- Tree ---- */
+  ul.tree { list-style: none; margin: 22px 0 0; padding: 0; }
+  ul.tree ul.tree { margin: 10px 0 0 6px; padding-left: 20px; border-left: 1px dashed var(--border); }
+  ul.tree > li { position: relative; padding-left: 0; margin-bottom: 20px; }
+  ul.tree ul.tree > li { position: relative; padding-left: 16px; margin-bottom: 14px; }
+  ul.tree ul.tree > li::before { content: ""; position: absolute; left: 0; top: 11px; width: 14px; height: 1px; background: var(--border); }
+
+  .scenario-name { font-size: 14.6px; font-weight: 650; color: var(--ink); }
+  .scenario-desc { font-size: 13.3px; color: var(--ink-soft); margin-top: 3px; line-height: 1.55; }
+  .fr-tag { font-size: 10.6px; color: var(--ink-faint); font-weight: 600; margin-left: 6px; }
+
+  .example {
+    margin-top: 9px; background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 10px; padding: 10px 13px; font-size: 12.6px; color: var(--ink-soft); box-shadow: var(--shadow);
+  }
+  .example .ex-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent-strong); margin-bottom: 4px; }
+  .example strong { color: var(--ink); font-weight: 650; }
+
+  .chip { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+  .chip.success { background: var(--success-soft); color: var(--success); }
+  .chip.danger { background: var(--danger-soft); color: var(--danger); }
+  .chip.violet { background: var(--violet-soft); color: var(--violet); }
+  .chip.neutral { background: var(--surface-alt); color: var(--ink-faint); border: 1px solid var(--border); }
+
+  /* ---- Open questions ---- */
+  .oq-section { margin-top: 50px; padding: 26px 24px; background: var(--amber-soft); border: 1px solid var(--amber-line); border-radius: var(--radius-card); }
+  .oq-section h2 { font-size: 18px; color: var(--amber); }
+  .oq-section > p { font-size: 13px; color: var(--ink-soft); margin-top: 6px; max-width: 66ch; }
+  .oq-list { margin: 16px 0 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+  .oq-list li { font-size: 13.2px; color: var(--ink); padding-left: 18px; position: relative; }
+  .oq-list li::before { content: "?"; position: absolute; left: 0; top: 0; color: var(--amber); font-weight: 800; font-size: 12px; }
+
+  /* ---- Sources / footer ---- */
+  footer { margin-top: 54px; padding-top: 20px; border-top: 1px solid var(--border); font-size: 11.8px; color: var(--ink-faint); }
+  footer ul { padding-left: 18px; margin: 8px 0 0; }
+
+  @media print {
+    .quicknav { display: none; }
+    section.branch { break-inside: avoid; }
+  }
+</style>
+
+<div class="quicknav">
+  <div class="quicknav-inner">
+    <a href="#accounts">Accounts &amp; Access</a>
+    <a href="#projects">Projects &amp; Shares</a>
+    <a href="#privacy">Privacy</a>
+    <a href="#addmoney">Add Money</a>
+    <a href="#withdraw">Withdraw &amp; Movement</a>
+    <a href="#adjustments">Adjustments</a>
+    <a href="#dashboards">Dashboards</a>
+    <a href="#reports">Reports</a>
+    <a href="#audit">Audit &amp; Trust</a>
+    <a href="#config">Multi-Client</a>
+    <a href="#open">Open Questions</a>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="masthead">
+    <div class="brand-row">
+      <div class="brand-mark"><span></span><span></span><span></span><span></span></div>
+      <span class="brand-name">NIVESHBOOK</span>
+    </div>
+    <div class="eyebrow">Scenario Reference · Prepared for client presentation</div>
+    <h1>Every scenario NiveshBook is built to handle</h1>
+    <p class="lede">Sourced directly from the product requirements (45 FRs across 12 areas), the 5-epic implementation plan, the architecture decisions, and the UX specification — organized as one hierarchy, with a worked example under every scenario that has one. Nothing below is invented for this page.</p>
+    <a class="demo-link" href="https://claude.ai/code/artifact/89658c4b-17d5-4910-a0f6-6eaab0ecf75a" target="_blank" rel="noopener">→ Open the live click-through demo</a>
+    <div class="meta">Compiled 23 Sep 2026 from the PRD, epics.md, ARCHITECTURE-SPINE.md, and EXPERIENCE.md/DESIGN.md.</div>
+
+    <div class="legend">
+      <span class="legend-item"><span class="dot" style="background:var(--success)"></span>Built — in review or done</span>
+      <span class="legend-item"><span class="dot" style="background:var(--info)"></span>In development now</span>
+      <span class="legend-item"><span class="dot" style="background:var(--amber-line)"></span>Specified — not yet built</span>
+      <span class="legend-item"><span class="dot" style="background:var(--ink-faint)"></span>Deferred by decision</span>
+    </div>
+  </div>
+
+  <!-- FLEXIBILITY AT A GLANCE -->
+  <div class="flex-grid">
+    <div class="flex-card"><div class="flex-title">Never forced, never capped</div><div class="flex-desc">Should Pay and Can Take are recommendations. Any actual amount is accepted — more, less, or exactly ₹0 — and the system reconciles the difference automatically (FR17, FR22).</div></div>
+    <div class="flex-card"><div class="flex-title">Every suggestion stays editable</div><div class="flex-desc">Next round's "Recommended Amount" carries forward prior pending/extra, but it's always a pre-filled, editable field — never an enforced number (FR19, FR24).</div></div>
+    <div class="flex-card"><div class="flex-title">Percentages that always reconcile</div><div class="flex-desc">Shares support 2 decimal places (e.g. 33.33%) with largest-remainder rounding, so a 3-way split of an odd amount still sums to exactly 100% — no leftover paise (FR13, AD-2).</div></div>
+    <div class="flex-card"><div class="flex-title">One codebase, many clients</div><div class="flex-desc">Branding, currency, locale, and which roles/modules are active are all environment configuration — verified by diffing two clients' deployed code and finding zero source differences (FR43).</div></div>
+    <div class="flex-card"><div class="flex-title">Privacy enforced at the data layer</div><div class="flex-desc">Every API route — including list, export, and report endpoints — re-checks the requester's live role and scope. A hidden nav item is also a blocked endpoint, not just a UI convention (AD-1, FR7-FR9).</div></div>
+    <div class="flex-card"><div class="flex-title">Different projects, different partners</div><div class="flex-desc">A partner's share is a record tied to one project, not a global relationship — so Project A and Project B can share some partners, none, or all, at different percentages each (architecture ERD; demonstrated live in the demo).</div></div>
+    <div class="flex-card"><div class="flex-title">A money trail of any length</div><div class="flex-desc">A withdrawal can split three ways, one of those legs can fund another project, that project can pay out again — and the whole chain stays navigable end to end, forward or backward, regardless of hop count (FR28, FR30).</div></div>
+    <div class="flex-card"><div class="flex-title">Nothing is silently deleted</div><div class="flex-desc">Every financial edit keeps its old value, who changed it, when, and why. A "delete" is always a cancellation plus a linked reversal record, never a hard remove (FR41, FR42, AD-5).</div></div>
+  </div>
+
+  <!-- 1. ACCOUNTS -->
+  <section class="branch" id="accounts">
+    <div class="branch-head">
+      <div>
+        <div class="branch-num">01 · Epic 1</div>
+        <h2>Accounts, Roles &amp; Access Control</h2>
+      </div>
+      <span class="status live"><span class="dot" style="background:var(--success)"></span>Live now — in review</span>
+    </div>
+    <p class="branch-goal">Every person gets a secure login, and the one server-side authorization gate everything else depends on is built and proven against a real action, not a stub.</p>
+
+    <ul class="tree">
+      <li>
+        <div class="scenario-name">Four roles, one gate<span class="fr-tag">FR6–FR8</span></div>
+        <div class="scenario-desc">Every user is exactly one of: Owner/Admin, Partner, Sub-partner, or the optional Project Admin role (off by default, enabled per client). Every protected route calls the same <code>authorize()</code> check before touching data — there is no separate, weaker path for lists, exports, or reports.</div>
+        <div class="example"><div class="ex-label">Scenario</div>A direct API call that bypasses the UI entirely still receives a 403 with no data body — the check lives on the server, not in what buttons are shown.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Login, logout, and session control<span class="fr-tag">FR1, FR5</span></div>
+        <div class="scenario-desc">Standard credential login; logout invalidates the session server-side so a replayed token fails. Sessions expire after inactivity, and an Owner/Admin can revoke a session directly — the very next request on that token is rejected immediately.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Deactivate a user without losing their history<span class="fr-tag">FR4</span></div>
+        <div class="scenario-desc">An Owner/Admin can mark any user inactive. They can no longer log in, but every transaction they were ever party to remains intact and correctly attributed. Reactivating restores login immediately.</div>
+        <div class="example"><div class="ex-label">Edge case</div>A non-Owner/Admin attempting to deactivate any user — including themselves — is rejected with 403, proving the gate against a real destructive action.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Change your own password<span class="fr-tag">FR3</span></div>
+        <div class="scenario-desc">A logged-in user updates their password with their current one as proof; a wrong current password makes no change.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Forgot / reset password</div>
+        <div class="scenario-desc"><strong>Deferred by explicit client decision (23 Sep 2026)</strong> — not built for the current phase. When it ships: a time-limited, single-use reset link; identical response whether or not the email exists, so no one can probe which emails are registered.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Permissions area — who can approve what<span class="fr-tag">FR45</span></div>
+        <div class="scenario-desc">A dedicated screen shows which roles are enabled for this deployment (e.g. is Project Admin in use) and which specific users hold Owner/Admin-level approval authority — for example, who is allowed to authorize an Extra Withdrawal.</div>
+        <div class="example"><div class="ex-label">Flexibility</div>Revoking someone's approval authority here takes effect on their <strong>very next request</strong> — never a cached or stale permission carried over from an earlier login.</div>
+      </li>
+    </ul>
+  </section>
+
+  <!-- 2. PROJECTS & SHARES -->
+  <section class="branch" id="projects">
+    <div class="branch-head">
+      <div>
+        <div class="branch-num">02 · Epic 2</div>
+        <h2>Projects &amp; Partner Shares</h2>
+      </div>
+      <span class="status dev"><span class="dot" style="background:var(--info)"></span>In development now</span>
+    </div>
+    <p class="branch-goal">Create a project, assign validated ownership percentages to its partners, and let one level of sub-partnership split any partner's own share further.</p>
+
+    <ul class="tree">
+      <li>
+        <div class="scenario-name">Create a project with almost nothing required<span class="fr-tag">FR12</span></div>
+        <div class="scenario-desc">A project needs only a name and a description to exist — no partners, no money, no share allocation required up front. Everything else attaches to it later.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Partner shares that must reconcile to exactly 100%<span class="fr-tag">FR13</span></div>
+        <div class="scenario-desc">Adding or editing a partner's share shows a live running total. Under 100% shows how much remains; over 100% shows how much to reduce by. Percentages support 2 decimal places.</div>
+        <div class="example"><div class="ex-label">Worked example</div>Project A: <strong>Partner A 50%</strong>, <strong>Partner B 30%</strong>, <strong>Partner C 20%</strong> — the moment all three are entered, the screen shows <span class="chip success">Total Share: 100% ✓</span>.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Sub-partners split their partner's share, not the project<span class="fr-tag">FR14</span></div>
+        <div class="scenario-desc">A sub-partner allocation is always a percentage of the full project — never "a percentage of my partner's percentage" — which keeps the math identical to the main partner table, one level down.</div>
+        <div class="example"><div class="ex-label">Worked example</div>Partner A's 50% splits into: Partner A's own <strong>25%</strong>, Sub1 <strong>12.5%</strong>, Sub2 <strong>12.5%</strong> — each is a share of the whole project, not of Partner A's 50%.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Editing a share after transactions exist never rewrites history</div>
+        <div class="scenario-desc">Changing a share percentage creates a new, dated version of that share. Every past transaction keeps the percentage that was actually in effect when it happened — no retroactive recalculation.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Different projects can have entirely different partners</div>
+        <div class="scenario-desc">A share record is tied to one project, not shared globally across every project a person might be part of. So Project A and Project B are free to have the same partners, none of the same partners, or a mix — some carried over, some brand new — each at its own percentage.</div>
+        <div class="example"><div class="ex-label">Shown live in the demo</div>Project A's partners are Sandip Z, Yogesh Shilimkar, and ABC Group. Project B carries over Yogesh Shilimkar and ABC Group at <strong>different</strong> percentages, adds a brand-new partner (Kavita Joshi), and Sandip Z holds no share in it at all.</div>
+      </li>
+    </ul>
+  </section>
+
+  <!-- 3. PRIVACY -->
+  <section class="branch" id="privacy">
+    <div class="branch-head">
+      <div>
+        <div class="branch-num">03 · Epic 2 (later stories)</div>
+        <h2>Privacy &amp; Visibility Between Partners</h2>
+      </div>
+      <span class="status spec"><span class="dot" style="background:var(--amber-line)"></span>Specified — not yet built</span>
+    </div>
+    <p class="branch-goal">Co-partners can never see each other's internal structure. Sub-partners see only their own slice, unless their own partner explicitly opts them into more.</p>
+
+    <ul class="tree">
+      <li>
+        <div class="scenario-name">Co-partner privacy boundary<span class="fr-tag">FR9</span></div>
+        <div class="scenario-desc">Partner B can never retrieve Partner A's sub-partner structure, private transactions, balance, or adjustments — not through the UI, and not by guessing a URL or ID directly. Owner/Admin is the one exempt role and sees everything.</div>
+      </li>
+      <li>
+        <div class="scenario-name">A sub-partner sees only their own slice<span class="fr-tag">FR10</span></div>
+        <div class="scenario-desc">A sub-partner's dashboard, history, and reports are scoped to their own percentage only — never a sibling sub-partner's numbers, and never their parent partner's full internal split.</div>
+        <div class="example"><div class="ex-label">Worked example (PRD's own journey)</div>Sub1, one of Partner A's two sub-partners at 12.5% of the full project, opens their dashboard and sees only their own Should Pay / Paid Now / Pending figures. Editing the URL to try reaching Partner B's data returns <span class="chip danger">"You don't have access to this"</span> — no partial data, no error code, no hint of what would have been there.</div>
+      </li>
+      <li>
+        <div class="scenario-name">A partner can optionally open up their own context to their sub-partners<span class="fr-tag">FR11</span></div>
+        <div class="scenario-desc">A Partner can grant their own Sub-partners visibility into partner-level context — this is opt-in, per partner, and only ever extends to that partner's own sub-partners, never to another partner's.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Per-partner visibility grants are themselves visible to Owner/Admin<span class="fr-tag">FR45</span></div>
+        <div class="scenario-desc">The Permissions area (built in Epic 1) extends to show, per partner, whether they've turned that sub-partner visibility grant on or off.</div>
+      </li>
+    </ul>
+  </section>
+
+  <!-- 4. ADD MONEY -->
+  <section class="branch" id="addmoney">
+    <div class="branch-head">
+      <div>
+        <div class="branch-num">04 · Epic 3</div>
+        <h2>Add Money — Flexible Investment</h2>
+      </div>
+      <span class="status spec"><span class="dot" style="background:var(--amber-line)"></span>Specified — not yet built</span>
+    </div>
+    <p class="branch-goal">The system calculates what each partner should pay the moment a funding requirement is entered — and then accepts whatever they actually pay, tracking the difference automatically, forever.</p>
+
+    <ul class="tree">
+      <li>
+        <div class="scenario-name">Should Pay, calculated instantly<span class="fr-tag">FR15, FR16</span></div>
+        <div class="scenario-desc">An Owner/Admin enters one number — the amount a project needs — and Should Pay is computed for every partner from their Share %, then split again for any sub-partners, before anyone has paid a rupee.</div>
+        <div class="example"><div class="ex-label">Worked example</div>Project A needs <strong>₹10,00,000</strong>. Should Pay: Partner A <strong>₹5,00,000</strong> (Partner A's own <strong>₹2,50,000</strong>, Sub1 <strong>₹1,25,000</strong>, Sub2 <strong>₹1,25,000</strong>), Partner B <strong>₹3,00,000</strong>, Partner C <strong>₹2,00,000</strong>.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Paid Now can be anything — more, less, or nothing<span class="fr-tag">FR17</span></div>
+        <div class="scenario-desc">Recorded across Cash, Cheque, NEFT, RTGS, IMPS, UPI, Bank Transfer, or Other. There is no minimum and no cap — Paid Now is never forced to match Should Pay.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Extra Paid and Pending, computed automatically<span class="fr-tag">FR18</span></div>
+        <div class="scenario-desc">Pay more than Should Pay and the difference becomes Extra Paid. Pay less, and the shortfall becomes Pending. Pay exactly right, and no adjustment appears at all.</div>
+        <div class="example"><div class="ex-label">Worked example</div>Partner A pays <strong>₹7,00,000</strong> against a <strong>₹5,00,000</strong> Should Pay → <span class="chip success">Extra ₹2,00,000</span>. Partner C pays <strong>₹0</strong> → <span class="chip danger">Pending ₹2,00,000</span> — and the round proceeds for everyone else, unblocked.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Every adjustment carries forward, but stays editable<span class="fr-tag">FR19</span></div>
+        <div class="scenario-desc">Next round's Recommended Amount is the new base share adjusted by whatever was Pending or Extra last time — shown side by side with the plain Normal Share, always pre-filled, never enforced.</div>
+        <div class="example"><div class="ex-label">Worked example</div>Partner A opens the next Add Money round and sees "Normal Share: ₹5,00,000" next to "After Previous Adjustment: ₹3,00,000" — free to pay either amount, or a different one entirely.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Sub-partner adjustments work identically, and stay private<span class="fr-tag">FR20</span></div>
+        <div class="scenario-desc">The same Should Pay → Paid Now → Adjustment → Carry Forward chain applies one level down for sub-partners, invisible to every other main partner.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Every entry is audited, editable, and reversible</div>
+        <div class="scenario-desc">Correcting an amount preserves the old value, who changed it, when, and recomputes the adjustment. Cancelling never deletes — it marks the original cancelled and creates a linked reversal record.</div>
+      </li>
+    </ul>
+  </section>
+
+  <!-- 5. WITHDRAW & MOVEMENT -->
+  <section class="branch" id="withdraw">
+    <div class="branch-head">
+      <div>
+        <div class="branch-num">05 · Epic 4</div>
+        <h2>Withdraw Money &amp; Cross-Project Movement</h2>
+      </div>
+      <span class="status spec"><span class="dot" style="background:var(--amber-line)"></span>Specified — not yet built</span>
+    </div>
+    <p class="branch-goal">The mirror image of Add Money for taking money out — plus the one capability that makes NiveshBook more than a ledger: a withdrawal can fund something else in the same action, and the link is never lost.</p>
+
+    <ul class="tree">
+      <li>
+        <div class="scenario-name">Can Take, calculated the same way as Should Pay<span class="fr-tag">FR21</span></div>
+        <div class="scenario-desc">Each partner's entitlement to withdraw is their Share % of whatever is available, computed with the same rounding rules that make the numbers always add up exactly.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Take Now can be ₹0 up to the full entitlement<span class="fr-tag">FR22, FR23</span></div>
+        <div class="scenario-desc">Nothing forces a withdrawal. Whatever isn't taken becomes Keep for Later — tracked separately, not lost, not assumed to be reinvested.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Extra Withdrawal requires explicit Owner/Admin authorization<span class="fr-tag">FR25</span></div>
+        <div class="scenario-desc">Taking more than Can Take is not just "a bigger number" — it's rejected unless an Owner/Admin explicitly authorizes it as an Extra Withdrawal, which then reduces the partner's entitlement in future cycles.</div>
+      </li>
+      <li>
+        <div class="scenario-name">One withdrawal, split across several destinations, in a single action<span class="fr-tag">FR27</span></div>
+        <div class="scenario-desc">A withdrawal can be allocated across another project, a person, and Available Balance all at once — save stays disabled until the split reconciles exactly to the withdrawn amount, and every leg commits or rolls back together.</div>
+        <div class="example"><div class="ex-label">Worked example</div>Partner A withdraws <strong>₹2,50,000</strong> and splits it: <strong>₹1,50,000</strong> → Project B, <strong>₹50,000</strong> → Person X, <strong>₹50,000</strong> → Available Balance. The screen won't save until it reads <span class="chip success">Distributed: ₹2,50,000 / ₹2,50,000 ✓</span>.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Money sent to another project is auto-linked — never re-entered<span class="fr-tag">FR28</span></div>
+        <div class="scenario-desc">The ₹1,50,000 above doesn't just get subtracted from Project A — it appears in Project B automatically as a linked investment, in the same action, and the connection is navigable from either project.</div>
+        <div class="example"><div class="ex-label">Also tracked, not lost</div>Partners B and C, who withdrew nothing that round, still see their own untouched entitlement as <span class="chip violet">Keep for Later ₹1,50,000</span> and <span class="chip violet">₹1,00,000</span> respectively on their dashboards.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Available Balance can never go negative<span class="fr-tag">FR29</span></div>
+        <div class="scenario-desc">The running wallet balance is protected by row-level locking, so two simultaneous spends can't both succeed and push it below zero.</div>
+      </li>
+      <li>
+        <div class="scenario-name">The full money trail, any number of hops, both directions<span class="fr-tag">FR30, FR32</span></div>
+        <div class="scenario-desc">Original investment → withdrawal → three-way split → a later move out of Available Balance into a third project — the whole chain stays reconstructable and clickable from any single link in it, regardless of how many hops it took.</div>
+        <div class="example"><div class="ex-label">Shown live in the demo</div>The interactive demo traces one such chain 8 generations deep: a multi-partner + sub-partner funding round → withdrawal → 3-way split → one leg gets withdrawn and reinvested a third time, another leg funds a person who reinvests it fresh, and the last leg's Available Balance splits again into a later reinvestment and an Owner-approved Extra Withdrawal.</div>
+      </li>
+    </ul>
+  </section>
+
+  <!-- 6. ADJUSTMENTS -->
+  <section class="branch" id="adjustments">
+    <div class="branch-head">
+      <div>
+        <div class="branch-num">06 · Epic 5</div>
+        <h2>Adjustments — Tracked Independently, Never Netted</h2>
+      </div>
+      <span class="status spec"><span class="dot" style="background:var(--amber-line)"></span>Specified — not yet built</span>
+    </div>
+    <p class="branch-goal">A person's investment ledger and their withdrawal ledger never touch each other automatically — because "you owe money on one side" and "you're owed money on the other" are different facts, not the same number.</p>
+
+    <ul class="tree">
+      <li>
+        <div class="scenario-name">Investment and Withdrawal adjustments, side by side, never merged<span class="fr-tag">FR33, FR34</span></div>
+        <div class="scenario-desc">The Adjust Next Time screen shows every person's pending/extra investment amount and their Keep for Later withdrawal amount as two separate sections — plain language, no formulas on screen.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Netting the two is a deliberate, audited action</div>
+        <div class="scenario-desc">If an Owner/Admin does choose to offset one against the other, that's an explicit action in its own right — visible afterward in Money History as an "Adjustment" event, not something that happened silently in the background.</div>
+      </li>
+    </ul>
+  </section>
+
+  <!-- 7. DASHBOARDS -->
+  <section class="branch" id="dashboards">
+    <div class="branch-head">
+      <div>
+        <div class="branch-num">07 · Epic 5</div>
+        <h2>Dashboards — One Screen, Three Shapes</h2>
+      </div>
+      <span class="status spec"><span class="dot" style="background:var(--amber-line)"></span>Specified — not yet built</span>
+    </div>
+    <p class="branch-goal">The same Home screen renders a different shape depending on who's looking — never a separate app, never a separate build.</p>
+
+    <ul class="tree">
+      <li>
+        <div class="scenario-name">Owner/Admin view<span class="fr-tag">FR35</span></div>
+        <div class="scenario-desc">Total project money, total added, total withdrawn, Available Balance, and a partner-wise overview — "a handful of cards, not a data dump."</div>
+      </li>
+      <li>
+        <div class="scenario-name">Partner view<span class="fr-tag">FR36</span></div>
+        <div class="scenario-desc">My Projects, My Share %, Added, Withdrawn, Available Balance, Pending, Extra Paid, Keep for Later, and — if that partner has granted the visibility — their own sub-partners' summary.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Sub-partner view<span class="fr-tag">FR37</span></div>
+        <div class="scenario-desc">The identical categories as the Partner view, strictly scoped to that one sub-partner's own numbers.</div>
+      </li>
+    </ul>
+  </section>
+
+  <!-- 8. REPORTS -->
+  <section class="branch" id="reports">
+    <div class="branch-head">
+      <div>
+        <div class="branch-num">08 · Epic 5</div>
+        <h2>Reports — Ten Types, All Permission-Scoped</h2>
+      </div>
+      <span class="status spec"><span class="dot" style="background:var(--amber-line)"></span>Specified — not yet built</span>
+    </div>
+    <p class="branch-goal">Every report answers to the exact same access rules as every screen — a report is never a back door to data a role couldn't otherwise see.</p>
+
+    <ul class="tree">
+      <li>
+        <div class="scenario-name">Ten report types<span class="fr-tag">FR38</span></div>
+        <div class="scenario-desc">Project Money, Partner, Sub-partner, Money Added, Withdrawal, Available Balance, Money Movement, Payment Mode, Adjustment, and Money History reports.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Filter by date, project, or person<span class="fr-tag">FR39</span></div>
+        <div class="scenario-desc">Every report can be narrowed the same three ways, consistently.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Export to Excel or PDF<span class="fr-tag">FR40</span></div>
+        <div class="scenario-desc">What's exported matches what's on screen exactly — same scope, same filters, same numbers.</div>
+      </li>
+    </ul>
+  </section>
+
+  <!-- 9. AUDIT -->
+  <section class="branch" id="audit">
+    <div class="branch-head">
+      <div>
+        <div class="branch-num">09 · Epics 3–5</div>
+        <h2>Audit History &amp; Trust</h2>
+      </div>
+      <span class="status spec"><span class="dot" style="background:var(--amber-line)"></span>Specified — not yet built</span>
+    </div>
+    <p class="branch-goal">Nothing about real money changes silently. Every edit leaves a record; nothing is ever hard-deleted.</p>
+
+    <ul class="tree">
+      <li>
+        <div class="scenario-name">Full before/after record on every edit<span class="fr-tag">FR41</span></div>
+        <div class="scenario-desc">Who changed it, when, the old value, the new value, and the reason if one was supplied — for any edited investment or withdrawal transaction.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Cancel and reverse, never hard delete<span class="fr-tag">FR42</span></div>
+        <div class="scenario-desc">A cancelled transaction stays visible, linked to its reversal record — both sides of the correction remain in the history, permanently.</div>
+      </li>
+      <li>
+        <div class="scenario-name">A partner can see their own audit trail, not anyone else's</div>
+        <div class="scenario-desc">Owner/Admin sees every audit record. A Partner or Sub-partner viewing their own transaction's history is permitted; requesting someone else's returns 403 — the same privacy rule applied one more place.</div>
+      </li>
+    </ul>
+  </section>
+
+  <!-- 10. MULTI-CLIENT -->
+  <section class="branch" id="config">
+    <div class="branch-head">
+      <div>
+        <div class="branch-num">10 · Epic 1</div>
+        <h2>Multi-Client Configurability</h2>
+      </div>
+      <span class="status live"><span class="dot" style="background:var(--success)"></span>Live now — in review</span>
+    </div>
+    <p class="branch-goal">NiveshBook was built from day one as a product to configure, not fork — a second client should never mean a second codebase.</p>
+
+    <ul class="tree">
+      <li>
+        <div class="scenario-name">Branding, currency, locale, and enabled roles — all configuration<span class="fr-tag">FR43</span></div>
+        <div class="scenario-desc">A single <code>client.config</code>, resolved from environment variables at boot, controls how a deployment looks and which optional roles (like Project Admin) are switched on. No file anywhere in the application branches on which client it is.</div>
+        <div class="example"><div class="ex-label">Verification, not a promise</div>The team's own acceptance test for this: diff the deployed application code of two different clients and confirm the only differences are in configuration — never in source.</div>
+      </li>
+      <li>
+        <div class="scenario-name">Sensible defaults, fully overridable<span class="fr-tag">FR44</span></div>
+        <div class="scenario-desc">A new deployment defaults to INR with Indian digit grouping (₹10,00,000-style) unless a client's configuration says otherwise.</div>
+      </li>
+    </ul>
+  </section>
+
+  <!-- OPEN QUESTIONS -->
+  <div class="oq-section" id="open">
+    <h2>Not yet decided — flagged, not hidden</h2>
+    <p>These are real open items from the product documents, not scenarios the app currently handles one way or another. Included here so this catalog doesn't imply more certainty than exists yet.</p>
+    <ul class="oq-list">
+      <li>Whether Project Admin ships at all in this first phase, or waits — it's an optional role, deferrable per client.</li>
+      <li>The exact scope of what a partner can expose to their own sub-partners when they turn on the visibility grant (FR11) — needs one concrete worked example before it's built.</li>
+      <li>What the screen should say when two people edit the same record at the same time — the underlying data can't be corrupted (row-locking prevents that), but the on-screen message for "someone else just changed this" hasn't been designed yet.</li>
+      <li>The mobile experience below 860px width — the current mockup collapses the sidebar to a bare stack; the real build likely upgrades this to a proper slide-out panel, but that hasn't been confirmed.</li>
+      <li>Password-reset link expiry window — provisionally 30 minutes, unconfirmed, and the whole feature is deferred for now regardless.</li>
+      <li>Jurisdiction-specific real-estate-partnership compliance requirements — not yet addressed in the product requirements.</li>
+      <li>Performance and scale thresholds (dozens of projects, hundreds to low-thousands of transactions, dashboards under 2 seconds) are the working assumption pending confirmation at the architecture review stage.</li>
+    </ul>
+  </div>
+
+  <footer>
+    Sources: <code>prd-NiveshBook-2026-09-22/prd.md</code> (45 FRs, NFRs, user journeys UJ-1–UJ-4, glossary) · <code>epics.md</code> and <code>sprint-status.yaml</code> (5 epics, per-story status) · <code>ARCHITECTURE-SPINE.md</code> (data model, AD-1–AD-10 decisions) · <code>EXPERIENCE.md</code> / <code>DESIGN.md</code> (information architecture, component and state patterns, key flows).
+    <ul>
+      <li>Status badges reflect <code>sprint-status.yaml</code> as of 23 Sep 2026 and will move as later epics ship.</li>
+      <li>Worked examples marked "shown live in the demo" use illustrative names from the click-through prototype; every number and rule they demonstrate is grounded in the FRs cited alongside them.</li>
+    </ul>
+  </footer>
+
+</div>

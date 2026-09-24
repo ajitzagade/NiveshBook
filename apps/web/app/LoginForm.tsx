@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { Button, Field, Input, Label } from "@niveshbook/ui";
 
 export function LoginForm() {
   const router = useRouter();
@@ -41,40 +42,40 @@ export function LoginForm() {
   }
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 320 }}
-    >
-      <label>
-        Email
-        <input
+    <form onSubmit={handleSubmit}>
+      <Field>
+        <Label htmlFor="login-email">Email</Label>
+        <Input
+          id="login-email"
           type="email"
           required
           autoComplete="username"
+          autoFocus
           value={email}
           onChange={(event) => setEmail(event.target.value)}
-          style={{ display: "block", width: "100%", padding: 8, marginTop: 4 }}
         />
-      </label>
-      <label>
-        Password
-        <input
+      </Field>
+      <Field>
+        <Label htmlFor="login-password">Password</Label>
+        <Input
+          id="login-password"
           type="password"
           required
           autoComplete="current-password"
           value={password}
           onChange={(event) => setPassword(event.target.value)}
-          style={{ display: "block", width: "100%", padding: 8, marginTop: 4 }}
         />
-      </label>
+      </Field>
+
       {error ? (
-        <p role="alert" style={{ color: "#c0392b", margin: 0 }}>
+        <p role="alert" className="mb-4 text-[13.4px] text-danger">
           {error}
         </p>
       ) : null}
-      <button type="submit" disabled={submitting} style={{ padding: 10 }}>
+
+      <Button type="submit" disabled={submitting} className="w-full">
         {submitting ? "Logging in…" : "Log in"}
-      </button>
+      </Button>
     </form>
   );
 }

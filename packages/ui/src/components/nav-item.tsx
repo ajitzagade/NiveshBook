@@ -37,8 +37,8 @@ export function NavItem({ icon, badgeColor, label, active, onClick, href }: NavI
   const content = (
     <>
       <span
-        className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-el text-[12px] text-white"
-        style={{ background: badgeColor }}
+        className="flex shrink-0 items-center justify-center rounded-el text-white"
+        style={{ background: badgeColor, width: 22, height: 22 }}
       >
         {icon}
       </span>
@@ -47,7 +47,7 @@ export function NavItem({ icon, badgeColor, label, active, onClick, href }: NavI
   );
 
   const className = cn(
-    "flex w-full items-center gap-2.5 rounded-el px-[9px] py-2 text-left text-[13.6px] font-medium",
+    "flex w-full items-center gap-3 rounded-el px-[9px] py-3 text-left text-[13.6px] font-medium",
     active ? "bg-accent-soft text-accent-strong" : "text-ink-soft hover:bg-surface-alt",
   );
 

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { NavItem, NAV_BADGE_COLOR } from "@niveshbook/ui";
+import { Logo, NavItem, NAV_BADGE_COLOR } from "@niveshbook/ui";
 import {
   Home,
   LayoutGrid,
@@ -18,7 +18,7 @@ import { getClientConfig } from "@/lib/client-config";
 // `requireOwnerAdminSession()`) on every request — never statically cached.
 export const dynamic = "force-dynamic";
 
-const ICON_SIZE = 12;
+const ICON_SIZE = 14;
 
 /**
  * The fixed sidebar's 9 items, per NFR18 (`EXPERIENCE.md`'s Information
@@ -61,8 +61,9 @@ export default async function DashboardLayout({ children }: { children: ReactNod
 
   return (
     <div className="grid min-h-screen grid-cols-[236px_1fr] max-[860px]:grid-cols-1">
-      <aside className="flex flex-col gap-5 border-r border-border bg-surface p-4">
+      <aside className="flex flex-col gap-5 border-r border-border bg-surface p-4 max-[860px]:border-b max-[860px]:border-r-0">
         <div className="flex items-center gap-2 px-1 pb-1 pt-0.5">
+          <Logo />
           <span className="text-[15px] font-bold tracking-tight text-ink">{appName}</span>
         </div>
         <nav className="flex flex-col gap-0.5">
@@ -77,7 +78,9 @@ export default async function DashboardLayout({ children }: { children: ReactNod
           ))}
         </nav>
       </aside>
-      <main className="max-w-[1020px] p-7 pb-16 max-[860px]:p-4">{children}</main>
+      <main className="max-w-[1020px] px-9 py-7 pb-16 max-[860px]:px-4 max-[860px]:py-5">
+        {children}
+      </main>
     </div>
   );
 }

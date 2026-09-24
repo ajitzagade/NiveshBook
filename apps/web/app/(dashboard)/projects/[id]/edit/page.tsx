@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Button, Card, Field, FieldHint, Input, Label, Textarea } from "@niveshbook/ui";
+import { Button, Card, Field, FieldHint, Input, Label, PageHeader, Textarea } from "@niveshbook/ui";
 import { getProject, updateProject } from "@/lib/projects";
 
 type LoadState =
@@ -70,8 +70,8 @@ export default function EditProjectPage() {
   if (load.status === "loading") {
     return (
       <div>
-        <h1 className="text-[22px]">Edit Project</h1>
-        <p className="mt-3 text-[13.4px] text-ink-soft">Loading…</p>
+        <PageHeader title="Edit Project" />
+        <p className="text-[13.4px] text-ink-soft">Loading…</p>
       </div>
     );
   }
@@ -79,8 +79,8 @@ export default function EditProjectPage() {
   if (load.status === "error") {
     return (
       <div>
-        <h1 className="text-[22px]">Edit Project</h1>
-        <p role="alert" className="mt-3 text-[13.4px] text-danger">
+        <PageHeader title="Edit Project" />
+        <p role="alert" className="text-[13.4px] text-danger">
           {load.message}
         </p>
       </div>
@@ -89,12 +89,10 @@ export default function EditProjectPage() {
 
   return (
     <div>
-      <div className="mb-5">
-        <h1 className="text-[22px]">Edit Project</h1>
-        <p className="mt-1 text-[13.4px] text-ink-soft">
-          Changes to the name or description are saved immediately.
-        </p>
-      </div>
+      <PageHeader
+        title="Edit Project"
+        description="Changes to the name or description are saved immediately."
+      />
 
       <Card className="max-w-[520px]">
         <form onSubmit={handleSubmit}>

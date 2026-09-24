@@ -1,0 +1,1335 @@
+<title>NiveshBook — All-Screen Demo</title>
+<style>
+  :root {
+    --ink: #1E293B;
+    --ink-soft: #64748B;
+    --ink-faint: #94A3B8;
+    --ground: #F3F5F9;
+    --surface: #FFFFFF;
+    --surface-alt: #F7F9FC;
+    --border: #E7EBF1;
+
+    --accent: #2F6FED;
+    --accent-strong: #1E54C7;
+    --accent-soft: #E7EFFE;
+
+    --success: #17A566;
+    --success-soft: #E3F8EC;
+    --danger: #E5484D;
+    --danger-soft: #FCEAEA;
+    --info: #0EA5A5;
+    --info-soft: #E1F7F5;
+    --violet: #8B5CF6;
+    --violet-soft: #F1EAFE;
+    --amber: #E8A317;
+    --amber-soft: #FCF1DC;
+
+    --radius-card: 14px;
+    --radius-el: 9px;
+    --shadow: 0 1px 2px rgba(30,41,59,0.04), 0 8px 20px rgba(30,41,59,0.05);
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 14.5px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3 { font-weight: 650; text-wrap: balance; margin: 0; }
+  .num, table td.num-cell { font-variant-numeric: tabular-nums; }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 236px 1fr;
+    min-height: 100vh;
+  }
+  @media (max-width: 860px) {
+    .shell { grid-template-columns: 1fr; }
+  }
+
+  .sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 20px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 2px 4px 4px;
+  }
+  .brand-mark {
+    display: grid;
+    grid-template-columns: repeat(2, 9px);
+    grid-template-rows: repeat(2, 9px);
+    gap: 2px;
+  }
+  .brand-mark span { border-radius: 3px; }
+  .brand-mark span:nth-child(1) { background: var(--accent); }
+  .brand-mark span:nth-child(2) { background: var(--success); }
+  .brand-mark span:nth-child(3) { background: var(--info); }
+  .brand-mark span:nth-child(4) { background: var(--amber); }
+  .brand-name { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; }
+
+  .role-block {
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 11px;
+  }
+  .role-label {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--ink-faint);
+    margin-bottom: 7px;
+    font-weight: 700;
+  }
+  .role-options { display: flex; flex-direction: column; gap: 3px; }
+  .role-opt {
+    text-align: left;
+    background: transparent;
+    border: none;
+    padding: 6px 8px;
+    border-radius: 7px;
+    color: var(--ink-soft);
+    font-size: 12.8px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .role-opt:hover { background: var(--ground); }
+  .role-opt.active { background: var(--accent-soft); color: var(--accent-strong); font-weight: 700; }
+  .role-note { font-size: 11px; color: var(--ink-faint); margin-top: 7px; line-height: 1.4; }
+
+  nav.primary { display: flex; flex-direction: column; gap: 2px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 9px; border-radius: 9px;
+    color: var(--ink-soft); font-size: 13.6px; font-weight: 550;
+    cursor: pointer; border: none; background: transparent;
+    text-align: left; width: 100%; font-family: inherit;
+  }
+  .nav-item:hover { background: var(--surface-alt); }
+  .nav-item.active { background: var(--accent-soft); color: var(--accent-strong); }
+  .nav-badge {
+    width: 22px; height: 22px; border-radius: 7px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; color: #fff;
+  }
+  .nb-home { background: #475569; }
+  .nb-projects { background: var(--accent); }
+  .nb-shares { background: var(--info); }
+  .nb-add { background: var(--success); }
+  .nb-withdraw { background: var(--danger); }
+  .nb-balance { background: var(--violet); }
+  .nb-adjust { background: #475569; }
+  .nb-history { background: #475569; }
+  .nb-reports { background: #475569; }
+  .nb-users { background: #475569; }
+  .nb-permissions { background: #475569; }
+  .nb-audit { background: #475569; }
+
+  .nav-divider {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--ink-faint); font-weight: 700; margin: 10px 2px 2px;
+  }
+
+  main { padding: 28px 36px 60px; max-width: 1020px; }
+  @media (max-width: 860px) { main { padding: 20px 16px 48px; } }
+  .screen { display: none; }
+  .screen.active { display: block; }
+
+  .page-head {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    margin-bottom: 20px; gap: 16px; flex-wrap: wrap;
+  }
+  .page-head h1 { font-size: 22px; }
+  .page-head p { margin: 4px 0 0; color: var(--ink-soft); font-size: 13.4px; }
+
+  .btn {
+    border: none; border-radius: var(--radius-el); padding: 9px 15px;
+    font-size: 13.2px; font-weight: 650; cursor: pointer; font-family: inherit;
+    white-space: nowrap;
+  }
+  .btn.primary { background: var(--accent); color: #fff; }
+  .btn.ghost { background: var(--surface); color: var(--ink-soft); border: 1px solid var(--border); }
+  .btn.ghost.active-toggle { background: var(--accent-soft); color: var(--accent-strong); border-color: transparent; }
+
+  .cards-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 22px; }
+  @media (max-width: 760px) { .cards-row { grid-template-columns: repeat(2, 1fr); } }
+  .stat-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-card); padding: 15px 15px 13px; box-shadow: var(--shadow);
+  }
+  .stat-label { font-size: 11.6px; color: var(--ink-faint); margin-bottom: 6px; font-weight: 600; }
+  .stat-value { font-size: 19px; font-weight: 700; }
+  .stat-value.success { color: var(--success); }
+  .stat-value.danger { color: var(--danger); }
+  .stat-value.violet { color: var(--violet); }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-card); padding: 20px; box-shadow: var(--shadow); margin-bottom: 18px;
+  }
+  .card-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 13px; gap: 10px; flex-wrap: wrap;
+  }
+  .card-head h2 { font-size: 15.5px; }
+  .card-sub { font-size: 12.4px; color: var(--ink-faint); }
+  .card-sub.ok { color: var(--success); font-weight: 700; }
+
+  .helper {
+    background: var(--accent-soft); color: var(--accent-strong);
+    border-radius: 10px; padding: 10px 13px; font-size: 12.6px; margin-bottom: 15px; line-height: 1.45;
+  }
+
+  table.data { width: 100%; border-collapse: collapse; font-size: 13.3px; }
+  table.data th {
+    text-align: right; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--ink-faint); padding: 0 9px 8px; border-bottom: 1px solid var(--border); font-weight: 700;
+  }
+  table.data th:first-child, table.data td:first-child { text-align: left; }
+  table.data td { padding: 10px 9px; border-bottom: 1px solid var(--border); text-align: right; }
+  table.data tr:last-child td { border-bottom: none; }
+  table.data tr.sub-row td:first-child { padding-left: 24px; color: var(--ink-soft); font-size: 12.6px; }
+  .person-name { font-weight: 650; }
+  .table-wrap { overflow-x: auto; }
+  .table-foot-note { margin-top: 11px; font-size: 12px; color: var(--ink-faint); }
+
+  .input-cell input, .pct-input, .amt-input {
+    border: 1px solid var(--border); border-radius: 7px; padding: 6px 8px;
+    font-size: 13px; font-family: var(--sans); background: var(--surface); color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .input-cell input { width: 100px; text-align: right; }
+  .input-cell input:focus, .pct-input:focus, .amt-input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 9px; border-radius: 999px; font-size: 11.6px; font-weight: 700; white-space: nowrap;
+  }
+  .chip.success { background: var(--success-soft); color: var(--success); }
+  .chip.danger { background: var(--danger-soft); color: var(--danger); }
+  .chip.info { background: var(--info-soft); color: var(--info); }
+  .chip.violet { background: var(--violet-soft); color: var(--violet); }
+  .chip.neutral { background: var(--surface-alt); color: var(--ink-faint); border: 1px solid var(--border); }
+
+  .field-label { font-size: 12px; font-weight: 700; color: var(--ink-soft); margin-bottom: 6px; }
+  .field { margin-bottom: 16px; }
+  .field .amt-input, .field select { width: 100%; padding: 10px 12px; font-size: 14px; border-radius: 9px; }
+  .field-hint { font-size: 11.8px; color: var(--ink-faint); margin-top: 5px; }
+
+  .share-list { display: flex; flex-direction: column; gap: 10px; }
+  .share-row {
+    display: grid; grid-template-columns: 1fr 110px 70px; align-items: center; gap: 10px;
+    padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+  }
+  .share-name { font-weight: 650; font-size: 13.4px; }
+
+  .distributed-check {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 13px; padding: 11px 14px; border-radius: 10px;
+    background: var(--success-soft); color: var(--success); font-weight: 700; font-size: 13px;
+  }
+
+  .split-row {
+    display: grid; grid-template-columns: 1fr 130px; align-items: center; gap: 10px;
+    padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 13.4px;
+  }
+  .split-row:last-of-type { border-bottom: none; }
+  .split-dest { display: flex; align-items: center; gap: 9px; }
+  .dest-icon {
+    width: 26px; height: 26px; border-radius: 7px; display: flex; align-items: center; justify-content: center;
+    font-size: 13px; color: #fff; flex-shrink: 0;
+  }
+
+  .adjust-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .adjust-grid { grid-template-columns: 1fr; } }
+  .adjust-person { border: 1px solid var(--border); border-radius: 12px; padding: 14px 15px; margin-bottom: 11px; }
+  .adjust-person:last-child { margin-bottom: 0; }
+  .adjust-person-name { font-weight: 700; margin-bottom: 7px; font-size: 13.8px; }
+  .adjust-line { display: flex; justify-content: space-between; font-size: 12.8px; padding: 3px 0; color: var(--ink-soft); }
+  .adjust-line strong { color: var(--ink); font-weight: 650; }
+  .adjust-result {
+    margin-top: 7px; padding-top: 7px; border-top: 1px dashed var(--border);
+    display: flex; justify-content: space-between; align-items: baseline; font-size: 12.9px;
+  }
+
+  .wallet-hero {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    background: linear-gradient(135deg, var(--accent-soft), var(--info-soft));
+    border-radius: var(--radius-card); padding: 20px 22px; margin-bottom: 18px;
+  }
+  .wallet-hero .stat-label { color: var(--accent-strong); }
+  .wallet-hero .stat-value { font-size: 27px; color: var(--accent-strong); }
+
+  .trail {
+    display: flex; flex-direction: column; gap: 0;
+  }
+  .trail-item {
+    display: flex; gap: 12px; padding: 12px 0; border-left: 2px solid var(--border);
+    padding-left: 16px; margin-left: 12px; position: relative;
+  }
+  .trail-item:last-child { border-left-color: transparent; }
+  .trail-dot {
+    position: absolute; left: -8px; top: 14px; width: 14px; height: 14px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; font-size: 8px; color: #fff;
+  }
+  .trail-body { flex: 1; }
+  .trail-what { font-weight: 700; font-size: 13.4px; }
+  .trail-meta { font-size: 11.8px; color: var(--ink-faint); margin-top: 2px; }
+  .trail-amt { font-weight: 700; font-variant-numeric: tabular-nums; font-size: 13.6px; white-space: nowrap; }
+  .trail-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; width: 100%; }
+  .trace-banner {
+    display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;
+    background: var(--surface-alt); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 14px; font-size: 12px; color: var(--ink-soft); margin-bottom: 14px;
+  }
+
+  /* Trail Quick View -- horizontal branching alternate to .trail, same data.
+     Layout inspired by a founder-supplied reference image; colors stay
+     NiveshBook's own light tokens (DESIGN.md.Components.trail-branch). */
+  .branch-wrap { display: none; }
+  .branch-wrap.active { display: block; }
+  .branch-note { font-size: 12px; color: var(--ink-faint); margin-bottom: 14px; line-height: 1.5; }
+  .branch-canvas { position: relative; overflow-x: auto; padding: 4px 2px 16px; }
+  .branch-svg { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 0; overflow: visible; }
+  .branch-cols {
+    display: flex; align-items: center; gap: 46px; position: relative; z-index: 1; width: max-content;
+  }
+  .branch-col { display: flex; flex-direction: column; gap: 16px; flex-shrink: 0; justify-content: center; }
+  .branch-box {
+    background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--ink-faint);
+    border-radius: var(--radius-card); box-shadow: var(--shadow); padding: 12px 14px; min-width: 158px;
+    position: relative; z-index: 1;
+  }
+  .branch-label { font-size: 10.6px; color: var(--ink-faint); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 4px; }
+  .branch-amt { font-size: 15px; font-weight: 700; }
+  .branch-meta { font-size: 11.6px; color: var(--ink-soft); margin-top: 3px; }
+
+  .report-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  @media (max-width: 760px) { .report-grid { grid-template-columns: 1fr; } }
+  .report-tile {
+    border: 1px solid var(--border); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .report-tile-icon {
+    width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 14px;
+  }
+  .report-tile-name { font-weight: 700; font-size: 13px; }
+  .report-tile-desc { font-size: 11.6px; color: var(--ink-faint); }
+  .report-tile { cursor: pointer; transition: border-color .12s ease; }
+  .report-tile:hover { border-color: var(--accent); }
+  .clickable-row { cursor: pointer; }
+  .clickable-row:hover td { background: var(--surface-alt); }
+  .chip-btn { cursor: pointer; border: none; font-family: inherit; }
+
+  /* Modal + toast -- generic, reused by every "opens a form" action */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(30,41,59,0.45);
+    display: none; align-items: center; justify-content: center; z-index: 100; padding: 20px;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal-box {
+    background: var(--surface); border-radius: var(--radius-card); box-shadow: var(--shadow);
+    padding: 22px; width: 100%; max-width: 440px; max-height: 88vh; overflow-y: auto; position: relative;
+  }
+  .modal-box h2 { font-size: 16.5px; margin-bottom: 4px; padding-right: 20px; }
+  .modal-sub { font-size: 12.6px; color: var(--ink-soft); margin-bottom: 16px; }
+  .modal-actions { display: flex; gap: 10px; margin-top: 4px; }
+  .modal-close {
+    position: absolute; top: 14px; right: 16px; background: none; border: none;
+    color: var(--ink-faint); font-size: 20px; cursor: pointer; line-height: 1; font-family: inherit;
+  }
+
+  .toast {
+    position: fixed; bottom: 22px; right: 22px; background: var(--ink); color: #fff;
+    padding: 11px 16px; border-radius: 10px; font-size: 13px; font-weight: 600;
+    box-shadow: var(--shadow); opacity: 0; transform: translateY(8px); pointer-events: none;
+    transition: opacity .18s ease, transform .18s ease; z-index: 200; max-width: 320px;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+
+  .export-menu { position: relative; display: inline-block; }
+  .export-dropdown {
+    display: none; position: absolute; right: 0; top: calc(100% + 6px);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: var(--shadow); min-width: 150px; z-index: 20; overflow: hidden;
+  }
+  .export-dropdown.active { display: block; }
+  .export-dropdown button {
+    display: block; width: 100%; text-align: left; padding: 9px 12px; border: none; background: none;
+    font-size: 12.8px; font-family: inherit; color: var(--ink); cursor: pointer;
+  }
+  .export-dropdown button:hover { background: var(--surface-alt); }
+</style>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark"><span></span><span></span><span></span><span></span></div>
+      <span class="brand-name">NiveshBook</span>
+    </div>
+
+    <div class="role-block">
+      <div class="role-label">Project</div>
+      <input
+        class="amt-input project-switcher"
+        id="projectSwitcher"
+        list="projectSwitcherList"
+        value="Project A"
+        style="width:100%;text-align:left"
+        oninput="onProjectTypeahead(this.value)"
+      />
+      <datalist id="projectSwitcherList"></datalist>
+      <div class="role-note" id="projectNote">Type or pick a project — Partner Shares, Add Money, and Withdraw Money switch to its own partners.</div>
+    </div>
+
+    <div class="role-block">
+      <div class="role-label">Viewing as</div>
+      <div class="role-options">
+        <button class="role-opt active" data-role="owner">Owner — Ravi</button>
+        <button class="role-opt" data-role="partnerA">Sandip Z</button>
+        <button class="role-opt" data-role="sub1">Sub-partner — Mahesh Z</button>
+      </div>
+      <div class="role-note" id="roleNote">Full visibility across all partners and sub-partners.</div>
+    </div>
+
+    <nav class="primary">
+      <button class="nav-item active" data-screen="home"><span class="nav-badge nb-home">⌂</span>Home</button>
+      <button class="nav-item" data-screen="projects"><span class="nav-badge nb-projects">▤</span>Projects</button>
+      <button class="nav-item" data-screen="shares"><span class="nav-badge nb-shares">%</span>Partner Shares</button>
+      <button class="nav-item" data-screen="addmoney"><span class="nav-badge nb-add">+</span>Add Money</button>
+      <button class="nav-item" data-screen="withdraw"><span class="nav-badge nb-withdraw">−</span>Withdraw Money</button>
+      <button class="nav-item" data-screen="balance"><span class="nav-badge nb-balance">₹</span>Available Balance</button>
+      <button class="nav-item" data-screen="adjust"><span class="nav-badge nb-adjust">↻</span>Adjust Next Time</button>
+      <button class="nav-item" data-screen="history"><span class="nav-badge nb-history">☰</span>Money History</button>
+      <button class="nav-item" data-screen="reports"><span class="nav-badge nb-reports">▦</span>Reports</button>
+
+      <div class="nav-divider" data-owner-only="1">Owner/Admin only</div>
+      <button class="nav-item" data-screen="users" data-owner-only="1"><span class="nav-badge nb-users">☺</span>Users</button>
+      <button class="nav-item" data-screen="permissions" data-owner-only="1"><span class="nav-badge nb-permissions">⚑</span>Permissions</button>
+      <button class="nav-item" data-screen="audit" data-owner-only="1"><span class="nav-badge nb-audit">⏱</span>Audit History</button>
+    </nav>
+  </aside>
+
+  <main>
+
+    <!-- HOME -->
+    <section class="screen active" id="screen-home">
+      <div class="page-head">
+        <div><h1>Good morning, Ravi</h1><p>Here's a quick overview across all your projects.</p></div>
+        <button class="btn primary" onclick="chooseTransaction()">+ New Transaction</button>
+      </div>
+
+      <div class="cards-row">
+        <div class="stat-card"><div class="stat-label">Total Projects</div><div class="stat-value num">5</div></div>
+        <div class="stat-card"><div class="stat-label">Total Money Added</div><div class="stat-value num">₹1,20,00,000</div></div>
+        <div class="stat-card"><div class="stat-label">Total Withdrawn</div><div class="stat-value num">₹45,00,000</div></div>
+        <div class="stat-card"><div class="stat-label">Available Balance</div><div class="stat-value num success">₹25,00,000</div></div>
+      </div>
+      <div class="cards-row" style="grid-template-columns: repeat(3,1fr);">
+        <div class="stat-card"><div class="stat-label">Pending to Pay</div><div class="stat-value num danger">₹20,00,000</div></div>
+        <div class="stat-card"><div class="stat-label">Extra Paid</div><div class="stat-value num success">₹15,00,000</div></div>
+        <div class="stat-card"><div class="stat-label">Keep for Later</div><div class="stat-value num violet">₹10,00,000</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Recent Activity</h2><span class="card-sub" style="cursor:pointer" onclick="go('history')">View All →</span></div>
+        <div class="table-wrap">
+          <table class="data">
+            <thead><tr><th>Date</th><th style="text-align:left">What Happened</th><th style="text-align:left">Project</th><th style="text-align:left">Person</th><th>Amount</th></tr></thead>
+            <tbody>
+              <tr><td>21 Sep</td><td style="text-align:left"><span class="chip success">Money Added</span></td><td style="text-align:left">Project A</td><td style="text-align:left">Sandip Z</td><td class="num">₹5,00,000</td></tr>
+              <tr><td>20 Sep</td><td style="text-align:left"><span class="chip danger">Withdrawn</span></td><td style="text-align:left">Project B</td><td style="text-align:left">Yogesh Shilimkar</td><td class="num">₹2,50,000</td></tr>
+              <tr><td>20 Sep</td><td style="text-align:left"><span class="chip info">Moved to Project</span></td><td style="text-align:left">Project A → Sid Aspire</td><td style="text-align:left">Sandip Z</td><td class="num">₹3,00,000</td></tr>
+              <tr><td>19 Sep</td><td style="text-align:left"><span class="chip violet">Added to Balance</span></td><td style="text-align:left">—</td><td style="text-align:left">ABC Group</td><td class="num">₹1,00,000</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- PROJECTS -->
+    <section class="screen" id="screen-projects">
+      <div class="page-head">
+        <div><h1>Projects</h1><p>Manage all your projects.</p></div>
+        <button class="btn primary" onclick="go('createproject')">+ New Project</button>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+          <table class="data">
+            <thead><tr><th style="text-align:left">Project Name</th><th style="text-align:left">Description</th><th>Total Added</th><th>Total Withdrawn</th><th>Balance</th></tr></thead>
+            <tbody>
+              <tr class="clickable-row" onclick="go('shares')"><td style="text-align:left" class="person-name">Project A</td><td style="text-align:left">Residential development, Pune</td><td class="num">₹10,00,000</td><td class="num">₹5,00,000</td><td class="num">₹50,000</td></tr>
+              <tr class="clickable-row" onclick="go('shares'); showToast('Demo is scoped to Project A — showing its Partner Shares')"><td style="text-align:left" class="person-name">Project B</td><td style="text-align:left">Premium apartments</td><td class="num">₹35,00,000</td><td class="num">₹10,00,000</td><td class="num">₹25,00,000</td></tr>
+              <tr class="clickable-row" onclick="go('shares'); showToast('Demo is scoped to Project A — showing its Partner Shares')"><td style="text-align:left" class="person-name">Project C</td><td style="text-align:left">Commercial space</td><td class="num">₹25,00,000</td><td class="num">₹12,00,000</td><td class="num">₹13,00,000</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- CREATE PROJECT -->
+    <section class="screen" id="screen-createproject">
+      <div class="page-head"><div><h1>Create Project</h1><p>Add a new project with basic details.</p></div></div>
+      <div class="card" style="max-width:480px">
+        <div class="field">
+          <div class="field-label">Project Name</div>
+          <input class="amt-input" placeholder="e.g. Indu Enclave" style="text-align:left" />
+        </div>
+        <div class="field">
+          <div class="field-label">Description</div>
+          <input class="amt-input" placeholder="e.g. Residential development at Pune" style="text-align:left" />
+        </div>
+        <div style="display:flex; gap:10px;">
+          <button class="btn primary" onclick="showToast('Project created'); go('shares')">Save Project</button>
+          <button class="btn ghost" onclick="go('projects')">Cancel</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- PARTNER SHARES -->
+    <section class="screen" id="screen-shares">
+      <div class="page-head">
+        <div><h1>Partner Shares</h1><p id="sharesSub">Project A · Manage main partners and their share percentage.</p></div>
+        <button class="btn primary" onclick="addPartnerModal()">+ Add Partner</button>
+      </div>
+      <div class="helper">Share % must add up to exactly 100% across all main partners before this can be saved. Sub-partner shares work the same way, but only within their own partner's slice — a partner's sub-partners split that partner's share, not the whole project. Click a partner's name to see just their own details.</div>
+      <div id="sharesContent"></div>
+    </section>
+
+    <!-- ADD MONEY -->
+    <section class="screen" id="screen-addmoney">
+      <div class="page-head"><div><h1>Add Money to Project</h1><p id="addMoneySub">Project A needs <strong class="num">₹10,00,000</strong> for this round.</p></div></div>
+      <div class="helper" id="addMoneyHelper">Share 50% means if the project needs ₹10,00,000, Sandip Z's normal share is ₹5,00,000. You can enter any amount — the system calculates pending or extra automatically.</div>
+      <div id="addMoneyContent"></div>
+      <div style="display:flex; gap:10px;"><button class="btn ghost" onclick="go('home')">Cancel</button><button class="btn primary" onclick="showToast('Funding saved for ' + PROJECTS[currentProjectId].name); go('history')">Save Funding</button></div>
+    </section>
+
+    <!-- WITHDRAW MONEY -->
+    <section class="screen" id="screen-withdraw">
+      <div class="page-head"><div><h1>Withdraw Money from Project</h1><p id="withdrawSub"><strong class="num">₹5,00,000</strong> is available to withdraw from Project A.</p></div></div>
+      <div class="helper">Can Take is based on each partner's share % of the amount available to withdraw. Enter any amount up to Can Take — whatever isn't taken now stays tracked separately as Keep for Later, not lost.</div>
+      <div id="withdrawContent"></div>
+      <div style="display:flex; gap:10px;"><button class="btn ghost" onclick="go('home')">Cancel</button><button class="btn primary" onclick="go('destination')">Next: Where did this money go? →</button></div>
+    </section>
+
+    <!-- PARTNER DETAIL (reached by clicking a partner's name -- scoped to just them + their sub-partners) -->
+    <section class="screen" id="screen-partnerdetail">
+      <div class="page-head">
+        <div><h1 id="pdName">Partner</h1><p id="pdSub">Scoped to this partner only.</p></div>
+        <button class="btn ghost" onclick="go('shares')">← Back to Partner Shares</button>
+      </div>
+      <div id="pdContent"></div>
+    </section>
+
+    <!-- WITHDRAWAL DESTINATION -->
+    <section class="screen" id="screen-destination">
+      <div class="page-head"><div><h1>Where did this money go?</h1><p>Split the withdrawn amount across different destinations.</p></div></div>
+      <div class="card">
+        <div class="card-head"><h2>Total withdrawal: ₹2,50,000 (Sandip Z · Project A)</h2></div>
+        <div class="split-row"><div class="split-dest"><span class="dest-icon" style="background:var(--accent)">▤</span>Invest in another project — Project B</div><div class="input-cell"><input value="₹1,50,000" /></div></div>
+        <div class="split-row"><div class="split-dest"><span class="dest-icon" style="background:var(--violet)">☺</span>Give to another person — Person X</div><div class="input-cell"><input value="₹50,000" /></div></div>
+        <div class="split-row"><div class="split-dest"><span class="dest-icon" style="background:var(--info)">₹</span>Keep as Available Balance</div><div class="input-cell"><input value="₹50,000" /></div></div>
+        <div class="distributed-check"><span>Distributed</span><span class="num">₹2,50,000 / ₹2,50,000 ✓</span></div>
+      </div>
+      <div style="display:flex; gap:10px;"><button class="btn ghost" onclick="go('withdraw')">← Back</button><button class="btn primary" onclick="showToast('Withdrawal saved and linked across all 3 destinations'); go('history')">Save and Complete</button></div>
+    </section>
+
+    <!-- AVAILABLE BALANCE -->
+    <section class="screen" id="screen-balance">
+      <div class="page-head"><div><h1>Available Balance</h1><p>Money withdrawn and kept for later use.</p></div></div>
+      <div class="wallet-hero">
+        <div><div class="stat-label">Current Available Balance</div><div class="stat-value num">₹1,00,000</div></div>
+        <button class="btn primary" onclick="useBalanceModal()">+ Use Balance</button>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Recent Balance Transactions</h2></div>
+        <div class="table-wrap">
+          <table class="data">
+            <thead><tr><th>Date</th><th style="text-align:left">Description</th><th>Amount</th><th>Balance</th></tr></thead>
+            <tbody>
+              <tr><td>16 Mar</td><td style="text-align:left">Added from withdrawal</td><td class="num success">+₹1,00,000</td><td class="num">₹1,00,000</td></tr>
+              <tr><td>10 Apr</td><td style="text-align:left">Used for Project C</td><td class="num danger">−₹75,000</td><td class="num">₹25,000</td></tr>
+              <tr><td>20 Sep</td><td style="text-align:left">Added from withdrawal</td><td class="num success">+₹75,000</td><td class="num">₹1,00,000</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ADJUST NEXT TIME -->
+    <section class="screen" id="screen-adjust">
+      <div class="page-head">
+        <div><h1>Adjust Next Time</h1><p>Previous pending or extra amounts to be adjusted.</p></div>
+        <div style="display:flex; gap:8px;"><button class="btn ghost" onclick="filterAdjust('invest', this)">Add Money Adjustments</button><button class="btn ghost" onclick="filterAdjust('withdraw', this)">Withdrawal Adjustments</button></div>
+      </div>
+      <div class="adjust-grid">
+        <div class="card" style="margin-bottom:0" id="adjustInvestCard">
+          <div class="card-head"><h2>Investment</h2></div>
+          <div class="adjust-person"><div class="adjust-person-name">Sandip Z</div><div class="adjust-line"><span>Previous Adjustment</span><strong class="num">Extra ₹1,25,000</strong></div><div class="adjust-result"><span class="chip success">Reduce by ₹1,25,000</span></div></div>
+          <div class="adjust-person"><div class="adjust-person-name">Mahesh Z</div><div class="adjust-line"><span>Previous Adjustment</span><strong class="num">Pending ₹1,25,000</strong></div><div class="adjust-result"><span class="chip danger">Add ₹1,25,000</span></div></div>
+          <div class="adjust-person"><div class="adjust-person-name">ABC Group</div><div class="adjust-line"><span>Previous Adjustment</span><strong class="num">Pending ₹2,00,000</strong></div><div class="adjust-result"><span class="chip danger">Add ₹2,00,000</span></div></div>
+        </div>
+        <div class="card" style="margin-bottom:0" id="adjustWithdrawCard">
+          <div class="card-head"><h2>Withdrawal</h2></div>
+          <div class="adjust-person"><div class="adjust-person-name">Yogesh Shilimkar</div><div class="adjust-line"><span>Can Take</span><strong class="num">₹1,50,000</strong></div><div class="adjust-line"><span>Taken</span><strong class="num">₹0</strong></div><div class="adjust-result"><span class="chip violet">Keep for Later ₹1,50,000</span></div></div>
+          <div class="adjust-person"><div class="adjust-person-name">ABC Group</div><div class="adjust-line"><span>Can Take</span><strong class="num">₹1,00,000</strong></div><div class="adjust-line"><span>Taken</span><strong class="num">₹0</strong></div><div class="adjust-result"><span class="chip violet">Keep for Later ₹1,00,000</span></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- MONEY HISTORY -->
+    <section class="screen" id="screen-history">
+      <div class="page-head">
+        <div><h1>Money History</h1><p>View all transactions and complete money trails.</p></div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn ghost" id="allTxnBtn" onclick="showAllTransactions()">All Transactions</button>
+          <button class="btn ghost" id="trailToggle" onclick="toggleTrail()">Trail Quick View</button>
+          <div class="export-menu">
+            <button class="btn ghost" onclick="toggleExportMenu(event)">Export ⌄</button>
+            <div class="export-dropdown" id="exportDropdown">
+              <button onclick="chooseExport('CSV')">Export as CSV</button>
+              <button onclick="chooseExport('PDF')">Export as PDF</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="trace-banner" id="traceBanner">
+        <span><strong>Trace ID: FLOW-A-1024</strong> (Project A) — all child transactions retain their original withdrawal relationship.</span>
+        <span class="chip info" style="cursor:pointer" onclick="toggleTrail()">View Full History →</span>
+      </div>
+
+      <div class="card" id="allTxnList" style="display:none">
+        <div class="table-wrap">
+          <table class="data">
+            <thead><tr><th>Date</th><th style="text-align:left">What Happened</th><th style="text-align:left">Project</th><th style="text-align:left">Person</th><th>Amount</th></tr></thead>
+            <tbody>
+              <tr><td>21 Sep</td><td style="text-align:left"><span class="chip success">Money Added</span></td><td style="text-align:left">Project A</td><td style="text-align:left">Sandip Z</td><td class="num">₹5,00,000</td></tr>
+              <tr><td>20 Sep</td><td style="text-align:left"><span class="chip danger">Withdrawn</span></td><td style="text-align:left">Project B</td><td style="text-align:left">Yogesh Shilimkar</td><td class="num">₹2,50,000</td></tr>
+              <tr><td>20 Sep</td><td style="text-align:left"><span class="chip info">Moved to Project</span></td><td style="text-align:left">Project A → Sid Aspire</td><td style="text-align:left">Sandip Z</td><td class="num">₹3,00,000</td></tr>
+              <tr><td>19 Sep</td><td style="text-align:left"><span class="chip violet">Added to Balance</span></td><td style="text-align:left">—</td><td style="text-align:left">ABC Group</td><td class="num">₹1,00,000</td></tr>
+              <tr><td>15 Mar</td><td style="text-align:left"><span class="chip danger">Withdrawn</span></td><td style="text-align:left">Project A</td><td style="text-align:left">Sandip Z</td><td class="num">₹5,00,000</td></tr>
+              <tr><td>10 Jan</td><td style="text-align:left"><span class="chip success">Money Added</span></td><td style="text-align:left">Project A</td><td style="text-align:left">Sandip Z</td><td class="num">₹10,00,000</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-foot-note">Click any trace ID row (not built in this static demo) to jump into its money trail — same view as Trail Quick View above.</div>
+      </div>
+
+      <div class="card trail-wrap" id="trailVertical">
+        <div class="trail">
+          <div class="trail-item"><span class="trail-dot" style="background:var(--accent)">●</span>
+            <div class="trail-body"><div class="trail-row"><div><div class="trail-what">Original Investment</div><div class="trail-meta">10 Jan 2026 · Sandip Z → Project A</div></div><div class="trail-amt">₹10,00,000</div></div></div></div>
+          <div class="trail-item"><span class="trail-dot" style="background:var(--danger)">●</span>
+            <div class="trail-body"><div class="trail-row"><div><div class="trail-what">Withdrawal</div><div class="trail-meta">15 Mar 2026 · Project A → Sandip Z</div></div><div class="trail-amt">₹5,00,000</div></div></div></div>
+          <div class="trail-item"><span class="trail-dot" style="background:var(--success)">●</span>
+            <div class="trail-body"><div class="trail-row"><div><div class="trail-what">Reinvested to Project</div><div class="trail-meta">15 Mar 2026 · → Siddhi Aspire</div></div><div class="trail-amt">₹3,00,000</div></div></div></div>
+          <div class="trail-item"><span class="trail-dot" style="background:var(--violet)">●</span>
+            <div class="trail-body"><div class="trail-row"><div><div class="trail-what">Transferred to Person</div><div class="trail-meta">15 Mar 2026 · → Person X</div></div><div class="trail-amt">₹1,00,000</div></div></div></div>
+          <div class="trail-item"><span class="trail-dot" style="background:var(--info)">●</span>
+            <div class="trail-body"><div class="trail-row"><div><div class="trail-what">Kept in Wallet</div><div class="trail-meta">15 Mar 2026 · Available Balance</div></div><div class="trail-amt">₹1,00,000</div></div></div></div>
+          <div class="trail-item"><span class="trail-dot" style="background:var(--amber)">●</span>
+            <div class="trail-body"><div class="trail-row"><div><div class="trail-what">Later Reinvestment</div><div class="trail-meta">Available Balance → Project C</div></div><div class="trail-amt">₹75,000</div></div></div></div>
+          <div class="trail-item"><span class="trail-dot" style="background:#94A3B8">●</span>
+            <div class="trail-body"><div class="trail-row"><div><div class="trail-what">Remaining Wallet</div><div class="trail-meta">Still available</div></div><div class="trail-amt">₹25,000</div></div></div></div>
+        </div>
+      </div>
+
+      <div class="card branch-wrap" id="trailBranch">
+        <div class="branch-note">Full trace, 8 generations left to right. Every arrow is drawn from one specific box to the one specific box it funds — a box with several arrows <em>in</em> is a merge (Sandip Z's total merges 4 contributions), a box with several arrows <em>out</em> is a split (the Withdrawal splits 3 ways). No arrow ever points at "the column" — only at its real destination.</div>
+        <div class="branch-canvas" id="branchCanvas">
+          <svg id="branchSvg" class="branch-svg"></svg>
+          <div class="branch-cols">
+            <div class="branch-col">
+              <div class="branch-box" id="n1" style="border-left-color:var(--accent)"><div class="branch-label">Sandip Z (own)</div><div class="branch-amt num">₹2,00,000</div><div class="branch-meta">contribution</div></div>
+              <div class="branch-box" id="n2" style="border-left-color:var(--accent)"><div class="branch-label">Mahesh Z</div><div class="branch-amt num">₹1,00,000</div><div class="branch-meta">sub-partner contribution</div></div>
+              <div class="branch-box" id="n3" style="border-left-color:var(--accent)"><div class="branch-label">Harischandra A</div><div class="branch-amt num">₹1,00,000</div><div class="branch-meta">sub-partner contribution</div></div>
+              <div class="branch-box" id="n4" style="border-left-color:var(--accent)"><div class="branch-label">Chandrakant Z</div><div class="branch-amt num">₹1,00,000</div><div class="branch-meta">sub-partner contribution</div></div>
+            </div>
+            <div class="branch-col">
+              <div class="branch-box" id="n5" style="border-left-color:var(--accent)"><div class="branch-label">Sandip Z — Total</div><div class="branch-amt num">₹5,00,000</div><div class="branch-meta">own + 3 sub-partners</div></div>
+              <div class="branch-box" id="n6" style="border-left-color:var(--accent)"><div class="branch-label">Yogesh Shilimkar</div><div class="branch-amt num">₹3,00,000</div><div class="branch-meta">no sub-partners</div></div>
+              <div class="branch-box" id="n7" style="border-left-color:var(--accent)"><div class="branch-label">ABC Group</div><div class="branch-amt num">₹2,00,000</div><div class="branch-meta">no sub-partners</div></div>
+            </div>
+            <div class="branch-col">
+              <div class="branch-box" id="n8" style="border-left-color:var(--accent)"><div class="branch-label">Project A Funded</div><div class="branch-amt num">₹10,00,000</div><div class="branch-meta">full round, 3 partners</div></div>
+            </div>
+            <div class="branch-col">
+              <div class="branch-box" id="n9" style="border-left-color:var(--danger)"><div class="branch-label">Withdrawal</div><div class="branch-amt num">₹5,00,000</div><div class="branch-meta">Project A → Sandip Z · WD-1024</div></div>
+            </div>
+            <div class="branch-col">
+              <div class="branch-box" id="n10" style="border-left-color:var(--success)"><div class="branch-label">Reinvested</div><div class="branch-amt num">₹3,00,000</div><div class="branch-meta">→ Project B</div></div>
+              <div class="branch-box" id="n11" style="border-left-color:var(--violet)"><div class="branch-label">Transferred</div><div class="branch-amt num">₹1,00,000</div><div class="branch-meta">→ Person X</div></div>
+              <div class="branch-box" id="n12" style="border-left-color:var(--info)"><div class="branch-label">Kept in Wallet</div><div class="branch-amt num">₹1,00,000</div><div class="branch-meta">Sandip Z's Available Balance</div></div>
+            </div>
+            <div class="branch-col">
+              <div class="branch-box" id="n13" style="border-left-color:var(--danger)"><div class="branch-label">Withdrawal from Project B</div><div class="branch-amt num">₹1,80,000</div><div class="branch-meta">WD-2031</div></div>
+              <div class="branch-box" id="n14" style="border-left-color:var(--accent)"><div class="branch-label">Person X Invests</div><div class="branch-amt num">₹1,00,000</div><div class="branch-meta">→ Project D (new investment)</div></div>
+              <div class="branch-box" id="n15" style="border-left-color:var(--amber)"><div class="branch-label">Later Reinvestment</div><div class="branch-amt num">₹75,000</div><div class="branch-meta">→ Project C</div></div>
+              <div class="branch-box" id="n16" style="border-left-color:#94A3B8"><div class="branch-label">Remaining Wallet</div><div class="branch-amt num">₹25,000</div><div class="branch-meta">still available</div></div>
+            </div>
+            <div class="branch-col">
+              <div class="branch-box" id="n17" style="border-left-color:var(--accent)"><div class="branch-label">Yogesh Shilimkar — Taken Now</div><div class="branch-amt num">₹1,00,000</div><div class="branch-meta">Project B</div></div>
+              <div class="branch-box" id="n18" style="border-left-color:var(--violet)"><div class="branch-label">ABC Group — Keep for Later</div><div class="branch-amt num">₹80,000</div><div class="branch-meta">Project B adjustment</div></div>
+              <div class="branch-box" id="n19" style="border-left-color:var(--danger)"><div class="branch-label">Extra Withdrawal — Approved</div><div class="branch-amt num">₹20,000</div><div class="branch-meta">by Ravi (Owner/Admin), Project C</div></div>
+              <div class="branch-box" id="n20" style="border-left-color:var(--success)"><div class="branch-label">Mahesh Z Reinvests</div><div class="branch-amt num">₹10,000</div><div class="branch-meta">his own slice → Project E</div></div>
+            </div>
+            <div class="branch-col">
+              <div class="branch-box" id="n21" style="border-left-color:var(--success)"><div class="branch-label">Reinvested</div><div class="branch-amt num">₹1,00,000</div><div class="branch-meta">Yogesh Shilimkar → Project C</div></div>
+              <div class="branch-box" id="n22" style="border-left-color:#94A3B8"><div class="branch-label">Used for Project C, Round 2</div><div class="branch-amt num">₹20,000</div><div class="branch-meta">spent, not further tracked</div></div>
+              <div class="branch-box" id="n23" style="border-left-color:var(--accent)"><div class="branch-label">Added to Project E</div><div class="branch-amt num">₹10,000</div><div class="branch-meta">Mahesh Z's new investment</div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="table-foot-note">Trace ID: <strong>FLOW-A-1024</strong>. Covers every destination type the product supports: multi-partner + sub-partner funding rollup (only Sandip Z's own 4 boxes feed his total — Yogesh Shilimkar and ABC Group merge straight into Project A funded), a withdrawal that splits 3 ways, cross-project reinvestment (into Projects B, C, D, and E), a transfer to a person who reinvests it, Available Balance with a later reinvestment and an idle remainder, a second project's own withdrawal-and-split, a permission-gated Extra Withdrawal, a Keep for Later adjustment, and a sub-partner's own downstream reinvestment.</div>
+      </div>
+    </section>
+
+    <!-- REPORTS -->
+    <section class="screen" id="screen-reports">
+      <div class="page-head"><div><h1>Reports</h1><p>Filter by project, person, or date — export when you need to.</p></div></div>
+      <div class="report-grid">
+        <div class="report-tile" onclick="openReport('Project Money Report')"><span class="report-tile-icon" style="background:var(--accent)">▤</span><span class="report-tile-name">Project Money Report</span><span class="report-tile-desc">Added, withdrawn, and balance per project.</span></div>
+        <div class="report-tile" onclick="openReport('Partner Report')"><span class="report-tile-icon" style="background:var(--info)">%</span><span class="report-tile-name">Partner Report</span><span class="report-tile-desc">Share, contributions, and adjustments per partner.</span></div>
+        <div class="report-tile" onclick="openReport('Money Added Report')"><span class="report-tile-icon" style="background:var(--success)">+</span><span class="report-tile-name">Money Added Report</span><span class="report-tile-desc">All Add Money transactions, filterable.</span></div>
+        <div class="report-tile" onclick="openReport('Withdrawal Report')"><span class="report-tile-icon" style="background:var(--danger)">−</span><span class="report-tile-name">Withdrawal Report</span><span class="report-tile-desc">All withdrawals and their destinations.</span></div>
+        <div class="report-tile" onclick="openReport('Available Balance Report')"><span class="report-tile-icon" style="background:var(--violet)">₹</span><span class="report-tile-name">Available Balance Report</span><span class="report-tile-desc">Wallet activity across all projects.</span></div>
+        <div class="report-tile" onclick="openReport('Adjustment Report')"><span class="report-tile-icon" style="background:var(--amber)">↻</span><span class="report-tile-name">Adjustment Report</span><span class="report-tile-desc">Pending and extra amounts, current state.</span></div>
+      </div>
+    </section>
+
+    <!-- USERS (Owner/Admin only) -->
+    <section class="screen" id="screen-users">
+      <div class="page-head">
+        <div><h1>Users</h1><p>Everyone with a NiveshBook login for this deployment.</p></div>
+        <button class="btn primary" onclick="inviteUserModal()">+ Invite User</button>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+          <table class="data">
+            <thead><tr><th style="text-align:left">Name</th><th style="text-align:left">Email</th><th style="text-align:left">Role</th><th style="text-align:left">Status</th><th></th></tr></thead>
+            <tbody>
+              <tr><td style="text-align:left" class="person-name">Ravi Sharma</td><td style="text-align:left">ravi@niveshbook.com</td><td style="text-align:left">Owner/Admin</td><td style="text-align:left"><span class="chip success">Active</span></td><td><button class="btn ghost" onclick="manageUserModal('Ravi Sharma', 'Owner/Admin')">Manage</button></td></tr>
+              <tr><td style="text-align:left" class="person-name">Sandip Z</td><td style="text-align:left">sandipz@partnera.example</td><td style="text-align:left">Partner</td><td style="text-align:left"><span class="chip success">Active</span></td><td><button class="btn ghost" onclick="toggleUserStatus(this)">Deactivate</button></td></tr>
+              <tr><td style="text-align:left" class="person-name">Yogesh Shilimkar</td><td style="text-align:left">partnerb@example.com</td><td style="text-align:left">Partner</td><td style="text-align:left"><span class="chip success">Active</span></td><td><button class="btn ghost" onclick="toggleUserStatus(this)">Deactivate</button></td></tr>
+              <tr><td style="text-align:left" class="person-name">ABC Group</td><td style="text-align:left">partnerc@example.com</td><td style="text-align:left">Partner</td><td style="text-align:left"><span class="chip success">Active</span></td><td><button class="btn ghost" onclick="toggleUserStatus(this)">Deactivate</button></td></tr>
+              <tr><td style="text-align:left" class="person-name">Mahesh Z</td><td style="text-align:left">maheshz@partnera.example</td><td style="text-align:left">Sub-partner</td><td style="text-align:left"><span class="chip success">Active</span></td><td><button class="btn ghost" onclick="toggleUserStatus(this)">Deactivate</button></td></tr>
+              <tr><td style="text-align:left" class="person-name">Harischandra A</td><td style="text-align:left">harischandraa@partnera.example</td><td style="text-align:left">Sub-partner</td><td style="text-align:left"><span class="chip neutral">Inactive</span></td><td><button class="btn ghost" onclick="toggleUserStatus(this)">Reactivate</button></td></tr>
+              <tr><td style="text-align:left" class="person-name">Chandrakant Z</td><td style="text-align:left">chandrakantz@partnera.example</td><td style="text-align:left">Sub-partner</td><td style="text-align:left"><span class="chip success">Active</span></td><td><button class="btn ghost" onclick="toggleUserStatus(this)">Deactivate</button></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-foot-note">Deactivating a user blocks login only — their past transactions stay intact and attributed to them, never deleted.</div>
+      </div>
+    </section>
+
+    <!-- PERMISSIONS (Owner/Admin only) -->
+    <section class="screen" id="screen-permissions">
+      <div class="page-head"><div><h1>Permissions</h1><p>Which roles are enabled for this deployment, and who can approve sensitive actions.</p></div></div>
+
+      <div class="card">
+        <div class="card-head"><h2>Enabled Roles</h2></div>
+        <div class="share-list">
+          <div class="share-row" style="grid-template-columns:1fr 140px"><span class="share-name">Owner/Admin</span><span class="chip success">Always On</span></div>
+          <div class="share-row" style="grid-template-columns:1fr 140px"><span class="share-name">Partner</span><span class="chip success">Enabled</span></div>
+          <div class="share-row" style="grid-template-columns:1fr 140px"><span class="share-name">Sub-partner</span><span class="chip success">Enabled</span></div>
+          <div class="share-row" style="grid-template-columns:1fr 140px 90px"><span class="share-name">Project Admin</span><span class="chip neutral">Disabled (default)</span><button class="btn ghost" onclick="toggleRole(this)">Enable</button></div>
+        </div>
+        <div class="table-foot-note">Project Admin ships disabled by default and is turned on per client via configuration — no code change needed to enable it for a deployment that wants it.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Extra Withdrawal — Approval Authority</h2><span class="card-sub">Who can approve a withdrawal beyond Can Take</span></div>
+        <div class="table-wrap">
+          <table class="data">
+            <thead><tr><th style="text-align:left">User</th><th style="text-align:left">Role</th><th style="text-align:left">Approval Authority</th><th></th></tr></thead>
+            <tbody>
+              <tr><td style="text-align:left" class="person-name">Ravi Sharma</td><td style="text-align:left">Owner/Admin</td><td style="text-align:left"><span class="chip success">Can Approve</span></td><td><button class="btn ghost" onclick="toggleApproval(this)">Revoke</button></td></tr>
+              <tr><td style="text-align:left" class="person-name">Sandip Z</td><td style="text-align:left">Partner</td><td style="text-align:left"><span class="chip neutral">—</span></td><td><button class="btn ghost" onclick="toggleApproval(this)">Grant</button></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-foot-note">A change here takes effect on the very next request — nothing about a revoked grant stays cached or stale.</div>
+      </div>
+    </section>
+
+    <!-- AUDIT HISTORY (Owner/Admin only) -->
+    <section class="screen" id="screen-audit">
+      <div class="page-head"><div><h1>Audit History</h1><p>Before/after record behind any edited or cancelled transaction.</p></div></div>
+      <div class="card">
+        <div class="table-wrap">
+          <table class="data">
+            <thead><tr><th>Date</th><th style="text-align:left">Transaction</th><th style="text-align:left">Changed By</th><th style="text-align:left">Field</th><th style="text-align:left">Before</th><th style="text-align:left">After</th></tr></thead>
+            <tbody>
+              <tr><td>18 Sep</td><td style="text-align:left">Add Money — Sandip Z / Project A</td><td style="text-align:left">Ravi (Owner/Admin)</td><td style="text-align:left">Paid Now</td><td class="num" style="text-align:left">₹5,00,000</td><td class="num" style="text-align:left">₹7,00,000</td></tr>
+              <tr><td>12 Sep</td><td style="text-align:left">Withdrawal — Yogesh Shilimkar / Project B <span class="chip danger">Reversed</span></td><td style="text-align:left">Ravi (Owner/Admin)</td><td style="text-align:left">Take Now</td><td class="num" style="text-align:left">₹2,00,000</td><td class="num" style="text-align:left">₹1,50,000</td></tr>
+              <tr><td>05 Sep</td><td style="text-align:left">Partner Shares — ABC Group / Project A</td><td style="text-align:left">Ravi (Owner/Admin)</td><td style="text-align:left">Share %</td><td class="num" style="text-align:left">18%</td><td class="num" style="text-align:left">20%</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-foot-note">Reason supplied: "Partner paid extra after initial entry" (18 Sep) · "Cancelled and reversed, linked to record R-114" (12 Sep). Sandip Z can see the 18 Sep row (their own transaction); a Partner's request for someone else's audit row returns "You don't have access to this" — no partial data, ever.</div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<div class="modal-overlay" id="modalOverlay" onclick="if(event.target===this) closeModal()">
+  <div class="modal-box" id="modalBox">
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <div id="modalBody"></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+  function go(name) {
+    document.querySelectorAll(".nav-item").forEach(function (n) { n.classList.remove("active"); });
+    var navMatch = document.querySelector('.nav-item[data-screen="' + name + '"]');
+    if (navMatch) navMatch.classList.add("active");
+    document.querySelectorAll(".screen").forEach(function (s) {
+      s.classList.toggle("active", s.id === "screen-" + name);
+    });
+    maybeDrawBranch();
+  }
+  document.querySelectorAll(".nav-item").forEach(function (item) {
+    item.addEventListener("click", function () { go(item.getAttribute("data-screen")); });
+  });
+
+  var historyView = "trail"; // "trail" | "branch" | "list"
+  function renderHistoryView() {
+    var banner = document.getElementById("traceBanner");
+    var vertical = document.getElementById("trailVertical");
+    var branch = document.getElementById("trailBranch");
+    var list = document.getElementById("allTxnList");
+    var allBtn = document.getElementById("allTxnBtn");
+    var trailBtn = document.getElementById("trailToggle");
+
+    banner.style.display = historyView === "list" ? "none" : "";
+    list.style.display = historyView === "list" ? "" : "none";
+    vertical.style.display = historyView === "trail" ? "" : "none";
+    branch.classList.toggle("active", historyView === "branch");
+
+    allBtn.classList.toggle("active-toggle", historyView === "list");
+    trailBtn.classList.toggle("active-toggle", historyView === "branch");
+    trailBtn.textContent = historyView === "branch" ? "Timeline View" : "Trail Quick View";
+    maybeDrawBranch();
+  }
+  function showAllTransactions() { historyView = "list"; renderHistoryView(); }
+  function toggleTrail() { historyView = historyView === "branch" ? "trail" : "branch"; renderHistoryView(); }
+
+  /* Precise per-node connectors for the Trail Quick View -- each edge is one
+     real source box -> one real destination box (never "the column"), so
+     merges (4 contributions -> Sandip Z's total) and splits (Withdrawal -> 3
+     destinations) both read unambiguously at a glance. */
+  var BRANCH_EDGES = [
+    ["n1", "n5", "#2F6FED"], ["n2", "n5", "#2F6FED"], ["n3", "n5", "#2F6FED"], ["n4", "n5", "#2F6FED"],
+    ["n5", "n8", "#2F6FED"], ["n6", "n8", "#2F6FED"], ["n7", "n8", "#2F6FED"],
+    ["n8", "n9", "#E5484D"],
+    ["n9", "n10", "#17A566"], ["n9", "n11", "#8B5CF6"], ["n9", "n12", "#0EA5A5"],
+    ["n10", "n13", "#E5484D"],
+    ["n11", "n14", "#2F6FED"],
+    ["n12", "n15", "#E8A317"], ["n12", "n16", "#94A3B8"],
+    ["n13", "n17", "#2F6FED"], ["n13", "n18", "#8B5CF6"],
+    ["n15", "n19", "#E5484D"],
+    ["n16", "n20", "#17A566"],
+    ["n17", "n21", "#17A566"],
+    ["n19", "n22", "#94A3B8"],
+    ["n20", "n23", "#2F6FED"]
+  ];
+
+  function drawBranchConnectors() {
+    var canvas = document.getElementById("branchCanvas");
+    var svg = document.getElementById("branchSvg");
+    if (!canvas || !svg || canvas.offsetWidth === 0) return;
+    var w = canvas.scrollWidth, h = canvas.scrollHeight;
+    svg.setAttribute("width", w);
+    svg.setAttribute("height", h);
+    svg.setAttribute("viewBox", "0 0 " + w + " " + h);
+    var cRect = canvas.getBoundingClientRect();
+    var colors = {};
+    BRANCH_EDGES.forEach(function (e) { colors[e[2]] = true; });
+    var defs = "<defs>";
+    Object.keys(colors).forEach(function (color) {
+      var id = "arrow-" + color.replace("#", "");
+      defs += '<marker id="' + id + '" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse">' +
+        '<path d="M0,0 L7,3 L0,6 z" fill="' + color + '"></path></marker>';
+    });
+    defs += "</defs>";
+    var paths = "";
+    BRANCH_EDGES.forEach(function (e) {
+      var from = document.getElementById(e[0]);
+      var to = document.getElementById(e[1]);
+      if (!from || !to) return;
+      var fr = from.getBoundingClientRect(), tr = to.getBoundingClientRect();
+      var x1 = fr.right - cRect.left + canvas.scrollLeft;
+      var y1 = fr.top - cRect.top + canvas.scrollTop + fr.height / 2;
+      var x2 = tr.left - cRect.left + canvas.scrollLeft - 7;
+      var y2 = tr.top - cRect.top + canvas.scrollTop + tr.height / 2;
+      var dx = Math.max(24, (x2 - x1) / 2);
+      var d = "M " + x1 + " " + y1 + " C " + (x1 + dx) + " " + y1 + ", " + (x2 - dx) + " " + y2 + ", " + x2 + " " + y2;
+      var id = "arrow-" + e[2].replace("#", "");
+      paths += '<path d="' + d + '" stroke="' + e[2] + '" stroke-width="1.6" fill="none" opacity="0.8" marker-end="url(#' + id + ')"></path>';
+    });
+    svg.innerHTML = defs + paths;
+  }
+
+  function maybeDrawBranch() {
+    var screen = document.getElementById("screen-history");
+    if (screen && screen.classList.contains("active") && historyView === "branch") {
+      requestAnimationFrame(function () { requestAnimationFrame(drawBranchConnectors); });
+    }
+  }
+  window.addEventListener("resize", maybeDrawBranch);
+
+  function toggleExportMenu(ev) {
+    ev.stopPropagation();
+    document.getElementById("exportDropdown").classList.toggle("active");
+  }
+  function chooseExport(type) {
+    document.getElementById("exportDropdown").classList.remove("active");
+    showToast("Exported as " + type);
+  }
+  document.addEventListener("click", function () {
+    var d = document.getElementById("exportDropdown");
+    if (d) d.classList.remove("active");
+  });
+
+  var OWNER_ONLY_SCREENS = ["users", "permissions", "audit"];
+  var roleOpts = document.querySelectorAll(".role-opt[data-role]");
+  var roleNote = document.getElementById("roleNote");
+  var notes = {
+    owner: "Full visibility across all partners and sub-partners.",
+    partnerA: "Sandip Z sees only their own numbers, plus Mahesh Z, Harischandra A, and Chandrakant Z — never Yogesh Shilimkar's or ABC Group's private data.",
+    sub1: "Mahesh Z sees only their own 10% slice — nothing belonging to Sandip Z, Yogesh Shilimkar, ABC Group, Harischandra A, or Chandrakant Z."
+  };
+  function applyRoleVisibility(role) {
+    var isOwner = role === "owner";
+    document.querySelectorAll('[data-owner-only="1"]').forEach(function (el) {
+      el.style.display = isOwner ? "" : "none";
+    });
+    if (!isOwner) {
+      var activeScreen = document.querySelector(".screen.active");
+      if (activeScreen && OWNER_ONLY_SCREENS.indexOf(activeScreen.id.replace("screen-", "")) !== -1) {
+        go("home");
+      }
+    }
+  }
+  var currentRole = "owner";
+  roleOpts.forEach(function (opt) {
+    opt.addEventListener("click", function () {
+      roleOpts.forEach(function (o) { o.classList.remove("active"); });
+      opt.classList.add("active");
+      currentRole = opt.getAttribute("data-role");
+      roleNote.textContent = notes[currentRole];
+      applyRoleVisibility(currentRole);
+      renderProjectScreens();
+    });
+  });
+
+  /* ---- Modal + toast helpers, and every screen's action buttons ---- */
+  function openModal(html) {
+    document.getElementById("modalBody").innerHTML = html;
+    document.getElementById("modalOverlay").classList.add("active");
+  }
+  function closeModal() {
+    document.getElementById("modalOverlay").classList.remove("active");
+  }
+  var toastTimer;
+  function showToast(msg) {
+    var t = document.getElementById("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.classList.remove("show"); }, 2600);
+  }
+
+  function chooseTransaction() {
+    openModal(
+      "<h2>New Transaction</h2>" +
+      "<div class=\"modal-sub\">What kind of transaction is this?</div>" +
+      "<div style=\"display:flex;flex-direction:column;gap:10px;\">" +
+      "<button class=\"btn primary\" style=\"width:100%\" onclick=\"closeModal(); go('addmoney')\">+ Add Money to a Project</button>" +
+      "<button class=\"btn ghost\" style=\"width:100%\" onclick=\"closeModal(); go('withdraw')\">− Withdraw Money from a Project</button>" +
+      "</div>"
+    );
+  }
+
+  function addPartnerModal() {
+    openModal(
+      "<h2>Add Partner</h2>" +
+      "<div class=\"modal-sub\">Project A · new share comes out of the unallocated remainder.</div>" +
+      "<div class=\"field\"><div class=\"field-label\">Partner Name</div><input class=\"amt-input\" style=\"width:100%;text-align:left\" placeholder=\"e.g. Deepak R\" /></div>" +
+      "<div class=\"field\"><div class=\"field-label\">Share %</div><input class=\"amt-input\" style=\"width:100%;text-align:left\" placeholder=\"e.g. 10\" /></div>" +
+      "<div class=\"modal-actions\"><button class=\"btn primary\" onclick=\"closeModal(); showToast('Partner added — re-validate shares to 100%')\">Save Partner</button><button class=\"btn ghost\" onclick=\"closeModal()\">Cancel</button></div>"
+    );
+  }
+
+  function useBalanceModal() {
+    openModal(
+      "<h2>Use Available Balance</h2>" +
+      "<div class=\"modal-sub\">₹1,00,000 available · choose where it goes.</div>" +
+      "<div class=\"field\"><div class=\"field-label\">Destination</div><select class=\"amt-input\" style=\"width:100%\"><option>Invest in a Project</option><option>Give to a Person</option></select></div>" +
+      "<div class=\"field\"><div class=\"field-label\">Amount</div><input class=\"amt-input\" style=\"width:100%;text-align:left\" placeholder=\"e.g. ₹50,000\" /></div>" +
+      "<div class=\"modal-actions\"><button class=\"btn primary\" onclick=\"closeModal(); showToast('Balance moved — linked in Money History'); go('history')\">Confirm</button><button class=\"btn ghost\" onclick=\"closeModal()\">Cancel</button></div>"
+    );
+  }
+
+  function inviteUserModal() {
+    openModal(
+      "<h2>Invite User</h2>" +
+      "<div class=\"field\"><div class=\"field-label\">Name</div><input class=\"amt-input\" style=\"width:100%;text-align:left\" placeholder=\"Full name\" /></div>" +
+      "<div class=\"field\"><div class=\"field-label\">Email</div><input class=\"amt-input\" style=\"width:100%;text-align:left\" placeholder=\"name@example.com\" /></div>" +
+      "<div class=\"field\"><div class=\"field-label\">Role</div><select class=\"amt-input\" style=\"width:100%\"><option>Partner</option><option>Sub-partner</option><option>Owner/Admin</option></select></div>" +
+      "<div class=\"modal-actions\"><button class=\"btn primary\" onclick=\"closeModal(); showToast('Invitation sent')\">Send Invite</button><button class=\"btn ghost\" onclick=\"closeModal()\">Cancel</button></div>"
+    );
+  }
+
+  function manageUserModal(name, role) {
+    openModal(
+      "<h2>" + name + "</h2>" +
+      "<div class=\"modal-sub\">" + role + "</div>" +
+      "<div class=\"table-foot-note\" style=\"margin-top:0\">Role changes and deactivation for Owner/Admin accounts require a second Owner/Admin — there is always at least one active.</div>" +
+      "<div class=\"modal-actions\"><button class=\"btn ghost\" onclick=\"closeModal()\">Close</button></div>"
+    );
+  }
+
+  function toggleUserStatus(btn) {
+    var row = btn.closest("tr");
+    var chip = row.querySelector(".chip");
+    var name = row.querySelector(".person-name").textContent;
+    var isActive = chip.classList.contains("success");
+    if (isActive) {
+      chip.classList.remove("success"); chip.classList.add("neutral"); chip.textContent = "Inactive";
+      btn.textContent = "Reactivate";
+      showToast(name + " deactivated — login blocked, history kept");
+    } else {
+      chip.classList.remove("neutral"); chip.classList.add("success"); chip.textContent = "Active";
+      btn.textContent = "Deactivate";
+      showToast(name + " reactivated");
+    }
+  }
+
+  function toggleApproval(btn) {
+    var row = btn.closest("tr");
+    var chip = row.querySelector(".chip");
+    var canApprove = chip.classList.contains("success");
+    if (canApprove) {
+      chip.classList.remove("success"); chip.classList.add("neutral"); chip.textContent = "—";
+      btn.textContent = "Grant";
+      showToast("Approval authority revoked — effective immediately, no stale state");
+    } else {
+      chip.classList.remove("neutral"); chip.classList.add("success"); chip.textContent = "Can Approve";
+      btn.textContent = "Revoke";
+      showToast("Approval authority granted — effective immediately");
+    }
+  }
+
+  function toggleRole(btn) {
+    var row = btn.closest(".share-row");
+    var chip = row.querySelector(".chip");
+    var enabled = chip.classList.contains("success");
+    if (enabled) {
+      chip.classList.remove("success"); chip.classList.add("neutral"); chip.textContent = "Disabled";
+      btn.textContent = "Enable";
+      showToast("Project Admin disabled for this deployment");
+    } else {
+      chip.classList.remove("neutral"); chip.classList.add("success"); chip.textContent = "Enabled";
+      btn.textContent = "Disable";
+      showToast("Project Admin enabled for this deployment");
+    }
+  }
+
+  function filterAdjust(which, btn) {
+    var invCard = document.getElementById("adjustInvestCard");
+    var wdCard = document.getElementById("adjustWithdrawCard");
+    document.querySelectorAll("#screen-adjust .page-head .btn").forEach(function (b) { b.classList.remove("active-toggle"); });
+    btn.classList.add("active-toggle");
+    invCard.style.display = which === "withdraw" ? "none" : "";
+    wdCard.style.display = which === "invest" ? "none" : "";
+  }
+
+  function openReport(name) {
+    showToast("Opening " + name + "…");
+  }
+
+  /* ---- Per-project partner data. Shares are per-project (a share record is
+     always keyed by projectId, never shared across projects) -- so two
+     projects can have entirely different, or only partly overlapping,
+     partner rosters. Project A: Sandip Z + 3 sub-partners, Yogesh Shilimkar,
+     ABC Group. Project B: Yogesh Shilimkar and ABC Group carried over at
+     different shares/amounts, plus a brand-new partner (Kavita Joshi) --
+     Sandip Z has no share in Project B at all. ---- */
+  var PROJECTS = {
+    projectA: {
+      name: "Project A",
+      needThisRound: 1000000,
+      availableToWithdraw: 500000,
+      mainPartners: [
+        {
+          key: "sandip", name: "Sandip Z", share: 50, shouldPay: 500000, paidNow: 700000,
+          adjustment: { type: "success", text: "Extra ₹2,00,000" },
+          withdraw: { canTake: 250000, takeNow: 250000, keepForLater: 0 },
+          subPartners: [
+            { key: "sandip-own", name: "Sandip Z (own)", share: 20, shouldPay: 200000, paidNow: 250000, adjustment: { type: "success", text: "Extra ₹50,000" } },
+            { key: "mahesh", name: "Mahesh Z", share: 10, shouldPay: 100000, paidNow: 100000, adjustment: { type: "neutral", text: "—" } },
+            { key: "harischandra", name: "Harischandra A", share: 10, shouldPay: 100000, paidNow: 0, adjustment: { type: "danger", text: "Pending ₹1,00,000" } },
+            { key: "chandrakant", name: "Chandrakant Z", share: 10, shouldPay: 100000, paidNow: 150000, adjustment: { type: "success", text: "Extra ₹50,000" } }
+          ]
+        },
+        {
+          key: "yogesh", name: "Yogesh Shilimkar", share: 30, shouldPay: 300000, paidNow: 300000,
+          adjustment: { type: "neutral", text: "—" },
+          withdraw: { canTake: 150000, takeNow: 0, keepForLater: 150000 },
+          subPartners: []
+        },
+        {
+          key: "abc", name: "ABC Group", share: 20, shouldPay: 200000, paidNow: 0,
+          adjustment: { type: "danger", text: "Pending ₹2,00,000" },
+          withdraw: { canTake: 100000, takeNow: 0, keepForLater: 100000 },
+          subPartners: []
+        }
+      ]
+    },
+    projectB: {
+      name: "Project B",
+      needThisRound: 3500000,
+      availableToWithdraw: 2500000,
+      mainPartners: [
+        {
+          key: "yogesh", name: "Yogesh Shilimkar", share: 60, shouldPay: 2100000, paidNow: 2100000,
+          adjustment: { type: "neutral", text: "—" },
+          withdraw: { canTake: 1500000, takeNow: 900000, keepForLater: 600000 },
+          subPartners: []
+        },
+        {
+          key: "abc", name: "ABC Group", share: 25, shouldPay: 875000, paidNow: 975000,
+          adjustment: { type: "success", text: "Extra ₹1,00,000" },
+          withdraw: { canTake: 625000, takeNow: 625000, keepForLater: 0 },
+          subPartners: []
+        },
+        {
+          key: "kavita", name: "Kavita Joshi", share: 15, shouldPay: 525000, paidNow: 0,
+          adjustment: { type: "danger", text: "Pending ₹5,25,000" },
+          withdraw: { canTake: 375000, takeNow: 0, keepForLater: 375000 },
+          subPartners: []
+        }
+      ]
+    }
+  };
+  var currentProjectId = "projectA";
+
+  function fmtAmt(n) {
+    n = Math.round(n);
+    var s = Math.abs(n).toString();
+    var last3 = s.length > 3 ? s.slice(-3) : s;
+    var rest = s.length > 3 ? s.slice(0, -3) : "";
+    var groupedRest = rest.replace(/\B(?=(\d{2})+(?!\d))/g, ",");
+    return (n < 0 ? "-" : "") + "₹" + (groupedRest ? groupedRest + "," : "") + last3;
+  }
+  function sumShares(list) {
+    var total = 0;
+    list.forEach(function (i) { total += i.share; });
+    return total;
+  }
+  function visibleMainPartners(proj) {
+    if (currentRole === "owner") return proj.mainPartners;
+    return proj.mainPartners.filter(function (p) { return p.key === "sandip"; });
+  }
+  function emptyAccessCard(projName) {
+    var who = currentRole === "sub1" ? "Mahesh Z" : "Sandip Z";
+    return '<div class="card"><div class="table-foot-note" style="margin-top:0">You don’t have access to this. ' +
+      who + " isn’t a partner in " + projName + ".</div></div>";
+  }
+  function nameLink(label, projId, key) {
+    return '<span style="cursor:pointer;color:var(--accent-strong)" onclick="openPartnerDetail(\'' + projId + '\',\'' + key + '\')">' + label + '</span>';
+  }
+
+  function shareRowHtml(name, sharePct, editable, clickable, projId, key) {
+    var nameHtml = clickable ? nameLink(name, projId, key) : '<span class="share-name">' + name + '</span>';
+    if (editable) {
+      return '<div class="share-row">' + nameHtml + '<input class="pct-input" value="' + sharePct + ' %" style="text-align:right" /><span class="chip neutral chip-btn" onclick="this.previousElementSibling.focus(); this.previousElementSibling.select()">Edit</span></div>';
+    }
+    return '<div class="share-row" style="grid-template-columns:1fr 90px">' + nameHtml + '<span class="chip neutral">' + sharePct + '%</span></div>';
+  }
+
+  function addMoneyRowHtml(name, share, shouldPay, paidNow, adj, isSub, projId, key, clickable) {
+    var label = isSub ? "↳ " + name : name;
+    var nameCell = clickable ? nameLink(label, projId, key) : label;
+    return "<tr" + (isSub ? ' class="sub-row"' : "") + '><td style="text-align:left"' + (isSub ? "" : ' class="person-name"') + ">" + nameCell + "</td>" +
+      '<td class="num">' + share + '%</td><td class="num">' + fmtAmt(shouldPay) + '</td>' +
+      '<td class="input-cell"><input value="' + fmtAmt(paidNow) + '" /></td>' +
+      '<td><span class="chip ' + adj.type + '">' + adj.text + "</span></td></tr>";
+  }
+
+  function renderShares() {
+    var proj = PROJECTS[currentProjectId];
+    document.getElementById("sharesSub").textContent = proj.name + " · Manage main partners and their share percentage.";
+    var isOwner = currentRole === "owner";
+    var mains = visibleMainPartners(proj);
+    var html = "";
+    if (mains.length === 0) {
+      html = emptyAccessCard(proj.name);
+    } else {
+      html += '<div class="card"><div class="card-head"><h2>' + (isOwner ? "Main Partners" : "Your Share") + "</h2></div>" + '<div class="share-list">';
+      mains.forEach(function (p) { html += shareRowHtml(p.name, p.share, isOwner, true, currentProjectId, p.key); });
+      html += "</div>";
+      if (isOwner) html += '<div class="distributed-check"><span>Total Share</span><span>' + sumShares(proj.mainPartners) + "% ✓</span></div>";
+      html += "</div>";
+
+      mains.forEach(function (p) {
+        var subs = currentRole === "sub1" ? p.subPartners.filter(function (s) { return s.key === "mahesh"; }) : p.subPartners;
+        if (subs.length === 0) return;
+        html += '<div class="card"><div class="card-head"><h2>Sub-partners for ' + p.name + '</h2><span class="card-sub">Total ' + p.share + '%</span></div><div class="share-list">';
+        subs.forEach(function (s) { html += shareRowHtml(s.name, s.share, isOwner, false, currentProjectId, s.key); });
+        html += "</div>";
+        if (isOwner) html += '<div class="distributed-check"><span>Allocated</span><span>' + sumShares(p.subPartners) + "% (Remaining 0%) ✓</span></div>";
+        html += "</div>";
+      });
+    }
+    document.getElementById("sharesContent").innerHTML = html;
+  }
+
+  function renderAddMoney() {
+    var proj = PROJECTS[currentProjectId];
+    document.getElementById("addMoneySub").innerHTML = proj.name + ' needs <strong class="num">' + fmtAmt(proj.needThisRound) + "</strong> for this round.";
+    var sandip = proj.mainPartners.filter(function (p) { return p.key === "sandip"; })[0];
+    document.getElementById("addMoneyHelper").textContent = sandip
+      ? ("Share " + sandip.share + "% means if the project needs " + fmtAmt(proj.needThisRound) + ", Sandip Z's normal share is " + fmtAmt(proj.needThisRound * sandip.share / 100) + ". You can enter any amount — the system calculates pending or extra automatically.")
+      : ("Enter any amount for each of " + proj.name + "'s partners — the system calculates pending or extra automatically.");
+
+    var mains = visibleMainPartners(proj);
+    if (mains.length === 0) {
+      document.getElementById("addMoneyContent").innerHTML = emptyAccessCard(proj.name);
+      return;
+    }
+    var rows = "";
+    var anySubsShown = false;
+    mains.forEach(function (p) {
+      rows += addMoneyRowHtml(p.name, p.share, p.shouldPay, p.paidNow, p.adjustment, false, currentProjectId, p.key, currentRole === "owner");
+      var subs = currentRole === "sub1" ? p.subPartners.filter(function (s) { return s.key === "mahesh"; }) : p.subPartners;
+      subs.forEach(function (s) {
+        anySubsShown = true;
+        rows += addMoneyRowHtml(s.name, s.share, s.shouldPay, s.paidNow, s.adjustment, true, currentProjectId, s.key, false);
+      });
+    });
+    var html = '<div class="card"><div class="card-head"><h2>Partner Contributions</h2></div><div class="table-wrap"><table class="data">' +
+      '<thead><tr><th style="text-align:left">Person</th><th>Share %</th><th>Should Pay</th><th>Paid Now</th><th>Adjustment</th></tr></thead><tbody>' + rows + "</tbody></table></div>";
+    if (currentRole === "owner" && anySubsShown) html += '<div class="table-foot-note">A partner\'s sub-partner split is private — other partners never see those rows.</div>';
+    html += "</div>";
+    document.getElementById("addMoneyContent").innerHTML = html;
+  }
+
+  function renderWithdraw() {
+    var proj = PROJECTS[currentProjectId];
+    document.getElementById("withdrawSub").innerHTML = '<strong class="num">' + fmtAmt(proj.availableToWithdraw) + "</strong> is available to withdraw from " + proj.name + ".";
+    var content = document.getElementById("withdrawContent");
+    if (currentRole === "sub1") {
+      content.innerHTML = '<div class="card"><div class="table-foot-note" style="margin-top:0">Withdrawals are recorded at the main-partner level — check Adjust Next Time for your own Keep for Later amount.</div></div>';
+      return;
+    }
+    var mains = visibleMainPartners(proj);
+    if (mains.length === 0) {
+      content.innerHTML = emptyAccessCard(proj.name);
+      return;
+    }
+    var isOwner = currentRole === "owner";
+    var rows = "";
+    mains.forEach(function (p) {
+      var nameCell = isOwner ? nameLink(p.name, currentProjectId, p.key) : p.name;
+      var keepChip = p.withdraw.keepForLater > 0 ? '<span class="chip violet">' + fmtAmt(p.withdraw.keepForLater) + "</span>" : '<span class="chip neutral">₹0</span>';
+      rows += '<tr><td style="text-align:left" class="person-name">' + nameCell + '</td><td class="num">' + p.share + '%</td>' +
+        '<td class="num">' + fmtAmt(p.withdraw.canTake) + '</td>' +
+        '<td class="input-cell"><input value="' + fmtAmt(p.withdraw.takeNow) + '" /></td>' +
+        "<td>" + keepChip + "</td></tr>";
+    });
+    content.innerHTML = '<div class="card"><div class="table-wrap"><table class="data"><thead><tr><th style="text-align:left">Person</th><th>Share %</th><th>Can Take</th><th>Take Now</th><th>Keep for Later</th></tr></thead><tbody>' + rows + "</tbody></table></div></div>";
+  }
+
+  function renderProjectScreens() {
+    renderShares();
+    renderAddMoney();
+    renderWithdraw();
+  }
+
+  function setProject(projectId) {
+    if (!PROJECTS[projectId]) return;
+    currentProjectId = projectId;
+    var proj = PROJECTS[projectId];
+    document.getElementById("projectSwitcher").value = proj.name;
+    document.getElementById("projectNote").textContent =
+      "Showing " + proj.name + "'s own partners — " + proj.mainPartners.map(function (p) { return p.name; }).join(", ") + ".";
+    renderProjectScreens();
+  }
+  function onProjectTypeahead(value) {
+    var typed = value.trim().toLowerCase();
+    var matchId = Object.keys(PROJECTS).filter(function (id) { return PROJECTS[id].name.toLowerCase() === typed; })[0];
+    if (matchId) setProject(matchId);
+  }
+  function initProjectSwitcher() {
+    var list = document.getElementById("projectSwitcherList");
+    Object.keys(PROJECTS).forEach(function (id) {
+      var opt = document.createElement("option");
+      opt.value = PROJECTS[id].name;
+      list.appendChild(opt);
+    });
+  }
+
+  function statCard(label, value, colorClass) {
+    return '<div class="stat-card"><div class="stat-label">' + label + '</div><div class="stat-value num' + (colorClass ? " " + colorClass : "") + '">' + value + "</div></div>";
+  }
+
+  function openPartnerDetail(projectId, partnerKey) {
+    var proj = PROJECTS[projectId];
+    var partner = proj.mainPartners.filter(function (p) { return p.key === partnerKey; })[0];
+    if (!partner) return;
+    document.getElementById("pdName").textContent = partner.name;
+    document.getElementById("pdSub").textContent = proj.name + " · " + partner.share + "% share" +
+      (partner.subPartners.length ? " · " + partner.subPartners.length + " sub-partner" + (partner.subPartners.length > 1 ? "s" : "") : "");
+
+    var html = '<div class="cards-row" style="grid-template-columns:repeat(4,1fr)">' +
+      statCard("Should Pay", fmtAmt(partner.shouldPay)) +
+      statCard("Paid Now", fmtAmt(partner.paidNow), partner.adjustment.type === "danger" ? "danger" : partner.adjustment.type === "success" ? "success" : "") +
+      statCard("Can Take", fmtAmt(partner.withdraw.canTake)) +
+      statCard("Keep for Later", fmtAmt(partner.withdraw.keepForLater), partner.withdraw.keepForLater > 0 ? "violet" : "") +
+      "</div>";
+
+    if (partner.subPartners.length) {
+      html += '<div class="card"><div class="card-head"><h2>Sub-partners</h2><span class="card-sub">Total ' + partner.share + '%</span></div><div class="share-list">';
+      partner.subPartners.forEach(function (s) {
+        html += '<div class="share-row" style="grid-template-columns:1fr 90px"><span class="share-name">' + s.name + '</span><span class="chip neutral">' + s.share + "%</span></div>";
+      });
+      html += "</div></div>";
+    }
+
+    var addRows = addMoneyRowHtml(partner.name, partner.share, partner.shouldPay, partner.paidNow, partner.adjustment, false, projectId, partner.key, false);
+    partner.subPartners.forEach(function (s) {
+      addRows += addMoneyRowHtml(s.name, s.share, s.shouldPay, s.paidNow, s.adjustment, true, projectId, s.key, false);
+    });
+    html += '<div class="card"><div class="card-head"><h2>Add Money History</h2></div><div class="table-wrap"><table class="data"><thead><tr><th style="text-align:left">Person</th><th>Share %</th><th>Should Pay</th><th>Paid Now</th><th>Adjustment</th></tr></thead><tbody>' + addRows + "</tbody></table></div></div>";
+
+    var keepChip = partner.withdraw.keepForLater > 0 ? '<span class="chip violet">' + fmtAmt(partner.withdraw.keepForLater) + "</span>" : '<span class="chip neutral">₹0</span>';
+    html += '<div class="card"><div class="card-head"><h2>Withdraw Money History</h2></div><div class="table-wrap"><table class="data"><thead><tr><th style="text-align:left">Person</th><th>Share %</th><th>Can Take</th><th>Take Now</th><th>Keep for Later</th></tr></thead><tbody>' +
+      '<tr><td style="text-align:left" class="person-name">' + partner.name + '</td><td class="num">' + partner.share + '%</td><td class="num">' + fmtAmt(partner.withdraw.canTake) + '</td><td class="num">' + fmtAmt(partner.withdraw.takeNow) + "</td><td>" + keepChip + "</td></tr>" +
+      "</tbody></table></div>" +
+      '<div class="table-foot-note">Scoped to ' + partner.name + (partner.subPartners.length ? " and their sub-partners" : "") + " only — no other partner in " + proj.name + " appears on this page.</div></div>";
+
+    document.getElementById("pdContent").innerHTML = html;
+    go("partnerdetail");
+  }
+
+  initProjectSwitcher();
+  setProject("projectA");
+</script>

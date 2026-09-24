@@ -2,8 +2,20 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { FolderKanban } from "lucide-react";
 import type { Project } from "@niveshbook/types";
-import { Button, Card, Table, TableHead, TableBody, TableRow, Th, Td } from "@niveshbook/ui";
+import {
+  Button,
+  Card,
+  EmptyState,
+  PageHeader,
+  Table,
+  TableHead,
+  TableBody,
+  TableRow,
+  Th,
+  Td,
+} from "@niveshbook/ui";
 import { listProjects } from "@/lib/projects";
 
 type ListState =
@@ -43,17 +55,15 @@ export default function ProjectsPage() {
 
   return (
     <div>
-      <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-[22px]">Projects</h1>
-          <p className="mt-1 text-[13.4px] text-ink-soft">
-            Create and edit Projects. Partner Shares are added separately, after the Project exists.
-          </p>
-        </div>
-        <Button asChild>
-          <Link href="/projects/new">+ New Project</Link>
-        </Button>
-      </div>
+      <PageHeader
+        title="Projects"
+        description="Create and edit Projects. Partner Shares are added separately, after the Project exists."
+        action={
+          <Button asChild>
+            <Link href="/projects/new">+ New Project</Link>
+          </Button>
+        }
+      />
 
       <Card>
         {state.status === "loading" ? (
@@ -63,9 +73,16 @@ export default function ProjectsPage() {
             {state.message}
           </p>
         ) : state.projects.length === 0 ? (
-          <p className="text-[13.4px] text-ink-soft">
-            No Projects yet. Create your first Project to get started.
-          </p>
+          <EmptyState
+            icon={<FolderKanban size={22} />}
+            title="No Projects yet"
+            description="Create your first Project to start tracking partner investments and withdrawals."
+            action={
+              <Button asChild>
+                <Link href="/projects/new">+ New Project</Link>
+              </Button>
+            }
+          />
         ) : (
           <Table>
             <TableHead>
