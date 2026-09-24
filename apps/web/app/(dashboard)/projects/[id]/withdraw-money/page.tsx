@@ -1,10 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useParams } from "next/navigation";
-import { ArrowLeft, BanknoteArrowDown, Minus, Save, ShieldCheck, X } from "lucide-react";
+import {
+  ArrowLeft,
+  BanknoteArrowDown,
+  Building2,
+  Minus,
+  MoreHorizontal,
+  Plus,
+  Save,
+  ShieldCheck,
+  User,
+  Wallet,
+  X,
+} from "lucide-react";
 import type { PartnerCanTake, PartnerWithdrawalAdjustment } from "@niveshbook/core";
-import type { Money, PaymentMode, WithdrawalTransaction } from "@niveshbook/types";
+import type { DestinationType, Money, PaymentMode, Project, WithdrawalTransaction } from "@niveshbook/types";
 import {
   Amount,
   Button,
@@ -22,6 +34,7 @@ import {
   PageHeader,
   ShareList,
   ShareRow,
+  SplitRow,
   StatusChip,
   toast,
   formatAmount,
@@ -29,10 +42,12 @@ import {
 } from "@niveshbook/ui";
 import { getCanTake } from "@/lib/can-take";
 import { getWithdrawalAdjustments } from "@/lib/withdrawal-adjustments";
+import { listProjects } from "@/lib/projects";
 import {
   listWithdrawalTransactions,
   recordWithdrawalTransaction,
 } from "@/lib/withdrawal-transactions";
+import { recordDestinationAllocation } from "@/lib/withdrawal-destination-allocations";
 
 type CanTakeState =
   | { status: "loading" }
@@ -161,6 +176,119 @@ export function excessOverCanTake(amount: string, canTake: Money): Money {
 }
 
 /**
+ * Formats a `scaleMoneyForCompare`-scaled integer back into a plain decimal
+ * string, for the destination-allocation dialog's running "Distributed:
+ * ₹X / ₹Y" total (Story 4.7) -- mirrors `excessOverCanTake`'s identical
+ * inline whole/fraction split, extracted here since the allocation dialog
+ * needs it for a *sum* of legs, not a single subtraction. Display-only, fed
+ * through `<Amount>`/`formatAmount` (never itself the authoritative
+ * validated value -- the server re-validates every leg's amount via
+ * `toMoney`).
+ */
+export function formatScaledAmount(scaled: number): string {
+  const whole = Math.trunc(scaled / 100);
+  const fraction = scaled % 100;
+  return fraction === 0 ? String(whole) : `${whole}.${String(fraction).padStart(2, "0")}`;
+}
+
+/**
+ * One destination leg's editable form state in the "Where did this money
+ * go?" dialog (Story 4.7, FR27) -- `key` is a stable React list key
+ * (`crypto.randomUUID()`, never the array index -- rows can be removed from
+ * the middle), independent of any server-assigned id (none exists yet,
+ * pre-save). `destinationProjectId`/`personName`/`notes` are always plain
+ * strings here (never `null`) for simpler controlled-`<Input>` binding --
+ * `submitAllocation` is what narrows them to `string | null` per
+ * `destinationType` before calling the API, mirroring
+ * `RecordWithdrawalTarget`'s form-vs-wire-shape split elsewhere in this
+ * file.
+ */
+interface AllocationLegForm {
+  key: string;
+  destinationType: DestinationType;
+  amount: string;
+  destinationProjectId: string;
+  personName: string;
+  notes: string;
+}
+
+function newAllocationLeg(amount = ""): AllocationLegForm {
+  return {
+    key: crypto.randomUUID(),
+    destinationType: "other",
+    amount,
+    destinationProjectId: "",
+    personName: "",
+    notes: "",
+  };
+}
+
+/**
+ * `true` only when `leg` carries whatever type-specific field its
+ * `destinationType` requires -- mirrors the route's own server-side
+ * `isValidLeg` shape guard (`shared.ts`) exactly: `"project"` needs a
+ * non-empty `destinationProjectId`, `"person"` a non-empty `personName`,
+ * `"other"` non-empty `notes`; `"available_balance"` needs nothing extra.
+ * Gates the Save button alongside `allocationMatches` -- without this, the
+ * dialog's own default, unedited state (one `"other"` leg, blank `notes`)
+ * would show Save as enabled and then always 400 on submit, since
+ * `allocationMatches` alone only ever checks the amount sum, never these
+ * fields. Exported so `page.test.tsx` can exercise it directly, mirroring
+ * this file's other pure-helper-export convention (`scaleMoneyForCompare`,
+ * `exceedsCanTake`, etc.).
+ */
+export function isAllocationLegComplete(leg: AllocationLegForm): boolean {
+  if (leg.destinationType === "project") return leg.destinationProjectId.trim().length > 0;
+  if (leg.destinationType === "person") return leg.personName.trim().length > 0;
+  if (leg.destinationType === "other") return leg.notes.trim().length > 0;
+  return true;
+}
+
+const DESTINATION_LABEL: Record<DestinationType, string> = {
+  project: "Another Project",
+  person: "Person",
+  available_balance: "Available Balance",
+  other: "Other",
+};
+
+/**
+ * One colored dest-icon per `DestinationType` (DESIGN.md's "Split row"
+ * component) -- distinct from the app-wide status-chip color convention
+ * (epic-4-context.md: danger/violet/info groupings for *transaction-history*
+ * chips elsewhere) since this dialog needs four visually distinct rows
+ * side by side, not a single chip's color. `project` reuses `--color-info`
+ * (the established "cross-project movement" teal); `person` reuses
+ * `--color-violet` ("a transfer to a person" per that same convention);
+ * `available_balance` gets `--color-accent` (this app's primary blue, kept
+ * distinct from `person`'s violet so the two never read as the same
+ * destination at a glance); `other` gets a neutral `--color-ink-faint`.
+ */
+const DESTINATION_COLOR: Record<DestinationType, string> = {
+  project: "var(--color-info)",
+  person: "var(--color-violet)",
+  available_balance: "var(--color-accent)",
+  other: "var(--color-ink-faint)",
+};
+
+function destinationIcon(type: DestinationType): ReactNode {
+  switch (type) {
+    case "project":
+      return <Building2 size={13} />;
+    case "person":
+      return <User size={13} />;
+    case "available_balance":
+      return <Wallet size={13} />;
+    case "other":
+      return <MoreHorizontal size={13} />;
+  }
+}
+
+type ProjectsState =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "loaded"; projects: Project[] };
+
+/**
  * Withdraw Money page (Story 4.1, extended by Story 4.2): one page per
  * Project -- displays each current Partner's (and, one level down, each
  * current Sub-partner's) Can Take, computed live from Share % × the
@@ -210,6 +338,27 @@ export default function WithdrawMoneyPage() {
   // this same page's `recordAmount`/`recordTarget`/etc. state rather than
   // duplicating a second copy of the form's fields.
   const [extraWithdrawalOpen, setExtraWithdrawalOpen] = useState(false);
+
+  // Story 4.7 (FR27): the "Where did this money go?" destination-allocation
+  // dialog, opened immediately after a Take Now save succeeds (the "next
+  // step in the same flow" per epic-4-context.md) -- `allocationTarget` is
+  // the just-saved `WithdrawalTransaction` being allocated (`null` means the
+  // dialog is closed). Skippable/dismissable without saving (this story's
+  // Code Map) -- the withdrawal itself is already recorded regardless.
+  const [allocationTarget, setAllocationTarget] = useState<WithdrawalTransaction | null>(null);
+  const [allocationLegs, setAllocationLegs] = useState<AllocationLegForm[]>([newAllocationLeg()]);
+  const [allocationFormError, setAllocationFormError] = useState<string | null>(null);
+  const [allocationSubmitting, setAllocationSubmitting] = useState(false);
+  // Minted once per dialog-open, mirroring `recordIdempotencyKey`'s exact
+  // caller-owns-the-key-lifecycle contract one story over.
+  const [allocationIdempotencyKey, setAllocationIdempotencyKey] = useState("");
+  // Every other Project (for a "project" leg's destination selector,
+  // excluding this Project itself -- this story's Decisions) -- fetched
+  // lazily on the dialog's first open, not on page load: `GET /api/projects`
+  // is Owner/Admin-only (`"projects:list"`), so eagerly calling it on every
+  // page view would 403 for a Partner/Sub-partner who never opens this
+  // dialog at all.
+  const [projectsState, setProjectsState] = useState<ProjectsState>({ status: "loading" });
 
   async function refreshCanTake() {
     const result = await getCanTake(projectId);
@@ -388,6 +537,88 @@ export default function WithdrawMoneyPage() {
   }
 
   /**
+   * Opens the "Where did this money go?" destination-allocation dialog
+   * (Story 4.7) for a just-saved withdrawal -- one default `"other"` leg
+   * pre-filled with the full withdrawn amount (the common single-destination
+   * case needs no further editing before it already satisfies the
+   * Distributed check; a split still requires editing it down). Lazily
+   * kicks off the Projects fetch on first open only (see `projectsState`'s
+   * own doc comment).
+   */
+  function openAllocationDialog(withdrawal: WithdrawalTransaction) {
+    setAllocationTarget(withdrawal);
+    setAllocationLegs([newAllocationLeg(withdrawal.amount)]);
+    setAllocationFormError(null);
+    setAllocationIdempotencyKey(crypto.randomUUID());
+    if (projectsState.status !== "loaded") {
+      listProjects()
+        .then((result) => setProjectsState({ status: "loaded", projects: result }))
+        .catch((error: unknown) => {
+          setProjectsState({
+            status: "error",
+            message: error instanceof Error ? error.message : "Something went wrong.",
+          });
+        });
+    }
+  }
+
+  /** Dismisses the destination-allocation dialog without saving -- the withdrawal stays recorded either way (this story's Code Map: skippable/dismissable). */
+  function closeAllocationDialog() {
+    setAllocationTarget(null);
+    setAllocationFormError(null);
+  }
+
+  function addAllocationLeg() {
+    setAllocationLegs((prev) => [...prev, newAllocationLeg()]);
+  }
+
+  /** Never removes the last remaining row -- at least one leg is always present, mirroring the dialog's own "at least one destination" requirement. */
+  function removeAllocationLeg(key: string) {
+    setAllocationLegs((prev) => (prev.length > 1 ? prev.filter((leg) => leg.key !== key) : prev));
+  }
+
+  function updateAllocationLeg(key: string, patch: Partial<AllocationLegForm>) {
+    setAllocationLegs((prev) => prev.map((leg) => (leg.key === key ? { ...leg, ...patch } : leg)));
+  }
+
+  /**
+   * Saves the full destination split in one call (Story 4.7, AD-5/AD-6).
+   * Narrows each form leg's `string` fields to the wire shape's
+   * `string | null` here -- only the field(s) matching a leg's
+   * `destinationType` are ever sent as non-null, mirroring
+   * `packages/core`'s own "only the matching field is non-null" contract
+   * (defense in depth -- the server re-applies this itself either way).
+   */
+  async function submitAllocation() {
+    if (!allocationTarget) return;
+
+    setAllocationFormError(null);
+    setAllocationSubmitting(true);
+    try {
+      await recordDestinationAllocation(
+        projectId,
+        allocationTarget.id,
+        allocationLegs.map((leg) => ({
+          destinationType: leg.destinationType,
+          amount: leg.amount,
+          destinationProjectId: leg.destinationType === "project" ? leg.destinationProjectId : null,
+          personName: leg.destinationType === "person" ? leg.personName.trim() || null : null,
+          notes: leg.notes.trim().length > 0 ? leg.notes.trim() : null,
+        })),
+        allocationIdempotencyKey,
+      );
+      toast.success(`Destination allocation saved for ${formatAmount(allocationTarget.amount)}`);
+    } catch (err) {
+      setAllocationFormError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+      setAllocationSubmitting(false);
+      return;
+    }
+
+    setAllocationSubmitting(false);
+    closeAllocationDialog();
+  }
+
+  /**
    * Saves a Take Now withdrawal (Story 4.2) -- Owner/Admin-facing on anyone's
    * behalf, or a linked Partner/Sub-partner recording their own (self-access,
    * this story's Intent) -- the API itself enforces which. On success,
@@ -417,8 +648,9 @@ export default function WithdrawMoneyPage() {
 
     setRecordFormError(null);
     setRecordSubmitting(true);
+    let saved: WithdrawalTransaction;
     try {
-      await recordWithdrawalTransaction(
+      saved = await recordWithdrawalTransaction(
         projectId,
         {
           partyType: recordTarget.partyType,
@@ -443,6 +675,10 @@ export default function WithdrawMoneyPage() {
     setRecordSubmitting(false);
     setExtraWithdrawalOpen(false);
     closeRecordWithdrawalDialog();
+    // Story 4.7 (FR27): the destination-allocation prompt is "the very next
+    // step in the same flow" (epic-4-context.md), not a separate screen --
+    // opened immediately once the Record Withdrawal dialog above closes.
+    openAllocationDialog(saved);
     // Best-effort, mirroring `add-money/page.tsx`'s identical convention --
     // the withdrawal is already saved server-side either way. Refreshing
     // adjustments here is what keeps Story 4.3's Withdrawal Adjustment chip
@@ -492,6 +728,35 @@ export default function WithdrawMoneyPage() {
   const extraWithdrawalCanTake = recordTarget
     ? canTakeForTarget(recordTarget.partyType, recordTarget.shareId)
     : null;
+
+  // Story 4.7's Distributed check (AC1): the running total of every leg's
+  // `amount`, scaled-integer arithmetic (never `parseFloat`/`Number()` --
+  // mirrors `exceedsCanTake`'s identical client-side-nicety rationale, the
+  // server's own `moneyEquals` sum check is the authoritative one). Save
+  // stays disabled until this exactly matches `allocationTarget.amount` AND
+  // every leg's type-specific field is filled in (`isAllocationLegComplete`)
+  // -- both gates are needed: the dialog's own default, unedited state (one
+  // `"other"` leg, the full amount, blank `notes`) already satisfies the sum
+  // match on its own, so without the second gate Save would appear enabled
+  // and then always 400 on submit.
+  const allocationTotalScaled = allocationLegs.reduce(
+    (sum, leg) => sum + scaleMoneyForCompare(leg.amount),
+    0,
+  );
+  const allocationTargetScaled = allocationTarget ? scaleMoneyForCompare(allocationTarget.amount) : 0;
+  const allocationMatches =
+    allocationTarget !== null &&
+    allocationTotalScaled === allocationTargetScaled &&
+    allocationLegs.every(isAllocationLegComplete);
+  const allocationProjectOptions =
+    projectsState.status === "loaded"
+      ? projectsState.projects.filter((project) => project.id !== projectId)
+      : [];
+  // A failed `GET /api/projects` fetch (Owner/Admin-only -- see
+  // `projectsState`'s own doc comment) leaves the "project" destination
+  // selector showing zero options with no explanation otherwise -- surfaced
+  // here so `AllocationLegRow` can render it next to that selector.
+  const allocationProjectsError = projectsState.status === "error" ? projectsState.message : null;
 
   return (
     <div>
@@ -789,6 +1054,203 @@ export default function WithdrawMoneyPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <Dialog
+        open={allocationTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) closeAllocationDialog();
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>Where did this money go?</DialogTitle>
+          <DialogDescription>
+            Split {allocationTarget ? <Amount value={allocationTarget.amount} size="sm" /> : null} across
+            one or more destinations -- another Project, a Person, Available Balance, or Other. Optional:
+            skip to record the withdrawal with no allocation yet -- it stays recorded either way.
+          </DialogDescription>
+
+          <div className="mt-4 flex flex-col gap-3">
+            {allocationLegs.map((leg, index) => (
+              <AllocationLegRow
+                key={leg.key}
+                leg={leg}
+                index={index}
+                removable={allocationLegs.length > 1}
+                projectOptions={allocationProjectOptions}
+                projectsError={allocationProjectsError}
+                onChange={(patch) => updateAllocationLeg(leg.key, patch)}
+                onRemove={() => removeAllocationLeg(leg.key)}
+              />
+            ))}
+          </div>
+
+          <div className="mt-3">
+            <Button type="button" variant="ghost" onClick={addAllocationLeg} icon={<Plus size={14} />}>
+              Add destination
+            </Button>
+          </div>
+
+          <div className="mt-4">
+            <DistributedCheck
+              label="Distributed"
+              status={
+                <>
+                  {formatAmount(formatScaledAmount(allocationTotalScaled))} /{" "}
+                  {allocationTarget ? formatAmount(allocationTarget.amount) : "₹0"}
+                  {allocationMatches ? " ✓" : ""}
+                </>
+              }
+            />
+          </div>
+
+          {allocationFormError ? (
+            <p role="alert" className="mt-4 text-[13.4px] text-danger">
+              {allocationFormError}
+            </p>
+          ) : null}
+
+          <div className="mt-4 flex gap-2.5">
+            <Button
+              type="button"
+              onClick={submitAllocation}
+              disabled={!allocationMatches || allocationSubmitting}
+              icon={<Save size={14} />}
+            >
+              {allocationSubmitting ? "Saving…" : "Save"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={closeAllocationDialog}
+              disabled={allocationSubmitting}
+              icon={<X size={14} />}
+            >
+              Skip
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+/**
+ * One editable destination-split row in the "Where did this money go?"
+ * dialog (Story 4.7) -- a `destinationType` selector, `SplitRow`'s colored
+ * dest-icon + label + amount input (DESIGN.md's "Split row" component,
+ * reused verbatim per epic-4-context.md), plus whichever type-specific
+ * field(s) apply (`destinationProjectId`'s Project selector for
+ * `"project"`, `personName`'s free-text input for `"person"`), and an
+ * always-present optional `notes` field (this story's Decisions: usable on
+ * any leg, required in practice for `"other"` -- enforced server-side, not
+ * specially marked here). `onRemove` is only ever rendered when `removable`
+ * (at least one leg must always remain -- `removeAllocationLeg`'s own
+ * guard).
+ */
+function AllocationLegRow({
+  leg,
+  index,
+  removable,
+  projectOptions,
+  projectsError,
+  onChange,
+  onRemove,
+}: {
+  leg: AllocationLegForm;
+  index: number;
+  removable: boolean;
+  projectOptions: Project[];
+  /** Set when `GET /api/projects` failed -- rendered as a visible `role="alert"` next to the Project selector below, instead of that selector silently showing zero options. */
+  projectsError: string | null;
+  onChange: (patch: Partial<AllocationLegForm>) => void;
+  onRemove: () => void;
+}) {
+  // Disambiguates every field's `aria-label` across multiple rows (e.g.
+  // "Amount (Destination 1)" vs "Amount (Destination 2)") -- without this,
+  // every row's inputs share the exact same label, which is both an
+  // accessibility problem (assistive tech can't announce which row a field
+  // belongs to) and a testing one (forces `getAllByLabelText(...)[n]`
+  // instead of a direct, unambiguous lookup).
+  const rowLabel = `Destination ${index + 1}`;
+
+  return (
+    <div className="rounded-el border border-border p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <select
+          aria-label={`Destination type (${rowLabel})`}
+          className="rounded-el border border-border bg-surface px-2.5 py-1.5 text-[13px] text-ink focus:border-accent focus:outline focus:outline-2 focus:outline-accent-soft"
+          value={leg.destinationType}
+          onChange={(event) => onChange({ destinationType: event.target.value as DestinationType })}
+        >
+          {(Object.entries(DESTINATION_LABEL) as [DestinationType, string][]).map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+        {removable ? (
+          <Button type="button" variant="ghost" onClick={onRemove} icon={<X size={14} />}>
+            Remove
+          </Button>
+        ) : null}
+      </div>
+
+      <SplitRow
+        icon={destinationIcon(leg.destinationType)}
+        iconColor={DESTINATION_COLOR[leg.destinationType]}
+        label={DESTINATION_LABEL[leg.destinationType]}
+        input={
+          <Input
+            aria-label={`Amount (${rowLabel})`}
+            inputMode="decimal"
+            value={leg.amount}
+            onChange={(event) => onChange({ amount: event.target.value })}
+          />
+        }
+      />
+
+      {leg.destinationType === "project" ? (
+        <div className="mt-2">
+          <select
+            aria-label={`Destination Project (${rowLabel})`}
+            className="w-full rounded-el border border-border bg-surface px-3 py-2.5 text-[14px] text-ink focus:border-accent focus:outline focus:outline-2 focus:outline-accent-soft"
+            value={leg.destinationProjectId}
+            onChange={(event) => onChange({ destinationProjectId: event.target.value })}
+          >
+            <option value="">Select a Project…</option>
+            {projectOptions.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
+          {projectsError ? (
+            <p role="alert" className="mt-1 text-[12.6px] text-danger">
+              Couldn&apos;t load Projects: {projectsError}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {leg.destinationType === "person" ? (
+        <div className="mt-2">
+          <Input
+            aria-label={`Person's name (${rowLabel})`}
+            placeholder="Person's name"
+            value={leg.personName}
+            onChange={(event) => onChange({ personName: event.target.value })}
+          />
+        </div>
+      ) : null}
+
+      <div className="mt-2">
+        <Input
+          aria-label={`Notes (${rowLabel})`}
+          placeholder={leg.destinationType === "other" ? "Describe this destination" : "Notes (optional)"}
+          value={leg.notes}
+          onChange={(event) => onChange({ notes: event.target.value })}
+        />
+      </div>
     </div>
   );
 }

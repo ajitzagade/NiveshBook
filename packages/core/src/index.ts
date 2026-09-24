@@ -27,3 +27,5 @@ export * from "./withdrawal-adjustment";
 export * from "./withdrawal-adjustment-port";
 export * from "./withdrawal-status";
 export * from "./extra-withdrawal";
+export * from "./withdrawal-destination-allocation";
+export * from "./withdrawal-destination-allocation-port";

@@ -40,6 +40,24 @@ vi.mock("@/lib/withdrawal-adjustments", () => ({
   getWithdrawalAdjustments: (...args: unknown[]) => getWithdrawalAdjustments(...args),
 }));
 
+/**
+ * Story 4.7: the destination-allocation dialog opens automatically right
+ * after every successful Record Withdrawal save (`openAllocationDialog`) --
+ * mocked so every pre-existing test in this file (most of which never
+ * interact with that dialog at all) never makes an unmocked real `fetch`
+ * call to `GET /api/projects`/`POST .../destination-allocations`.
+ */
+const listProjects = vi.fn();
+const recordDestinationAllocation = vi.fn();
+
+vi.mock("@/lib/projects", () => ({
+  listProjects: (...args: unknown[]) => listProjects(...args),
+}));
+
+vi.mock("@/lib/withdrawal-destination-allocations", () => ({
+  recordDestinationAllocation: (...args: unknown[]) => recordDestinationAllocation(...args),
+}));
+
 const EMPTY_ADJUSTMENTS_RESPONSE: WithdrawalAdjustmentsResponse = { partners: [] };
 
 const PARTNER_WITH_SUBS: PartnerCanTake = {
@@ -653,6 +671,8 @@ describe("WithdrawMoneyPage -- Record Withdrawal dialog (Story 4.2)", () => {
     listWithdrawalTransactions.mockReset().mockResolvedValue(EMPTY_WITHDRAWALS_RESPONSE);
     recordWithdrawalTransaction.mockReset();
     getWithdrawalAdjustments.mockReset().mockResolvedValue(EMPTY_ADJUSTMENTS_RESPONSE);
+    listProjects.mockReset().mockResolvedValue([]);
+    recordDestinationAllocation.mockReset();
   });
 
   afterEach(() => {
@@ -705,6 +725,15 @@ describe("WithdrawMoneyPage -- Record Withdrawal dialog (Story 4.2)", () => {
       expect.objectContaining({ partyType: "partner", shareId: "a", amount: "100000" }),
       expect.any(String),
     );
+
+    // Story 4.7: the "Where did this money go?" destination-allocation
+    // dialog opens automatically right after a successful save (the "very
+    // next step in the same flow") -- dismissed here via Skip (this story's
+    // own dialog flow is covered by its own describe block below), so this
+    // pre-existing test's remaining assertions aren't made ambiguous by a
+    // second "₹1,00,000" rendered inside that dialog's description.
+    await screen.findByText("Where did this money go?");
+    await user.click(screen.getByRole("button", { name: "Skip" }));
 
     // The "refreshes" behavior this test is named for: a second
     // listWithdrawalTransactions fetch actually fires after save, and its
@@ -773,6 +802,8 @@ describe("WithdrawMoneyPage -- Authorize Extra Withdrawal confirmation dialog (S
     listWithdrawalTransactions.mockReset().mockResolvedValue(EMPTY_WITHDRAWALS_RESPONSE);
     recordWithdrawalTransaction.mockReset();
     getWithdrawalAdjustments.mockReset().mockResolvedValue(EMPTY_ADJUSTMENTS_RESPONSE);
+    listProjects.mockReset().mockResolvedValue([]);
+    recordDestinationAllocation.mockReset();
   });
 
   afterEach(() => {
@@ -937,6 +968,8 @@ describe("WithdrawMoneyPage -- Record Withdrawal idempotency key reuse across a 
     listWithdrawalTransactions.mockReset().mockResolvedValue(EMPTY_WITHDRAWALS_RESPONSE);
     recordWithdrawalTransaction.mockReset();
     getWithdrawalAdjustments.mockReset().mockResolvedValue(EMPTY_ADJUSTMENTS_RESPONSE);
+    listProjects.mockReset().mockResolvedValue([]);
+    recordDestinationAllocation.mockReset();
   });
 
   afterEach(() => {
@@ -985,6 +1018,12 @@ describe("WithdrawMoneyPage -- Record Withdrawal idempotency key reuse across a 
     await waitFor(() => {
       expect(recordWithdrawalTransaction).toHaveBeenCalledTimes(1);
     });
+    // Story 4.7: dismiss the auto-opened destination-allocation dialog
+    // (Skip) before reopening Record Withdrawal for the second submission --
+    // otherwise two dialogs' worth of "Amount"-labeled inputs would make the
+    // next `findByLabelText("Amount")` ambiguous.
+    await screen.findByText("Where did this money go?");
+    await user.click(screen.getByRole("button", { name: "Skip" }));
 
     await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "200000" } });
@@ -997,5 +1036,217 @@ describe("WithdrawMoneyPage -- Record Withdrawal idempotency key reuse across a 
     const firstCallKey = recordWithdrawalTransaction.mock.calls[0]?.[2] as string;
     const secondCallKey = recordWithdrawalTransaction.mock.calls[1]?.[2] as string;
     expect(secondCallKey).not.toBe(firstCallKey);
+  });
+});
+
+/**
+ * Story 4.7 (FR27): the "Where did this money go?" destination-allocation
+ * dialog, opened automatically right after `submitWithdrawal` succeeds.
+ * Covers this story's own verification checklist: add/remove destination
+ * rows, the running Distributed total, Save disabled until it matches
+ * exactly, and skipping without saving.
+ */
+describe("WithdrawMoneyPage -- destination-allocation dialog (Story 4.7)", () => {
+  beforeEach(() => {
+    getCanTake.mockReset();
+    listWithdrawalTransactions.mockReset().mockResolvedValue(EMPTY_WITHDRAWALS_RESPONSE);
+    recordWithdrawalTransaction.mockReset();
+    getWithdrawalAdjustments.mockReset().mockResolvedValue(EMPTY_ADJUSTMENTS_RESPONSE);
+    listProjects.mockReset().mockResolvedValue([]);
+    recordDestinationAllocation.mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  /** Records a ₹1,00,000 withdrawal and returns the userEvent instance with the destination dialog now open. */
+  async function recordAndOpenAllocationDialog() {
+    recordWithdrawalTransaction.mockResolvedValue(
+      makeWithdrawalTransaction({ id: "wtx-alloc-1", amount: "100000" }),
+    );
+    const user = await renderAndReady();
+
+    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "100000" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Where did this money go?");
+
+    return user;
+  }
+
+  it("opens with one default 'other' leg pre-filled with the full amount, but Save disabled until notes (its required field) is filled in", async () => {
+    await recordAndOpenAllocationDialog();
+
+    // The amount sum already matches exactly (pre-filled with the full
+    // withdrawn amount) -- Save must still be disabled, since the default
+    // "other" leg's required `notes` field is blank (row 5's regression:
+    // `allocationMatches` alone isn't enough to gate Save).
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("leaves the default dialog state exactly as auto-opened, fills in only the required notes field, and Save actually succeeds", async () => {
+    recordDestinationAllocation.mockResolvedValue({ allocations: [] });
+    const user = await recordAndOpenAllocationDialog();
+
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Notes (Destination 1)"), { target: { value: "Kept as cash" } });
+
+    expect(screen.getByRole("button", { name: "Save" })).not.toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(recordDestinationAllocation).toHaveBeenCalledTimes(1);
+    });
+    const [, , legsArg] = recordDestinationAllocation.mock.calls[0];
+    expect(legsArg).toEqual([
+      {
+        destinationType: "other",
+        amount: "100000",
+        destinationProjectId: null,
+        personName: null,
+        notes: "Kept as cash",
+      },
+    ]);
+
+    await waitFor(() => {
+      expect(screen.queryByText("Where did this money go?")).not.toBeInTheDocument();
+    });
+  });
+
+  it("disables Save when a legs edit breaks the exact-sum match, and re-enables it once fixed", async () => {
+    const user = await recordAndOpenAllocationDialog();
+
+    fireEvent.change(screen.getByLabelText("Notes (Destination 1)"), { target: { value: "Kept as cash" } });
+    expect(screen.getByRole("button", { name: "Save" })).not.toBeDisabled();
+
+    const amountInput = screen.getByLabelText("Amount (Destination 1)") as HTMLInputElement;
+    fireEvent.change(amountInput, { target: { value: "40000" } });
+
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+
+    fireEvent.change(amountInput, { target: { value: "100000" } });
+    expect(screen.getByRole("button", { name: "Save" })).not.toBeDisabled();
+
+    void user;
+  });
+
+  it("adds and removes destination rows, keeping the running total AND the per-row required-field check in sync", async () => {
+    const user = await recordAndOpenAllocationDialog();
+
+    // Splitting the single default row into two -- reduce it, fill its
+    // required notes, then add a second row (Available Balance -- no
+    // type-specific field of its own) for the remainder.
+    fireEvent.change(screen.getByLabelText("Amount (Destination 1)"), { target: { value: "60000" } });
+    fireEvent.change(screen.getByLabelText("Notes (Destination 1)"), { target: { value: "Kept as cash" } });
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Add destination" }));
+    fireEvent.change(screen.getByLabelText("Destination type (Destination 2)"), {
+      target: { value: "available_balance" },
+    });
+    fireEvent.change(screen.getByLabelText("Amount (Destination 2)"), { target: { value: "40000" } });
+
+    expect(screen.getByRole("button", { name: "Save" })).not.toBeDisabled();
+
+    // Removing the second row again drops the total back below the target.
+    await user.click(screen.getAllByRole("button", { name: "Remove" })[0] as HTMLElement);
+    expect(screen.queryByLabelText("Amount (Destination 2)")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("skips without saving -- no recordDestinationAllocation call, dialog closes", async () => {
+    const user = await recordAndOpenAllocationDialog();
+
+    await user.click(screen.getByRole("button", { name: "Skip" }));
+
+    expect(recordDestinationAllocation).not.toHaveBeenCalled();
+    expect(screen.queryByText("Where did this money go?")).not.toBeInTheDocument();
+  });
+
+  it("saves a multi-destination split (AC1) -- project/person/available_balance legs sent with the right shape", async () => {
+    listProjects.mockResolvedValue([
+      { id: "project-2", name: "Project Two", description: null, createdAt: "", updatedAt: "" },
+    ]);
+    recordDestinationAllocation.mockResolvedValue({ allocations: [] });
+    const user = await recordAndOpenAllocationDialog();
+
+    // Leg 1 (default row): switch to "Another Project", ₹60,000.
+    fireEvent.change(screen.getByLabelText("Destination type (Destination 1)"), {
+      target: { value: "project" },
+    });
+    fireEvent.change(screen.getByLabelText("Amount (Destination 1)"), { target: { value: "60000" } });
+    await screen.findByLabelText("Destination Project (Destination 1)");
+    fireEvent.change(screen.getByLabelText("Destination Project (Destination 1)"), {
+      target: { value: "project-2" },
+    });
+
+    // Leg 2: a Person, ₹40,000.
+    await user.click(screen.getByRole("button", { name: "Add destination" }));
+    fireEvent.change(screen.getByLabelText("Destination type (Destination 2)"), {
+      target: { value: "person" },
+    });
+    fireEvent.change(screen.getByLabelText("Amount (Destination 2)"), { target: { value: "40000" } });
+    fireEvent.change(screen.getByLabelText("Person's name (Destination 2)"), {
+      target: { value: "Person X" },
+    });
+
+    expect(screen.getByRole("button", { name: "Save" })).not.toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(recordDestinationAllocation).toHaveBeenCalledTimes(1);
+    });
+    const [projectIdArg, transactionIdArg, legsArg, idempotencyKeyArg] =
+      recordDestinationAllocation.mock.calls[0];
+    expect(projectIdArg).toBe("project-1");
+    expect(transactionIdArg).toBe("wtx-alloc-1");
+    expect(legsArg).toEqual([
+      {
+        destinationType: "project",
+        amount: "60000",
+        destinationProjectId: "project-2",
+        personName: null,
+        notes: null,
+      },
+      {
+        destinationType: "person",
+        amount: "40000",
+        destinationProjectId: null,
+        personName: "Person X",
+        notes: null,
+      },
+    ]);
+    expect(typeof idempotencyKeyArg).toBe("string");
+
+    await waitFor(() => {
+      expect(screen.queryByText("Where did this money go?")).not.toBeInTheDocument();
+    });
+  });
+
+  it("shows the server's error message and keeps the dialog open on a failed save", async () => {
+    recordDestinationAllocation.mockRejectedValue(new Error("Allocated amounts must sum to exactly the withdrawal's amount."));
+    const user = await recordAndOpenAllocationDialog();
+    fireEvent.change(screen.getByLabelText("Notes (Destination 1)"), { target: { value: "Kept as cash" } });
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(
+      await screen.findByText("Allocated amounts must sum to exactly the withdrawal's amount."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Where did this money go?")).toBeInTheDocument();
+  });
+
+  it("shows a visible error next to the Project selector when GET /api/projects fails, instead of silently showing zero options", async () => {
+    listProjects.mockRejectedValue(new Error("Could not load Projects."));
+    await recordAndOpenAllocationDialog();
+
+    fireEvent.change(screen.getByLabelText("Destination type (Destination 1)"), {
+      target: { value: "project" },
+    });
+
+    expect(await screen.findByText("Couldn't load Projects: Could not load Projects.")).toBeInTheDocument();
   });
 });

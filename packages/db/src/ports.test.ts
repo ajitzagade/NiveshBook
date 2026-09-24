@@ -1,12 +1,15 @@
 import { describe, it, expect } from "vitest";
 import type { InvestmentTransaction, Money, Percent, WithdrawalTransaction } from "@niveshbook/types";
+import type { CreateWithdrawalDestinationAllocationLegInput } from "@niveshbook/core";
 import {
   isUniqueViolation,
   matchesCancelRequest,
   matchesEditRequest,
   matchesRequest,
   matchesWithdrawalRequest,
+  matchesAllocationRequest,
 } from "./ports";
+import type { WithdrawalDestinationAllocationRow } from "./schema";
 
 function makeExistingTransaction(overrides: Partial<InvestmentTransaction> = {}): InvestmentTransaction {
   return {
@@ -451,5 +454,104 @@ describe("matchesWithdrawalRequest", () => {
     });
 
     expect(result).toBe(false);
+  });
+});
+
+function makeAllocationRow(
+  overrides: Partial<WithdrawalDestinationAllocationRow> = {},
+): WithdrawalDestinationAllocationRow {
+  return {
+    id: "alloc-1",
+    withdrawalTransactionId: "wtx-1",
+    destinationType: "other",
+    amount: "250000",
+    destinationProjectId: null,
+    personName: null,
+    notes: "Kept as cash",
+    idempotencyKey: "idem-1",
+    createdAt: new Date(),
+    ...overrides,
+  } as WithdrawalDestinationAllocationRow;
+}
+
+function makeLegInput(
+  overrides: Partial<CreateWithdrawalDestinationAllocationLegInput> = {},
+): CreateWithdrawalDestinationAllocationLegInput {
+  return {
+    destinationType: "other",
+    amount: "250000" as Money,
+    destinationProjectId: null,
+    personName: null,
+    notes: "Kept as cash",
+    ...overrides,
+  };
+}
+
+/**
+ * Narrowly-scoped unit tests for `matchesAllocationRequest` -- the
+ * `createWithdrawalDestinationAllocationPort.recordAllocation` (Story 4.7)
+ * analog of `matchesWithdrawalRequest`/`matchesCancelRequest` one story
+ * over, confirming a set of rows found for one `idempotencyKey` actually
+ * represents the *current* request's legs, not an unrelated key collision.
+ */
+describe("matchesAllocationRequest", () => {
+  it("matches a single leg that's byte-identical", () => {
+    expect(matchesAllocationRequest([makeAllocationRow()], [makeLegInput()])).toBe(true);
+  });
+
+  it("matches a legitimate replay even though the stored amount round-tripped through numeric(14,2)", () => {
+    const existing = makeAllocationRow({ amount: "250000.00" });
+    expect(matchesAllocationRequest([existing], [makeLegInput({ amount: "250000" as Money })])).toBe(true);
+  });
+
+  it("matches multiple legs regardless of order (multiset match)", () => {
+    const existingRows = [
+      makeAllocationRow({ id: "alloc-1", destinationType: "project", amount: "150000", destinationProjectId: "project-2", personName: null, notes: null }),
+      makeAllocationRow({ id: "alloc-2", destinationType: "person", amount: "100000", destinationProjectId: null, personName: "Person X", notes: null }),
+    ];
+    const legs = [
+      makeLegInput({ destinationType: "person", amount: "100000" as Money, personName: "Person X", notes: null }),
+      makeLegInput({ destinationType: "project", amount: "150000" as Money, destinationProjectId: "project-2", notes: null }),
+    ];
+
+    expect(matchesAllocationRequest(existingRows, legs)).toBe(true);
+  });
+
+  it("rejects a different leg count", () => {
+    expect(matchesAllocationRequest([makeAllocationRow()], [makeLegInput(), makeLegInput()])).toBe(false);
+  });
+
+  it("rejects a genuinely different amount -- a true key collision, not a replay", () => {
+    const existing = makeAllocationRow({ amount: "250000.00" });
+    expect(matchesAllocationRequest([existing], [makeLegInput({ amount: "250000.01" as Money })])).toBe(false);
+  });
+
+  it("rejects a mismatched destinationType even when amount matches", () => {
+    const existing = makeAllocationRow({ destinationType: "other" });
+    expect(matchesAllocationRequest([existing], [makeLegInput({ destinationType: "available_balance" })])).toBe(
+      false,
+    );
+  });
+
+  it("rejects a mismatched destinationProjectId", () => {
+    const existing = makeAllocationRow({ destinationType: "project", destinationProjectId: "project-2" });
+    expect(
+      matchesAllocationRequest(
+        [existing],
+        [makeLegInput({ destinationType: "project", destinationProjectId: "project-3" })],
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a mismatched personName", () => {
+    const existing = makeAllocationRow({ destinationType: "person", personName: "Person X" });
+    expect(
+      matchesAllocationRequest([existing], [makeLegInput({ destinationType: "person", personName: "Person Y" })]),
+    ).toBe(false);
+  });
+
+  it("rejects a mismatched notes", () => {
+    const existing = makeAllocationRow({ notes: "Kept as cash" });
+    expect(matchesAllocationRequest([existing], [makeLegInput({ notes: "Something else" })])).toBe(false);
   });
 });

@@ -547,3 +547,70 @@ export const withdrawalAdjustments = pgTable(
 );
 
 export type WithdrawalAdjustmentRow = typeof withdrawalAdjustments.$inferSelect;
+
+/**
+ * Story 4.7 (Epic 4, FR27): one row per destination leg of a withdrawal's
+ * post-withdrawal allocation ("Where did this money go?") -- a `POST` saves
+ * every leg of one allocation together (this story's Boundaries: one DB
+ * transaction, exactly one `audit_log` row, AD-5/AD-6). `destinationType`
+ * is one of `"project" | "person" | "available_balance" | "other"`
+ * (`packages/types`' `DestinationType`) -- a plain `text` column, not a
+ * Postgres enum, mirroring every other discriminator column in this schema
+ * (`withdrawal_transactions.partyType`, `withdrawal_adjustments.adjustmentType`,
+ * etc.). `destinationProjectId` is populated only for a `"project"` leg
+ * (validated by `packages/core`'s `recordDestinationAllocation` to differ
+ * from the withdrawal's own source Project -- deliberately **not** `onDelete:
+ * "cascade"` on its own `projects` FK, unlike `withdrawalTransactionId`
+ * below: a destination Project being deleted should never silently delete
+ * the allocation record of money that left a *different, still-existing*
+ * Project), `personName` only for a `"person"` leg (free-text, no
+ * Person/contact entity exists yet -- this story's Decisions), `notes`
+ * optionally on any leg (doubles as `"other"`'s primary free-text
+ * description).
+ *
+ * `idempotencyKey` is shared across every leg row of one save (this story's
+ * Decisions) -- unlike `withdrawalTransactions.idempotencyKey`, deliberately
+ * **not** a UNIQUE column: a single atomic write legitimately inserts
+ * multiple rows carrying the identical key, so a table-wide UNIQUE
+ * constraint would make the second leg's own insert fail. Uniqueness/
+ * idempotent-replay detection is enforced by
+ * `createWithdrawalDestinationAllocationPort`'s `recordAllocation` at the
+ * application layer instead (`SELECT ... FOR UPDATE` on the parent
+ * `withdrawal_transactions` row), mirroring Story 3.8's two-row cancel/
+ * reversal atomic-write precedent, which also can't use a single-row UNIQUE
+ * constraint for its own multi-row write.
+ *
+ * No `status`/cancel column -- allocation is write-once per withdrawal, not
+ * editable/re-enterable (this story's Decisions); Story 4.11's cancel/
+ * reverse of the whole withdrawal (cascading via `withdrawalTransactionId`'s
+ * `onDelete: "cascade"` FK below) is the only undo path.
+ */
+export const withdrawalDestinationAllocations = pgTable(
+  "withdrawal_destination_allocations",
+  {
+    id: uuid("id").primaryKey(),
+    withdrawalTransactionId: uuid("withdrawal_transaction_id")
+      .notNull()
+      .references(() => withdrawalTransactions.id, { onDelete: "cascade" }),
+    destinationType: text("destination_type").notNull(),
+    amount: numeric("amount", { precision: 14, scale: 2 }).notNull(),
+    destinationProjectId: uuid("destination_project_id").references(() => projects.id),
+    personName: text("person_name"),
+    notes: text("notes"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // `recordAllocation`/`listByWithdrawalTransactionId` both filter on
+    // withdrawal_transaction_id -- this table's primary read/lookup pattern.
+    index("withdrawal_destination_allocations_withdrawal_transaction_id_idx").on(
+      table.withdrawalTransactionId,
+    ),
+    // Indexed (not unique alone -- see this table's own doc comment above)
+    // so `recordAllocation`'s idempotency-replay lookup by idempotencyKey
+    // stays an index scan, not a sequential scan.
+    index("withdrawal_destination_allocations_idempotency_key_idx").on(table.idempotencyKey),
+  ],
+);
+
+export type WithdrawalDestinationAllocationRow = typeof withdrawalDestinationAllocations.$inferSelect;

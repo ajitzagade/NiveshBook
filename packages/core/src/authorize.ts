@@ -40,7 +40,8 @@ export type Action =
   | "withdrawal_transactions:create"
   | "withdrawal_transactions:list"
   | "withdrawal_adjustments:view"
-  | "withdrawal_status:view";
+  | "withdrawal_status:view"
+  | "withdrawal_destination_allocations:create";
 
 /**
  * Role -> allowed-actions permission table. All actions here are
@@ -204,6 +205,14 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // self-access itself is admitted via `SELF_ACCESS_ACTIONS` below, mirroring
   // `investment_status:view`'s exact Story 3.6 shape one ledger over.
   "withdrawal_status:view": new Set(["owner_admin"]),
+  // Story 4.7 (Epic 4, FR27): allocating a withdrawal's destination is
+  // Owner/Admin-only -- no self-access, mirroring `investment_transactions:cancel`/
+  // `investment_transactions:edit`'s identical all-or-nothing-for-the-role
+  // shape (spec-4-7's Decisions: the AC's persona is explicitly "As an
+  // Owner/Admin", with no "(or the withdrawal's own Partner/Sub-partner)"
+  // qualifier, unlike Story 4.2's `withdrawal_transactions:create`). No
+  // `SELF_ACCESS_ACTIONS`/`SCOPE_SELF_ACCESS_ACTIONS` entry.
+  "withdrawal_destination_allocations:create": new Set(["owner_admin"]),
 };
 
 /**

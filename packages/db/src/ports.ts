@@ -5,6 +5,8 @@ import {
   IdempotencyKeyConflictError,
   moneyEquals,
   WithdrawalIdempotencyKeyConflictError,
+  AlreadyAllocatedError,
+  WithdrawalDestinationAllocationIdempotencyKeyConflictError,
   type UserPort,
   type SessionPort,
   type CreateSessionInput,
@@ -21,6 +23,8 @@ import {
   type WithdrawalTransactionPort,
   type CreateWithdrawalTransactionInput,
   type WithdrawalAdjustmentPort,
+  type WithdrawalDestinationAllocationPort,
+  type CreateWithdrawalDestinationAllocationLegInput,
 } from "@niveshbook/core";
 import type {
   User,
@@ -36,6 +40,8 @@ import type {
   RecommendedAmount,
   WithdrawalTransaction,
   WithdrawalAdjustment,
+  WithdrawalDestinationAllocation,
+  DestinationType,
   PaymentMode,
   Money,
   AuditLogEntry,
@@ -54,6 +60,7 @@ import {
   recommendedAmounts,
   withdrawalTransactions,
   withdrawalAdjustments,
+  withdrawalDestinationAllocations,
   auditLog,
   type SessionRow,
   type UserRow,
@@ -66,6 +73,7 @@ import {
   type RecommendedAmountRow,
   type WithdrawalTransactionRow,
   type WithdrawalAdjustmentRow,
+  type WithdrawalDestinationAllocationRow,
   type AuditLogRow,
 } from "./schema";
 
@@ -270,6 +278,21 @@ function toWithdrawalAdjustment(row: WithdrawalAdjustmentRow): WithdrawalAdjustm
     adjustmentType: row.adjustmentType as WithdrawalAdjustment["adjustmentType"],
     adjustmentAmount: row.adjustmentAmount as Money,
     updatedAt: row.updatedAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function toWithdrawalDestinationAllocation(
+  row: WithdrawalDestinationAllocationRow,
+): WithdrawalDestinationAllocation {
+  return {
+    id: row.id,
+    withdrawalTransactionId: row.withdrawalTransactionId,
+    destinationType: row.destinationType as DestinationType,
+    amount: row.amount as Money,
+    destinationProjectId: row.destinationProjectId,
+    personName: row.personName,
+    notes: row.notes,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -735,6 +758,49 @@ export function matchesWithdrawalRequest(
     existing.partyType === input.partyType &&
     moneyEquals(existing.amount, input.amount)
   );
+}
+
+/**
+ * `true` if `existingRows` (every `withdrawal_destination_allocations` row
+ * already saved for one withdrawal/idempotencyKey) represents the exact
+ * same set of legs as `legs` (the current request) -- Story 4.7's
+ * `createWithdrawalDestinationAllocationPort.recordAllocation` analog of
+ * `matchesWithdrawalRequest`/`matchesCancelRequest` one story over. Order-
+ * independent (multiset match via a mutable `remaining` copy, not a
+ * positional `.every`) -- nothing in this story's contract guarantees a
+ * replayed request's `legs` array arrives in the exact same order as the
+ * original, and Drizzle's `.insert(...).returning()` doesn't guarantee
+ * insertion order back either. `amount` is compared via `moneyEquals`
+ * (decimal-safe), never `===`, mirroring `matchesWithdrawalRequest`'s
+ * identical rounding-safety rationale -- `existingRows[].amount` came back
+ * from Postgres's `numeric(14,2)` column. `destinationProjectId`/
+ * `personName`/`notes` are compared with `?? null` on both sides so a
+ * `undefined` (can't actually occur here, both sides are already `| null`)
+ * never spuriously mismatches a stored `null`.
+ */
+export function matchesAllocationRequest(
+  existingRows: readonly WithdrawalDestinationAllocationRow[],
+  legs: readonly CreateWithdrawalDestinationAllocationLegInput[],
+): boolean {
+  if (existingRows.length !== legs.length) {
+    return false;
+  }
+  const remaining = [...existingRows];
+  for (const leg of legs) {
+    const matchIndex = remaining.findIndex(
+      (row) =>
+        row.destinationType === leg.destinationType &&
+        moneyEquals(row.amount as Money, leg.amount) &&
+        (row.destinationProjectId ?? null) === (leg.destinationProjectId ?? null) &&
+        (row.personName ?? null) === (leg.personName ?? null) &&
+        (row.notes ?? null) === (leg.notes ?? null),
+    );
+    if (matchIndex === -1) {
+      return false;
+    }
+    remaining.splice(matchIndex, 1);
+  }
+  return true;
 }
 
 /**
@@ -1498,6 +1564,149 @@ export function createRecommendedAmountPort(database: Database = getDb()): Recom
         .from(recommendedAmounts)
         .where(eq(recommendedAmounts.requirementId, requirementId));
       return rows.map(toRecommendedAmount);
+    },
+  };
+}
+
+/**
+ * Drizzle-backed implementation of `packages/core`'s
+ * `WithdrawalDestinationAllocationPort` (Story 4.7, FR27) -- the atomic,
+ * write-once, idempotency-aware multi-row insert this port's own interface
+ * doc comment describes.
+ *
+ * `recordAllocation` deliberately does everything inside one
+ * `database.transaction()` call, guarded by a `SELECT ... FOR UPDATE` lock
+ * on the parent `withdrawal_transactions` row, rather than the
+ * check-by-idempotencyKey-then-separately-transact shape
+ * `createWithdrawalTransactionPort.recordTransaction` uses one story over:
+ * this table's `idempotencyKey` column is deliberately NOT unique (schema.ts
+ * -- a single save legitimately inserts several sibling rows sharing one
+ * key), so there is no UNIQUE-constraint-violation signal a concurrent
+ * double-submit could race against and recover from afterward the way that
+ * port's `isUniqueViolation` catch-and-retry does. Locking the one row every
+ * concurrent allocation attempt for this withdrawal must agree exists
+ * (`withdrawal_transactions.id`) serializes them instead, so the "does an
+ * allocation already exist for this withdrawal, and does it match this
+ * request" check below is always answered against a fully committed,
+ * lock-consistent view -- no TOCTOU window between reading and writing.
+ *
+ * Sequence, once the lock is held:
+ * 1. Read every existing `withdrawal_destination_allocations` row for
+ *    `withdrawalTransactionId`. Empty -- proceed to step 2. Non-empty --
+ *    this withdrawal was already allocated (possibly by this exact request,
+ *    replayed):
+ *    - every existing row shares `idempotencyKey` AND `matchesAllocationRequest`
+ *      the current `legs` -- a legitimate replay: return the existing rows
+ *      unchanged (`created: false`), no write.
+ *    - every existing row shares `idempotencyKey` but the content differs --
+ *      a genuine collision under the same key -- throw
+ *      `WithdrawalDestinationAllocationIdempotencyKeyConflictError`.
+ *    - the existing rows carry a *different* `idempotencyKey` -- a second,
+ *      unrelated allocation attempt on an already-allocated withdrawal (this
+ *      story's Decisions: write-once) -- throw `AlreadyAllocatedError`.
+ * 2. No existing rows for this withdrawal -- but `idempotencyKey` might
+ *    still already be in use by a *different* withdrawal's allocation (an
+ *    unrelated collision, not scoped to `withdrawalTransactionId` at all) --
+ *    throw `WithdrawalDestinationAllocationIdempotencyKeyConflictError` if
+ *    so.
+ * 3. Otherwise, insert every leg row plus exactly one paired `audit_log` row
+ *    (`entityType: "withdrawal_destination_allocation"`, `entityId` =
+ *    `withdrawalTransactionId`, `newValue` = the full inserted leg array) --
+ *    `created: true`.
+ */
+export function createWithdrawalDestinationAllocationPort(
+  database: Database = getDb(),
+): WithdrawalDestinationAllocationPort {
+  return {
+    async recordAllocation(withdrawalTransactionId, legs, idempotencyKey, actorUserId) {
+      return database.transaction(async (tx) => {
+        await tx
+          .select({ id: withdrawalTransactions.id })
+          .from(withdrawalTransactions)
+          .where(eq(withdrawalTransactions.id, withdrawalTransactionId))
+          .for("update");
+
+        const existingRows = await tx
+          .select()
+          .from(withdrawalDestinationAllocations)
+          .where(eq(withdrawalDestinationAllocations.withdrawalTransactionId, withdrawalTransactionId));
+
+        if (existingRows.length > 0) {
+          const sameKey = existingRows.every((row) => row.idempotencyKey === idempotencyKey);
+          if (sameKey && matchesAllocationRequest(existingRows, legs)) {
+            return { allocations: existingRows.map(toWithdrawalDestinationAllocation), created: false };
+          }
+          if (sameKey) {
+            throw new WithdrawalDestinationAllocationIdempotencyKeyConflictError();
+          }
+          throw new AlreadyAllocatedError();
+        }
+
+        const keyCollisionRows = await tx
+          .select({ id: withdrawalDestinationAllocations.id })
+          .from(withdrawalDestinationAllocations)
+          .where(eq(withdrawalDestinationAllocations.idempotencyKey, idempotencyKey))
+          .limit(1);
+        if (keyCollisionRows.length > 0) {
+          throw new WithdrawalDestinationAllocationIdempotencyKeyConflictError();
+        }
+
+        const insertedRows = await tx
+          .insert(withdrawalDestinationAllocations)
+          .values(
+            legs.map((leg) => ({
+              id: uuidv7(),
+              withdrawalTransactionId,
+              destinationType: leg.destinationType,
+              amount: leg.amount,
+              destinationProjectId: leg.destinationProjectId,
+              personName: leg.personName,
+              notes: leg.notes,
+              idempotencyKey,
+            })),
+          )
+          .returning();
+        if (insertedRows.length !== legs.length) {
+          throw new Error("Failed to record withdrawal destination allocation legs");
+        }
+
+        await tx.insert(auditLog).values({
+          id: uuidv7(),
+          entityType: "withdrawal_destination_allocation",
+          entityId: withdrawalTransactionId,
+          action: "create",
+          actorUserId,
+          oldValue: null,
+          newValue: insertedRows,
+          reason: null,
+        });
+
+        return { allocations: insertedRows.map(toWithdrawalDestinationAllocation), created: true };
+      });
+    },
+    async listByWithdrawalTransactionId(withdrawalTransactionId) {
+      const rows = await database
+        .select()
+        .from(withdrawalDestinationAllocations)
+        .where(eq(withdrawalDestinationAllocations.withdrawalTransactionId, withdrawalTransactionId))
+        .orderBy(asc(withdrawalDestinationAllocations.createdAt));
+      return rows.map(toWithdrawalDestinationAllocation);
+    },
+    /**
+     * Every leg row of one save shares the identical `idempotencyKey`
+     * (schema.ts) -- so a single row is enough to tell whether the existing
+     * set, if any, belongs to this exact request (`recordDestinationAllocation`'s
+     * own doc comment explains why this non-atomic pre-check exists
+     * alongside `recordAllocation`'s atomic one).
+     */
+    async hasConflictingAllocation(withdrawalTransactionId, idempotencyKey) {
+      const rows = await database
+        .select({ idempotencyKey: withdrawalDestinationAllocations.idempotencyKey })
+        .from(withdrawalDestinationAllocations)
+        .where(eq(withdrawalDestinationAllocations.withdrawalTransactionId, withdrawalTransactionId))
+        .limit(1);
+      const existing = rows[0];
+      return existing !== undefined && existing.idempotencyKey !== idempotencyKey;
     },
   };
 }

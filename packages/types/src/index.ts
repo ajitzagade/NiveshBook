@@ -407,3 +407,45 @@ export interface WithdrawalAdjustment {
   /** ISO 8601 timestamp -- when this row was first created. */
   createdAt: string;
 }
+
+/**
+ * Story 4.7 (Epic 4, FR27): the four places a withdrawn amount can be
+ * allocated to in the "Where did this money go?" prompt -- "another
+ * Project" (`"project"`), a free-text Person (`"person"`, no Person/contact
+ * entity exists in this schema yet -- spec-4-7's Decisions), the running
+ * `"available_balance"` ledger (Story 4.9), or a free-text `"other"`
+ * description. Deliberately a plain string union, not richer per-type
+ * payload shapes -- `WithdrawalDestinationAllocation` below carries every
+ * type's optional fields on one row instead (mirrors `PartyType`'s identical
+ * flat-union precedent).
+ */
+export type DestinationType = "project" | "person" | "available_balance" | "other";
+
+/**
+ * One destination leg of a withdrawal's post-withdrawal allocation (Story
+ * 4.7, FR27) -- a single `WithdrawalTransaction` (Story 4.2) is split across
+ * one or more of these rows, saved together in one atomic write (AD-5/AD-6),
+ * reconciling to exactly `WithdrawalTransaction.amount`. Only the field(s)
+ * matching `destinationType` are ever non-null: `destinationProjectId` for
+ * `"project"`, `personName` for `"person"`; `notes` is nullable on every
+ * `destinationType` (doubles as `"other"`'s primary free-text description,
+ * and an optional annotation on any other leg -- this story's Decisions).
+ * This story only *records* a `"project"`/`"available_balance"` leg --
+ * `"project"`'s actual linked money-movement/investment record is Story
+ * 4.8's job (`moveWithdrawalToProject()`), and `"available_balance"`'s
+ * actual ledger credit is Story 4.9's job; neither exists yet.
+ */
+export interface WithdrawalDestinationAllocation {
+  id: string;
+  /** The `WithdrawalTransaction.id` this leg belongs to -- every leg of one save shares the same value. */
+  withdrawalTransactionId: string;
+  destinationType: DestinationType;
+  amount: Money;
+  /** Populated only when `destinationType === "project"` -- validated (Story 4.7) to differ from the withdrawal's own source Project. */
+  destinationProjectId: string | null;
+  /** Populated only when `destinationType === "person"` -- free-text, no Person/contact entity exists yet. */
+  personName: string | null;
+  notes: string | null;
+  /** ISO 8601 timestamp */
+  createdAt: string;
+}

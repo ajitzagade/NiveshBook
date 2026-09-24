@@ -11,6 +11,7 @@ import {
   recommendedAmounts,
   withdrawalTransactions,
   withdrawalAdjustments,
+  withdrawalDestinationAllocations,
   auditLog,
 } from "./schema";
 
@@ -512,5 +513,60 @@ describe("audit_log table schema (Story 3.3, AD-5; idempotencyKey column added S
   it("leaves idempotencyKey nullable but UNIQUE-when-present (Story 3.7) -- 'create' entries carry none, 'edit'/'cancel' entries do; mirrors investment_transactions.idempotencyKey's UNIQUE-at-the-DB-level precedent, minus the NOT NULL (Postgres allows multiple NULLs under a UNIQUE constraint)", () => {
     expect(auditLog.idempotencyKey.notNull).toBe(false);
     expect(auditLog.idempotencyKey.isUnique).toBe(true);
+  });
+});
+
+describe("withdrawal_destination_allocations table schema (Story 4.7, FR27)", () => {
+  it("marks withdrawalTransactionId/destinationType/amount/idempotencyKey NOT NULL", () => {
+    expect(withdrawalDestinationAllocations.withdrawalTransactionId.notNull).toBe(true);
+    expect(withdrawalDestinationAllocations.destinationType.notNull).toBe(true);
+    expect(withdrawalDestinationAllocations.amount.notNull).toBe(true);
+    expect(withdrawalDestinationAllocations.idempotencyKey.notNull).toBe(true);
+  });
+
+  it("leaves destinationProjectId/personName/notes nullable -- only the field(s) matching a leg's destinationType are ever populated", () => {
+    expect(withdrawalDestinationAllocations.destinationProjectId.notNull).toBe(false);
+    expect(withdrawalDestinationAllocations.personName.notNull).toBe(false);
+    expect(withdrawalDestinationAllocations.notes.notNull).toBe(false);
+  });
+
+  it("gives id no implicit default -- application code (uuidv7) always supplies one", () => {
+    expect(withdrawalDestinationAllocations.id.hasDefault).toBe(false);
+  });
+
+  it("stores amount as numeric(14,2), mirroring withdrawal_transactions.amount's exact precision", () => {
+    expect(withdrawalDestinationAllocations.amount.columnType).toBe("PgNumeric");
+    expect(withdrawalDestinationAllocations.amount.getSQLType()).toBe("numeric(14, 2)");
+  });
+
+  it("leaves idempotencyKey NOT unique -- one save legitimately inserts several sibling rows sharing one key (this story's Decisions), unlike withdrawal_transactions.idempotencyKey", () => {
+    expect(withdrawalDestinationAllocations.idempotencyKey.isUnique).toBeFalsy();
+  });
+
+  it("cascade-deletes with its parent withdrawal_transactions row, but not with destinationProjectId's projects row", () => {
+    const { foreignKeys } = getTableConfig(withdrawalDestinationAllocations);
+    const parentFk = foreignKeys.find((fk) => fk.reference().columns[0]?.name === "withdrawal_transaction_id");
+    expect(parentFk?.onDelete).toBe("cascade");
+    const projectFk = foreignKeys.find((fk) => fk.reference().columns[0]?.name === "destination_project_id");
+    expect(projectFk?.onDelete).not.toBe("cascade");
+  });
+
+  it("indexes withdrawalTransactionId and idempotencyKey -- this table's primary lookup patterns", () => {
+    const { indexes } = getTableConfig(withdrawalDestinationAllocations);
+    expect(
+      indexes.some((idx) => idx.config.name === "withdrawal_destination_allocations_withdrawal_transaction_id_idx"),
+    ).toBe(true);
+    expect(
+      indexes.some((idx) => idx.config.name === "withdrawal_destination_allocations_idempotency_key_idx"),
+    ).toBe(true);
+  });
+
+  it("marks createdAt NOT NULL with a DB-side default", () => {
+    expect(withdrawalDestinationAllocations.createdAt.notNull).toBe(true);
+    expect(withdrawalDestinationAllocations.createdAt.hasDefault).toBe(true);
+  });
+
+  it("has no status column -- allocation is write-once, not editable/re-enterable (this story's Decisions)", () => {
+    expect(Object.keys(withdrawalDestinationAllocations)).not.toContain("status");
   });
 });
