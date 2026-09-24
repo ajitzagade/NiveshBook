@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt } from "drizzle-orm";
+import { and, asc, desc, eq, gt, sql } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
 import {
   AlreadyCancelledError,
@@ -1107,6 +1107,27 @@ export function createInvestmentTransactionPort(
         }
         throw error;
       }
+    },
+    /**
+     * Story 4.1: a DB-side `SUM(amount)` filtered to `status = 'active'` rows
+     * for `projectId`, across every one of the Project's funding requirements
+     * -- never fetched row-by-row and added client-side (AD-2 reserves actual
+     * arithmetic on money values for `packages/core/src/decimal-math.ts`; this
+     * is Postgres doing the addition, not application code). `coalesce(...,
+     * 0)` covers the zero-active-transactions case (a brand-new Project, or
+     * one whose only transactions are cancelled) -- `SUM` over zero rows is
+     * SQL `NULL`, which would otherwise need a separate null-check here.
+     */
+    async sumActiveAmountByProjectId(projectId) {
+      const [row] = await database
+        .select({
+          total: sql<string>`coalesce(sum(${investmentTransactions.amount}), 0)`,
+        })
+        .from(investmentTransactions)
+        .where(
+          and(eq(investmentTransactions.projectId, projectId), eq(investmentTransactions.status, "active")),
+        );
+      return (row?.total ?? "0") as Money;
     },
   };
 }

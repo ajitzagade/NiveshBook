@@ -227,6 +227,16 @@ describe("investment_transactions table schema (Story 3.3; status/reversalOfTran
     expect(ref.foreignTable).toBe(investmentTransactions);
     expect(ref.foreignColumns.map((column) => column.name)).toEqual(["id"]);
   });
+
+  it("indexes (projectId, status) for sumActiveAmountByProjectId (Story 4.1) -- projectId leading, since it's the sole equality filter", () => {
+    const { indexes } = getTableConfig(investmentTransactions);
+    const projectStatusIndex = indexes.find((idx) => idx.config.name === "investment_transactions_project_id_status_idx");
+    expect(projectStatusIndex).toBeDefined();
+    expect(projectStatusIndex!.config.columns.map((column) => (column as { name: string }).name)).toEqual([
+      "project_id",
+      "status",
+    ]);
+  });
 });
 
 describe("investment_adjustments table schema (Story 3.4)", () => {

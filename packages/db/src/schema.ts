@@ -264,6 +264,13 @@ export const investmentTransactions = pgTable(
     index("investment_transactions_reversal_of_transaction_id_idx").on(
       table.reversalOfTransactionId,
     ),
+    // Story 4.1: `sumActiveAmountByProjectId` filters on exactly
+    // `(projectId, status)` -- `investment_transactions_share_id_project_id_idx`
+    // above has `shareId` as its leading column, so it can't serve a
+    // project-only query. `projectId` leads (not `status`) since it's the
+    // more selective column and the sole equality filter in every other
+    // query against this table.
+    index("investment_transactions_project_id_status_idx").on(table.projectId, table.status),
   ],
 );
 

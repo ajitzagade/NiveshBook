@@ -35,7 +35,8 @@ export type Action =
   | "investment_transactions:cancel"
   | "investment_transactions:view_audit"
   | "investment_adjustments:view"
-  | "investment_status:view";
+  | "investment_status:view"
+  | "can_take:view";
 
 /**
  * Role -> allowed-actions permission table. All actions here are
@@ -161,6 +162,14 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // self-access itself is admitted via `SELF_ACCESS_ACTIONS` below, mirroring
   // `investment_transactions:create`'s exact Story 3.3 shape one endpoint over.
   "investment_status:view": new Set(["owner_admin"]),
+  // Story 4.1 (Epic 4): Can Take is computed from the Project's current
+  // Partner/Sub-partner Shares plus its live available-to-withdraw amount --
+  // Owner/Admin-only in this story, mirroring `should_pay:view`'s identical
+  // precedent (spec-4-1's Decisions) -- Epic 5 is the planned home for a
+  // person's own self-service view of their own Can Take, not this gate. No
+  // `SELF_ACCESS_ACTIONS`/`SCOPE_SELF_ACCESS_ACTIONS` entry, matching
+  // `should_pay:view`'s exact all-or-nothing-for-the-role shape.
+  "can_take:view": new Set(["owner_admin"]),
 };
 
 /**

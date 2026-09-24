@@ -1,0 +1,1 @@
+CREATE INDEX "investment_transactions_project_id_status_idx" ON "investment_transactions" USING btree ("project_id","status");

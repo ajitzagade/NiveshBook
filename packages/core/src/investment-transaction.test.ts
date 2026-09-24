@@ -10,6 +10,7 @@ import type {
 } from "@niveshbook/types";
 import { SharesNotFullyAllocatedError, SubPartnerSharesOverAllocatedError } from "./should-pay";
 import { computeInvestmentAdjustment, shareKey } from "./investment-adjustment";
+import { sumMoney } from "./decimal-math";
 import type {
   CancelInvestmentTransactionInput,
   CreateInvestmentTransactionInput,
@@ -290,6 +291,18 @@ function createFakeInvestmentTransactionPort(): InvestmentTransactionPort & {
       const result = { originalTransaction: updatedOriginal, reversalTransaction: reversal };
       appliedCancelsByIdempotencyKey.set(input.idempotencyKey, result);
       return { ...result, cancelled: true };
+    },
+    // Story 4.1 addition: this domain-layer test file has no scenario that
+    // exercises Can Take's live amount resolution (that's `can-take.test.ts`/
+    // `can-take/route.test.ts`'s job) -- a minimal, correct implementation
+    // satisfies the `InvestmentTransactionPort` interface without adding any
+    // behavior this file's tests never call.
+    async sumActiveAmountByProjectId(projectId) {
+      return sumMoney(
+        rows
+          .filter((row) => row.projectId === projectId && row.status === "active")
+          .map((row) => row.amount),
+      );
     },
   };
 }

@@ -244,4 +244,17 @@ export interface InvestmentTransactionPort {
    * `audit_log` entry.
    */
   cancelTransaction(input: CancelInvestmentTransactionInput): Promise<CancelTransactionResult>;
+  /**
+   * Story 4.1 (FR21/AD-2): the sum of every non-cancelled (`status: "active"`)
+   * `investment_transactions.amount` row for the Project, across every one of
+   * its funding requirements -- "the Project's available-to-withdraw amount"
+   * per spec-4-1's Decisions (the total actively-invested money to date;
+   * nothing subtracted for withdrawals yet, since `withdrawal_transactions`
+   * doesn't exist until Story 4.2). Computed live via a DB-side `SUM`, never
+   * by fetching every row and adding client-side -- this is the one
+   * aggregate read this port exposes, distinct from `listByRequirementId`'s
+   * per-requirement row list. Returns `"0"` (never throws, never `null`) for
+   * a Project with zero active transactions -- the zero-investment I/O case.
+   */
+  sumActiveAmountByProjectId(projectId: string): Promise<Money>;
 }

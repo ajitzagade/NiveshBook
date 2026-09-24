@@ -1,0 +1,66 @@
+# Epic 4 Context: Withdraw Money & Money Movement
+
+<!-- Compiled from planning artifacts. Edit freely. Regenerate with compile-epic-context if planning docs change. -->
+
+## Goal
+
+Owner/Admin can process withdrawals flexibly per partner, with permission-gated Extra Withdrawal, then split a withdrawal across another project, a person, and Available Balance in one action — with cross-project movement auto-linked so nothing is entered twice. This epic reuses Epic 3's audit/idempotency/transaction pattern verbatim rather than reinventing it, and extends AD-4's ledger-per-share pattern with a second, independent ledger for withdrawals.
+
+## Stories
+
+- Story 4.1: Auto-Calculate Can Take
+- Story 4.2: Record Withdrawal Transaction (Audited)
+- Story 4.3: Compute Withdrawal Adjustment
+- Story 4.4: Carry Forward Recommended Available Withdrawal
+- Story 4.5: Extra Withdrawal, Permission-Gated
+- Story 4.6: Sub-partner Withdrawal (Private, Independent)
+- Story 4.7: Post-Withdrawal Destination Allocation
+- Story 4.8: Auto-Linked Cross-Project Movement
+- Story 4.9: Available Balance Ledger
+- Story 4.10: End-to-End Money Trail
+- Story 4.11: Edit/Cancel a Withdrawal Transaction (Audited)
+
+## Requirements & Constraints
+
+- Can Take = Share % × the Project's available-to-withdraw amount, computed per Partner and, one level down, per Sub-partner, via the same decimal-math module and largest-remainder rule as Should Pay — no manual math required from the viewer, and accompanied by a worked-example hint at point of use, not a hover tooltip.
+- Take Now accepts any amount, including ₹0 (valid — no forced withdrawal, the full Can Take becomes Keep for Later). Recorded fields: Project, Person, Amount, Date, Payment Mode, Reference Number, Notes. A double-submitted request with the same idempotency key creates exactly one transaction.
+- Withdrawal Adjustment per cycle: `Remaining = Can Take − Take Now` → positive becomes Keep for Later; when Take Now exceeds Can Take (only via the Extra Withdrawal authorization step) the excess becomes Extra Taken. This ledger is independent of Investment Adjustment — never read to compute or silently offset the other; any netting is its own explicit, separately audited action.
+- Next cycle's Recommended Available Withdrawal = new Base Entitlement + Previous Keep For Later − Previous Extra Taken. This is always a recommendation — the actual Take Now recorded afterward can be any amount, never enforced.
+- Extra Withdrawal requires an explicit Owner/Admin authorization step distinct from just entering a bigger number; attempting it without that step is rejected. Only Owner/Admin (not Project Admin) can grant it in v1. A non-Owner/Admin attempting to self-authorize gets 403. Authorized Extra Taken is automatically deducted from the next cycle's Recommended Available Withdrawal.
+- Sub-partners withdraw independently of their parent Partner and of sibling Sub-partners — one withdrawing in full, another withdrawing ₹0, neither blocks nor forces the other. Epic 2's co-partner privacy boundary applies identically here (a non-owning Partner viewing another's withdrawal data gets 403).
+- After an actual withdrawal, the amount is allocated across one or more destinations (another Project, a Person, Available Balance, or Other) in one save. Save is blocked until allocated amounts sum exactly to the withdrawn amount, shown as "Distributed: ₹X / ₹Y" with a clear checkmark once matched. All destination legs commit or roll back together as one transaction — no partial allocation is ever left behind.
+- When a destination is "another Project," the system automatically creates and links three records as one action: the withdrawal (source Project), a money-movement record, and an investment record (destination Project) — the user never manually re-enters the amount, and the destination Project's Add Money history already shows it afterward. The linked set is mutually navigable from either Project.
+- Available Balance is a running per-share ledger: incremented when a withdrawal is allocated to it, decremented when spent into a Project or given to a Person. It never goes negative — an attempt to spend more than the current balance is rejected. Two concurrent requests spending from the same balance never both succeed (no lost update).
+- The full worked scenario (₹10,00,000 invested → ₹5,00,000 withdrawn → split 3 ways → later ₹30,000 moved from Available Balance to a third project) must be traceable as one chain from any single transaction in it, forward and backward, with totals reconciling exactly at any point — nothing double-counted or lost.
+- Editing a recorded withdrawal preserves a full audit trail (old/new values, who, when), mirroring Story 3.7. Cancelling/reversing a withdrawal that's part of a linked bundle (Story 4.8) cascades the cancellation to every record in that bundle — never leaving an orphaned sibling. Only Owner/Admin can edit or cancel/reverse; anyone else gets 403.
+- Dashboards, Money History, and report views touching this epic's data must still return in under 2 seconds at expected data volume (no automated perf check exists yet — manual review criterion).
+
+## Technical Decisions
+
+- **AD-4 extended this epic:** `withdrawal_adjustments` is a new table, keyed by `(shareId, projectId)` exactly like `investment_adjustments` — `shareId` is `PARTNER_SHARE.id` or `SUBPARTNER_SHARE.id`, never `USER.id`. The two ledgers remain fully separate; no code path reads one to compute or offset the other.
+- **AD-5 reused unchanged:** every withdrawal create/edit runs inside one DB transaction that also writes an `audit_log` row (actor, timestamp, old value, new value, reason). Every financial-write endpoint requires a client-generated idempotency key with a unique-constraint-backed store. "Delete" is only ever `status: cancelled` plus a linked reversal record — no `DELETE` ever targets a financial table. Reversing a record from a multi-record bundle cascades to every record in that bundle.
+- **AD-6 (new this epic) — `moveWithdrawalToProject()` is one atomic, composable operation:** a single `packages/core` function creates the withdrawal, the money-movement record, and the destination-project investment record together. It accepts and participates in a caller-supplied transaction rather than opening its own, so Story 4.7's multi-destination split (project + person + Available Balance legs in one save) commits or rolls back as a single unit. No other code path may create this specific three-record combination.
+- **AD-10 (new this epic) — concurrent writes to Available Balance never lose an update:** every balance-decrementing mutation takes a row lock (`SELECT ... FOR UPDATE`) on the balance row inside its transaction before checking sufficiency and writing the new value. A Postgres `CHECK` constraint (`balance >= 0`) backstops the row lock; it does not replace it.
+- **AD-2 governs all money/percent math**, via `packages/core/src/decimal-math.ts` — Can Take uses the same largest-remainder split logic already built for Should Pay. No other file performs `+`/`-`/`*` on a monetary value directly, and no `Number()`/`parseFloat` touches money or percentage values outside that module.
+- **AD-3 applies unchanged:** Can Take calculations read the `sharePercent` effective at calculation time and snapshot it onto the withdrawal transaction row — a transaction never recomputes its historical share from current `PARTNER_SHARE`/`SUBPARTNER_SHARE` state.
+- `authorize()`/`authorizeScope()` (AD-1) gates every route in this epic exactly as it did Epics 2 and 3 — no second access-control mechanism; a denied request is 403 with no data body.
+- New tables this epic owns: `withdrawal_transactions` (4.2), `withdrawal_adjustments` (4.3), `money_movements` (4.8), `available_balances` (4.9). All follow existing conventions: UUID v7 ids, `snake_case` columns, domain identifiers mirroring PRD Glossary terms verbatim (`canTake`, `keepForLater`, `extraTaken`, `availableBalance`).
+- Dependency direction is unchanged and lint-enforced: this epic's calculation engine (Can Take, Withdrawal Adjustment, carry-forward, `moveWithdrawalToProject()`) belongs in `packages/core`; `packages/core` imports only `packages/types`, never `packages/db`; Route Handlers never call Drizzle directly for a write, only a `packages/core` service function wrapped in one DB transaction.
+
+## UX & Interaction Patterns
+
+- Withdraw Money is a tabular, per-Project-scoped screen using the same data-table-with-sub-rows pattern as Add Money and Partner Shares (right-aligned numeric columns, Sub-partners one indent level under their Partner with a `↳` prefix, table-foot privacy note).
+- The Share row + Distributed/Allocated check component is reused verbatim for the Withdrawal Destination split screen: a colored dest-icon + label + amount input per destination line (the "Split row" component), with the running total bar reading "Distributed: ₹X / ₹Y ✓" — Save disabled until it matches exactly.
+- Can Take and Withdrawal Adjustment figures need their worked-example hint visible at point of use, not a hover tooltip, matching Should Pay's established pattern.
+- Recording a Take Now triggers a "Where did this money go?" destination-allocation prompt as the very next step in the same flow (Story 4.7), not a separate screen visited later.
+- The Adjust Next Time screen renders Investment and Withdrawal Adjustment as two side-by-side cards (`Adjust person card`, with a resolution chip: `success` "Reduce by ₹X" / `danger` "Add ₹X" / `violet` "Keep for Later ₹X") — never merged, since the two ledgers are independent.
+- Available Balance gets the one gradient "wallet hero" card in the product (diagonal accent→info gradient, the single largest stat value on screen, used exactly once) — reserved for this screen only.
+- The end-to-end money trail (Story 4.10) uses the vertical Trail component with a trace banner ("Trace ID: ...") as the default view, each node a colored dot keyed to its transaction type; the alternate Trail Quick View renders the same data as left-to-right branching boxes (origin → withdrawal → destinations → further splits) — toggled in place, never shown alongside the vertical trail simultaneously. Each Money History entry in a linked chain surfaces a way to jump to related entries.
+- Status chips stay paired with a label + amount, never a bare color dot: `danger` marks a withdrawal event/Pending, `violet` marks Available Balance/Keep for Later/a transfer to a person, `info`/teal marks a cross-project money movement.
+
+## Cross-Story Dependencies
+
+- Within Epic 4, dependencies follow FR ordering: **4.1 (Can Take) → 4.2 (Take Now)** — nothing to record against until Can Take is computed. **4.2 → 4.3 (Adjustment)** — an adjustment needs an actual transaction to compare against Can Take. **4.3 → 4.4 (Carry Forward)** — carry-forward reads the previous cycle's computed adjustment. **4.5 (Extra Withdrawal)** depends on 4.1–4.3's entitlement/adjustment logic existing, since the authorized excess must feed back into Extra Taken and the next cycle's recommendation. **4.6 (Sub-partner)** applies 4.1–4.4's logic one level down, privately, once it's proven at the Partner level. **4.7 (Destination Allocation) → 4.8 (Auto-Linked Movement)** — a destination split naming "another Project" is what `moveWithdrawalToProject()` acts on. **4.7 → 4.9 (Available Balance)** — a destination split naming "Available Balance" is what increments that ledger. **4.10 (Money Trail)** depends on 4.2, 4.7, 4.8, and 4.9 all existing, since it traces the full chain those stories create. **4.11 (Edit/Cancel)** depends on 4.2's transaction + audit_log + idempotency-key foundation, and on 4.8's linked-bundle structure existing first, since cancellation must cascade across that bundle.
+- Epic 4 depends on the whole of Epic 3: it reuses Story 3.3's audit/idempotency/transaction pattern and Story 3.7/3.8's edit/cancel pattern verbatim (Story 4.2 mirrors 3.3, Story 4.11 mirrors 3.7/3.8), and extends AD-4's ledger-per-share pattern established there by adding `withdrawal_adjustments` alongside `investment_adjustments`.
+- Epic 4 also depends on Epic 2's finalized, versioned Partner/Sub-partner Share % (AD-3) for Can Take calculations, and on Epic 2's co-partner privacy boundary for Story 4.6's independence guarantees — no new privacy mechanism is introduced.
+- Story 4.8's auto-created investment record lands in the destination Project's own Add Money history (Epic 3's data model) — a later Epic 3 story touching Add Money history rendering should account for entries that originated as a Story 4.8 movement, not only a directly recorded investment.
