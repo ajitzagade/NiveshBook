@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { FolderKanban } from "lucide-react";
+import { FolderKanban, Plus, Pencil, Percent } from "lucide-react";
 import type { Project } from "@niveshbook/types";
 import {
   Button,
@@ -60,7 +60,10 @@ export default function ProjectsPage() {
         description="Create and edit Projects. Partner Shares are added separately, after the Project exists."
         action={
           <Button asChild>
-            <Link href="/projects/new">+ New Project</Link>
+            <Link href="/projects/new" className="inline-flex items-center gap-1.5">
+              <Plus size={14} />
+              New Project
+            </Link>
           </Button>
         }
       />
@@ -79,7 +82,10 @@ export default function ProjectsPage() {
             description="Create your first Project to start tracking partner investments and withdrawals."
             action={
               <Button asChild>
-                <Link href="/projects/new">+ New Project</Link>
+                <Link href="/projects/new" className="inline-flex items-center gap-1.5">
+                  <Plus size={14} />
+                  New Project
+                </Link>
               </Button>
             }
           />
@@ -100,13 +106,22 @@ export default function ProjectsPage() {
                   <Td className="!text-left">
                     <div className="flex gap-1.5">
                       <Button asChild variant="ghost">
-                        <Link href={`/projects/${project.id}/edit`}>Edit</Link>
+                        <Link href={`/projects/${project.id}/edit`} className="inline-flex items-center gap-1.5">
+                          <Pencil size={14} />
+                          Edit
+                        </Link>
                       </Button>
                       <Button asChild variant="ghost">
-                        <Link href={`/projects/${project.id}/shares`}>Shares</Link>
+                        <Link href={`/projects/${project.id}/shares`} className="inline-flex items-center gap-1.5">
+                          <Percent size={14} />
+                          Shares
+                        </Link>
                       </Button>
                       <Button asChild variant="ghost">
-                        <Link href={`/projects/${project.id}/add-money`}>Add Money</Link>
+                        <Link href={`/projects/${project.id}/add-money`} className="inline-flex items-center gap-1.5">
+                          <Plus size={14} />
+                          Add Money
+                        </Link>
                       </Button>
                     </div>
                   </Td>
