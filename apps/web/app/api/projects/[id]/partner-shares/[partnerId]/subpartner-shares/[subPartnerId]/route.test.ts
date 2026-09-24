@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
-import { PATCH } from "./route";
+import { GET, PATCH } from "./route";
 import { SESSION_COOKIE_NAME } from "@/lib/session";
 
 const findSessionByTokenHash = vi.fn();
@@ -59,6 +59,26 @@ function makePatchRequest(options: { cookie?: string; body?: unknown; rawBody?: 
   );
 }
 
+function makeGetRequest(options: {
+  cookie?: string;
+  subPartnerId?: string;
+  partnerId?: string;
+  projectId?: string;
+}): NextRequest {
+  const {
+    cookie,
+    subPartnerId = SUBPARTNER_ID,
+    partnerId = PARTNER_ID,
+    projectId = PROJECT_ID,
+  } = options;
+  const headers: Record<string, string> = {};
+  if (cookie) headers.Cookie = cookie;
+  return new NextRequest(
+    `http://localhost/api/projects/${projectId}/partner-shares/${partnerId}/subpartner-shares/${subPartnerId}`,
+    { method: "GET", headers },
+  );
+}
+
 function makeContext(
   subPartnerId: string = SUBPARTNER_ID,
   partnerId: string = PARTNER_ID,
@@ -98,6 +118,16 @@ const PARTNER_USER = {
 const SUB_PARTNER_USER = {
   id: "sub-partner-user-1",
   email: "subpartner@niveshbook.test",
+  passwordHash: "hash-should-never-leave-server",
+  role: "sub_partner" as const,
+  active: true,
+  canApproveExtraWithdrawal: false,
+  createdAt: new Date().toISOString(),
+};
+
+const SUB_PARTNER_USER_2 = {
+  id: "sub-partner-user-2",
+  email: "subpartner2@niveshbook.test",
   passwordHash: "hash-should-never-leave-server",
   role: "sub_partner" as const,
   active: true,
@@ -148,6 +178,248 @@ function resetMocks() {
   findLatestBySubPartnerId.mockReset();
   listByPartnerId.mockReset();
 }
+
+describe("GET .../subpartner-shares/[subPartnerId] (Story 2.5)", () => {
+  beforeEach(resetMocks);
+
+  it("returns 401 with no session cookie", async () => {
+    const response = await GET(makeGetRequest({}), makeContext());
+
+    expect(response.status).toBe(401);
+  });
+
+  it("Sub-partner views their own Share -- 200, their own row only", async () => {
+    findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: SUB_PARTNER_USER.id });
+    findUserById.mockResolvedValue(SUB_PARTNER_USER);
+    const own = makeSubShare({ userId: SUB_PARTNER_USER.id });
+    findLatestBySubPartnerId.mockResolvedValue(own);
+
+    const response = await GET(
+      makeGetRequest({ cookie: `${SESSION_COOKIE_NAME}=some-token` }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual(own);
+  });
+
+  it("Sub-partner reaches a different Sub-partner's Share (same Partner) -- 403, no data", async () => {
+    findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: SUB_PARTNER_USER.id });
+    findUserById.mockResolvedValue(SUB_PARTNER_USER);
+    findLatestBySubPartnerId.mockResolvedValue(
+      makeSubShare({ userId: SUB_PARTNER_USER_2.id }),
+    );
+
+    const response = await GET(
+      makeGetRequest({ cookie: `${SESSION_COOKIE_NAME}=some-token` }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body).toEqual({ code: "forbidden", message: expect.any(String) });
+  });
+
+  it("Sub-partner reaches a Sub-partner under a different Partner -- 403, no data", async () => {
+    findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: SUB_PARTNER_USER.id });
+    findUserById.mockResolvedValue(SUB_PARTNER_USER);
+    findLatestByPartnerId.mockResolvedValue(makePartnerShare({ partnerId: OTHER_PARTNER_ID }));
+    findLatestBySubPartnerId.mockResolvedValue(
+      makeSubShare({ partnerId: OTHER_PARTNER_ID, userId: SUB_PARTNER_USER_2.id }),
+    );
+
+    const response = await GET(
+      makeGetRequest({
+        cookie: `${SESSION_COOKIE_NAME}=some-token`,
+        partnerId: OTHER_PARTNER_ID,
+      }),
+      makeContext(SUBPARTNER_ID, OTHER_PARTNER_ID),
+    );
+
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body).toEqual({ code: "forbidden", message: expect.any(String) });
+  });
+
+  it("Owner/Admin views any Sub-partner's Share -- 200, full data, unconditional", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    const share = makeSubShare({ userId: SUB_PARTNER_USER.id });
+    findLatestBySubPartnerId.mockResolvedValue(share);
+
+    const response = await GET(
+      makeGetRequest({ cookie: `${SESSION_COOKIE_NAME}=some-token` }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual(share);
+  });
+
+  it("Parent Partner attempts single-detail view -- 403, list access only, not single-detail", async () => {
+    findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: PARTNER_USER.id });
+    findUserById.mockResolvedValue(PARTNER_USER);
+    findLatestByPartnerId.mockResolvedValue(makePartnerShare({ userId: PARTNER_USER.id }));
+    findLatestBySubPartnerId.mockResolvedValue(makeSubShare({ userId: SUB_PARTNER_USER.id }));
+
+    const response = await GET(
+      makeGetRequest({ cookie: `${SESSION_COOKIE_NAME}=some-token` }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body).toEqual({ code: "forbidden", message: expect.any(String) });
+  });
+
+  it("Sub-partner probes a nonexistent subPartnerId -- 403, not 404, no existence oracle", async () => {
+    findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: SUB_PARTNER_USER.id });
+    findUserById.mockResolvedValue(SUB_PARTNER_USER);
+    findLatestBySubPartnerId.mockResolvedValue(null);
+
+    const response = await GET(
+      makeGetRequest({ cookie: `${SESSION_COOKIE_NAME}=some-token` }),
+      makeContext(UNKNOWN_SUBPARTNER_ID),
+    );
+
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body).toEqual({ code: "forbidden", message: expect.any(String) });
+  });
+
+  it("Sub-partner probes a malformed subPartnerId -- 403, not 404, same uniform response", async () => {
+    findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: SUB_PARTNER_USER.id });
+    findUserById.mockResolvedValue(SUB_PARTNER_USER);
+
+    const response = await GET(
+      makeGetRequest({ cookie: `${SESSION_COOKIE_NAME}=some-token` }),
+      makeContext("not-a-uuid"),
+    );
+
+    expect(response.status).toBe(403);
+    expect(findLatestBySubPartnerId).not.toHaveBeenCalled();
+  });
+
+  it("Sub-partner probes a malformed partnerId -- 403, not 404", async () => {
+    findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: SUB_PARTNER_USER.id });
+    findUserById.mockResolvedValue(SUB_PARTNER_USER);
+
+    const response = await GET(
+      makeGetRequest({ cookie: `${SESSION_COOKIE_NAME}=some-token` }),
+      makeContext(SUBPARTNER_ID, "not-a-uuid"),
+    );
+
+    expect(response.status).toBe(403);
+    expect(findLatestByPartnerId).not.toHaveBeenCalled();
+  });
+
+  it("Sub-partner probes a malformed project id -- 403, not 404", async () => {
+    findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: SUB_PARTNER_USER.id });
+    findUserById.mockResolvedValue(SUB_PARTNER_USER);
+
+    const response = await GET(
+      makeGetRequest({ cookie: `${SESSION_COOKIE_NAME}=some-token` }),
+      makeContext(SUBPARTNER_ID, PARTNER_ID, "not-a-uuid"),
+    );
+
+    expect(response.status).toBe(403);
+    expect(findLatestByPartnerId).not.toHaveBeenCalled();
+  });
+
+  it("Sub-partner probes a partnerId that belongs to a different project than the URL's -- 403, not 404 (resolution-failure branch, not the ownership-denial branch)", async () => {
+    findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: SUB_PARTNER_USER.id });
+    findUserById.mockResolvedValue(SUB_PARTNER_USER);
+    findLatestByPartnerId.mockResolvedValue(makePartnerShare({ projectId: OTHER_PROJECT_ID }));
+
+    const response = await GET(
+      makeGetRequest({ cookie: `${SESSION_COOKIE_NAME}=some-token` }),
+      makeContext(SUBPARTNER_ID, PARTNER_ID, PROJECT_ID),
+    );
+
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body).toEqual({ code: "forbidden", message: expect.any(String) });
+    expect(findLatestBySubPartnerId).not.toHaveBeenCalled();
+  });
+
+  it("Owner/Admin requests a partnerId that belongs to a different project than the URL's -- 404 (existing granular precedent, unchanged)", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    findLatestByPartnerId.mockResolvedValue(makePartnerShare({ projectId: OTHER_PROJECT_ID }));
+
+    const response = await GET(
+      makeGetRequest({ cookie: `${SESSION_COOKIE_NAME}=some-token` }),
+      makeContext(SUBPARTNER_ID, PARTNER_ID, PROJECT_ID),
+    );
+
+    expect(response.status).toBe(404);
+    const body = await response.json();
+    expect(body.code).toBe("not_found");
+    expect(findLatestBySubPartnerId).not.toHaveBeenCalled();
+  });
+
+  it("Sub-partner probes a subPartnerId that belongs to a different partnerId than the URL's -- 403, not 404 (resolution-failure branch, not the ownership-denial branch)", async () => {
+    findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: SUB_PARTNER_USER.id });
+    findUserById.mockResolvedValue(SUB_PARTNER_USER);
+    findLatestBySubPartnerId.mockResolvedValue(makeSubShare({ partnerId: OTHER_PARTNER_ID }));
+
+    const response = await GET(
+      makeGetRequest({ cookie: `${SESSION_COOKIE_NAME}=some-token` }),
+      makeContext(SUBPARTNER_ID, PARTNER_ID, PROJECT_ID),
+    );
+
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body).toEqual({ code: "forbidden", message: expect.any(String) });
+  });
+
+  it("Owner/Admin requests a subPartnerId that belongs to a different partnerId than the URL's -- 404 (existing granular precedent, unchanged)", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    findLatestBySubPartnerId.mockResolvedValue(makeSubShare({ partnerId: OTHER_PARTNER_ID }));
+
+    const response = await GET(
+      makeGetRequest({ cookie: `${SESSION_COOKIE_NAME}=some-token` }),
+      makeContext(SUBPARTNER_ID, PARTNER_ID, PROJECT_ID),
+    );
+
+    expect(response.status).toBe(404);
+    const body = await response.json();
+    expect(body.code).toBe("not_found");
+  });
+
+  it("Owner/Admin requests a nonexistent id -- 404 (existing granular precedent, unchanged)", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    findLatestBySubPartnerId.mockResolvedValue(null);
+
+    const response = await GET(
+      makeGetRequest({ cookie: `${SESSION_COOKIE_NAME}=some-token` }),
+      makeContext(UNKNOWN_SUBPARTNER_ID),
+    );
+
+    expect(response.status).toBe(404);
+    const body = await response.json();
+    expect(body.code).toBe("not_found");
+  });
+
+  it("Owner/Admin requests a malformed id -- 404 (existing granular precedent, unchanged)", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+
+    const response = await GET(
+      makeGetRequest({ cookie: `${SESSION_COOKIE_NAME}=some-token` }),
+      makeContext("not-a-uuid"),
+    );
+
+    expect(response.status).toBe(404);
+    const body = await response.json();
+    expect(body.code).toBe("not_found");
+    expect(findLatestByPartnerId).not.toHaveBeenCalled();
+  });
+});
 
 describe("PATCH .../subpartner-shares/[subPartnerId]", () => {
   beforeEach(resetMocks);

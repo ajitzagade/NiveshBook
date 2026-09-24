@@ -268,6 +268,94 @@ describe("authorize — subpartner_shares:list (Story 2.4, self-access override)
   });
 });
 
+describe("authorize — subpartner_shares:view (Story 2.5, self-access override)", () => {
+  it("allows the linked Sub-partner whose userId matches the target Sub-partner Share's userId", async () => {
+    const users = createFakeUserPort([makeUser({ id: "sub-partner-1", role: "sub_partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "sub-partner-1",
+      "subpartner_shares:view",
+      { ownerId: "sub-partner-1" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("matches self-access case-insensitively (UUIDs are case-insensitive)", async () => {
+    const users = createFakeUserPort([
+      makeUser({ id: "0192f5a0-1111-7000-8000-000000000001", role: "sub_partner" }),
+    ]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "0192f5a0-1111-7000-8000-000000000001",
+      "subpartner_shares:view",
+      { ownerId: "0192F5A0-1111-7000-8000-000000000001" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("denies a different Sub-partner whose userId does not match the target row's userId", async () => {
+    const users = createFakeUserPort([makeUser({ id: "sub-partner-2", role: "sub_partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "sub-partner-2",
+      "subpartner_shares:view",
+      { ownerId: "sub-partner-1" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies the parent Partner viewing a Sub-partner's row via this action -- single-detail access is not granted to the parent Partner (Decisions)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "partner-user-1",
+      "subpartner_shares:view",
+      { ownerId: "sub-partner-1" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies when the target Sub-partner Share has no linked user (ownerId is empty)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "sub-partner-1", role: "sub_partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "sub-partner-1",
+      "subpartner_shares:view",
+      { ownerId: "" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("allows an owner_admin unconditionally, regardless of ownerId", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "owner-1",
+      "subpartner_shares:view",
+      { ownerId: "someone-else" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+});
+
 describe("authorize", () => {
   it("allows an owner_admin to view any single user", async () => {
     const users = createFakeUserPort([

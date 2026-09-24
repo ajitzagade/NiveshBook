@@ -23,7 +23,8 @@ export type Action =
   | "partner_shares:list"
   | "subpartner_shares:create"
   | "subpartner_shares:update"
-  | "subpartner_shares:list";
+  | "subpartner_shares:list"
+  | "subpartner_shares:view";
 
 /**
  * Role -> allowed-actions permission table. All actions here are
@@ -65,6 +66,12 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   "subpartner_shares:create": new Set(["owner_admin"]),
   "subpartner_shares:update": new Set(["owner_admin"]),
   "subpartner_shares:list": new Set(["owner_admin"]),
+  // Story 2.5: single-resource "view your own Sub-partner Share" -- same
+  // all-or-nothing-for-the-role-table shape as the other
+  // `subpartner_shares:*` actions (Owner/Admin unconditionally); the actual
+  // Sub-partner self-access is granted below via `SELF_ACCESS_ACTIONS`, not
+  // by adding `sub_partner` to this Set.
+  "subpartner_shares:view": new Set(["owner_admin"]),
 };
 
 /**
@@ -81,8 +88,19 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
  * `userId` is never a `partner_shares.userId` (different table/column), so
  * this cannot accidentally admit a Sub-partner (Story 2.5's job, untouched
  * here).
+ *
+ * Story 2.5 adds `subpartner_shares:view`: the specific linked Sub-partner
+ * may view their own single Sub-partner Share row (`resourceRef.ownerId` is
+ * the target row's own `userId`) -- the identical single-resource idiom as
+ * `subpartner_shares:list` above, just one level deeper (a Sub-partner's own
+ * row rather than a Partner's whole structure) and matched against the
+ * Sub-partner's own `userId` rather than a Partner's.
  */
-const SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set(["users:view", "subpartner_shares:list"]);
+const SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set([
+  "users:view",
+  "subpartner_shares:list",
+  "subpartner_shares:view",
+]);
 
 /**
  * Actions where `authorizeScope()` additionally allows any actor whose id

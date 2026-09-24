@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import {
   getSession,
+  authorize,
   authorizeScope,
   updateSubPartnerShare,
   InvalidSubPartnerNameError,
@@ -20,6 +21,88 @@ import {
 
 interface RouteContext {
   params: Promise<{ id: string; partnerId: string; subPartnerId: string }>;
+}
+
+/**
+ * Returns a single Sub-partner Share row (Story 2.5). Allowed for
+ * Owner/Admin unconditionally, or the specific linked Sub-partner viewing
+ * their own row (`subShare.userId === session.userId`, via
+ * `authorize()`'s `"subpartner_shares:view"` self-access override) -- never
+ * the parent Partner, never a different Sub-partner (spec-2-5's Decisions:
+ * no single-detail grant for the parent Partner here, they already have
+ * full list access via `GET .../subpartner-shares`).
+ *
+ * Path-segment resolution (project `id` exists, `partnerId` belongs to it,
+ * `subPartnerId` belongs to `partnerId`) runs identically for *every*
+ * caller -- the same chain `PATCH` already uses -- so the response never
+ * reveals which stage failed. What differs is the response on failure:
+ * Owner/Admin gets the existing granular 404 (`subPartnerShareNotFoundResponse()`,
+ * matching `PATCH`'s own precedent of using that response for every
+ * resolution-failure stage); anyone else -- including a non-matching
+ * Sub-partner or the parent Partner -- gets the same uniform 403 used for a
+ * resolution *success* where ownership just doesn't match. This closes
+ * Story 2.4's own review lesson structurally: resolution always runs the
+ * same way, but only an already-privileged caller (Owner/Admin) can turn a
+ * resolution failure into an existence signal -- no unauthorized caller can
+ * ever distinguish "doesn't exist" from "not yours."
+ */
+export async function GET(request: NextRequest, { params }: RouteContext) {
+  const token = readSessionToken(request);
+  const session = await getSession(token, { sessions: createSessionPort() });
+
+  if (!session) {
+    return NextResponse.json(
+      { code: "unauthenticated", message: UNAUTHENTICATED_MESSAGE },
+      { status: 401 },
+    );
+  }
+
+  const userPort = createUserPort();
+  const { id: projectId, partnerId, subPartnerId } = await params;
+
+  const forbidden = () =>
+    NextResponse.json({ code: "forbidden", message: FORBIDDEN_MESSAGE }, { status: 403 });
+
+  const resolutionFailed = async (): Promise<NextResponse> => {
+    const actor = await userPort.findUserById(session.userId);
+    if (actor?.role === "owner_admin") {
+      return subPartnerShareNotFoundResponse();
+    }
+    return forbidden();
+  };
+
+  if (
+    !isValidProjectId(projectId) ||
+    !isValidPartnerId(partnerId) ||
+    !isValidSubPartnerId(subPartnerId)
+  ) {
+    return await resolutionFailed();
+  }
+
+  const partnerSharePort = createPartnerSharePort();
+  const partner = await partnerSharePort.findLatestByPartnerId(partnerId);
+  if (!partner || partner.projectId !== projectId) {
+    return await resolutionFailed();
+  }
+
+  const subPartnerSharePort = createSubPartnerSharePort();
+  const subShare = await subPartnerSharePort.findLatestBySubPartnerId(subPartnerId);
+  if (!subShare || subShare.partnerId !== partnerId) {
+    return await resolutionFailed();
+  }
+
+  const { allowed } = await authorize(
+    session.userId,
+    "subpartner_shares:view",
+    { ownerId: subShare.userId ?? "" },
+    { users: userPort },
+  );
+
+  if (!allowed) {
+    return forbidden();
+  }
+
+  return NextResponse.json(subShare);
 }
 
 /**
