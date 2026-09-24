@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useRef, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
-import Link from "next/link";
+import { Wallet } from "lucide-react";
 import type { InvestmentRequirement, InvestmentTransaction, PaymentMode } from "@niveshbook/types";
 import type { PartnerInvestmentAdjustment, PartnerShouldPayWithRecommended } from "@niveshbook/core";
 import {
@@ -14,10 +14,12 @@ import {
   DialogTitle,
   DialogDescription,
   DistributedCheck,
+  EmptyState,
   Field,
   Helper,
   Input,
   Label,
+  PageHeader,
   ShareList,
   ShareRow,
   StatusChip,
@@ -32,6 +34,7 @@ import {
 import { listInvestmentRequirements, addInvestmentRequirement } from "@/lib/investment-requirements";
 import { getShouldPay } from "@/lib/should-pay";
 import {
+  cancelInvestmentTransaction,
   editInvestmentTransaction,
   listInvestmentTransactions,
   recordInvestmentTransaction,
@@ -78,6 +81,17 @@ interface RecordPaymentTarget {
  * (needed to build the `PATCH` URL and to refresh the right panel on save).
  */
 interface EditPaymentTarget {
+  requirementId: string;
+  transaction: InvestmentTransaction;
+}
+
+/**
+ * Story 3.8: the transaction currently pending confirmation in the Cancel
+ * Payment dialog -- mirrors `EditPaymentTarget`'s exact shape one dialog
+ * over (identified by the specific `transaction` being cancelled, plus the
+ * `requirementId` it belongs to).
+ */
+interface CancelPaymentTarget {
   requirementId: string;
   transaction: InvestmentTransaction;
 }
@@ -192,6 +206,16 @@ export default function AddMoneyPage() {
   const [editFormError, setEditFormError] = useState<string | null>(null);
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editIdempotencyKey, setEditIdempotencyKey] = useState("");
+
+  // Story 3.8: the Cancel Payment confirmation dialog -- no editable fields
+  // (cancelling never changes amount/date/paymentMode/etc.), so this state
+  // is narrower than Record/Edit Payment's -- just the target, an error
+  // slot, a submitting flag, and `cancelIdempotencyKey` following the exact
+  // same mint-once-per-logical-attempt lifecycle as `editIdempotencyKey`.
+  const [cancelPaymentTarget, setCancelPaymentTarget] = useState<CancelPaymentTarget | null>(null);
+  const [cancelFormError, setCancelFormError] = useState<string | null>(null);
+  const [cancelSubmitting, setCancelSubmitting] = useState(false);
+  const [cancelIdempotencyKey, setCancelIdempotencyKey] = useState("");
 
   async function refresh() {
     const result = await listInvestmentRequirements(projectId);
@@ -506,6 +530,61 @@ export default function AddMoneyPage() {
     await Promise.all([refreshTransactions(requirementId), refreshAdjustments(requirementId)]);
   }
 
+  /**
+   * Opens the Cancel Payment confirmation dialog for `transaction` (Story
+   * 3.8, FR42) -- Owner/Admin-facing only, mirroring `openEditPaymentDialog`'s
+   * Decisions one dialog over. A confirmation step precedes the actual
+   * `cancelInvestmentTransaction` call (`handleCancelPaymentConfirm` below)
+   * -- this feels destructive to a user even though nothing is hard-deleted
+   * (a linked reversal record is created instead, FR42).
+   */
+  function openCancelPaymentDialog(requirementId: string, transaction: InvestmentTransaction) {
+    setCancelPaymentTarget({ requirementId, transaction });
+    setCancelFormError(null);
+    // A fresh key for this new logical cancel attempt -- mirrors `editIdempotencyKey`'s own doc comment.
+    setCancelIdempotencyKey(crypto.randomUUID());
+  }
+
+  function closeCancelPaymentDialog() {
+    setCancelPaymentTarget(null);
+  }
+
+  /**
+   * Confirms and performs the cancel (Story 3.8, FR42) -- no form fields to
+   * validate (cancelling never changes amount/date/paymentMode/etc.), so
+   * this is a plain confirm handler, not a form `onSubmit`. No new recompute
+   * call needed here either, for the identical reason `handleEditPaymentSubmit`
+   * needs none: `refreshAdjustments` (the same call Record/Edit Payment
+   * already use) re-fetches Story 3.4's Investment Adjustment, which now
+   * excludes the cancelled amount via the *route's* `filterActiveTransactions`
+   * step -- zero new client-side logic.
+   */
+  async function handleCancelPaymentConfirm() {
+    if (!cancelPaymentTarget) return;
+
+    setCancelFormError(null);
+    setCancelSubmitting(true);
+    try {
+      await cancelInvestmentTransaction(
+        projectId,
+        cancelPaymentTarget.requirementId,
+        cancelPaymentTarget.transaction.id,
+        null,
+        cancelIdempotencyKey,
+      );
+    } catch (err) {
+      setCancelFormError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+      setCancelSubmitting(false);
+      return;
+    }
+
+    setCancelSubmitting(false);
+    const requirementId = cancelPaymentTarget.requirementId;
+    closeCancelPaymentDialog();
+    // Best-effort, mirroring `handleRecordPaymentSubmit`'s identical convention.
+    await Promise.all([refreshTransactions(requirementId), refreshAdjustments(requirementId)]);
+  }
+
   function openAddDialog() {
     setAmount("");
     setRequirementDate("");
@@ -549,19 +628,13 @@ export default function AddMoneyPage() {
 
   return (
     <div>
-      <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <Link href="/projects" className="text-[12.6px] text-ink-soft hover:underline">
-            ← Projects
-          </Link>
-          <h1 className="mt-1 text-[22px]">Add Money</h1>
-          <p className="mt-1 text-[13.4px] text-ink-soft">
-            Create a funding requirement for this Project -- an amount and a date. Every Partner&apos;s
-            Should Pay is calculated from this once their Share % is set.
-          </p>
-        </div>
-        <Button onClick={openAddDialog}>+ New Requirement</Button>
-      </div>
+      <PageHeader
+        backHref="/projects"
+        backLabel="← Projects"
+        title="Add Money"
+        description="Create a funding requirement for this Project -- an amount and a date. Every Partner's Should Pay is calculated from this once their Share % is set."
+        action={<Button onClick={openAddDialog}>+ New Requirement</Button>}
+      />
 
       <Card>
         {state.status === "loading" ? (
@@ -571,14 +644,16 @@ export default function AddMoneyPage() {
             {state.message}
           </p>
         ) : state.requirements.length === 0 ? (
-          <div>
-            <p className="mb-3 text-[13.4px] text-ink-soft">
-              No funding requirements yet. Create the first one to get started.
-            </p>
-            <Button variant="ghost" onClick={openAddDialog}>
-              + New Requirement
-            </Button>
-          </div>
+          <EmptyState
+            icon={<Wallet size={22} />}
+            title="No funding requirements yet"
+            description="Create the first one to get started -- an amount and a date is all it takes."
+            action={
+              <Button variant="ghost" onClick={openAddDialog}>
+                + New Requirement
+              </Button>
+            }
+          />
         ) : (
           <Table>
             <TableHead>
@@ -706,6 +781,9 @@ export default function AddMoneyPage() {
                                         onEdit={(transaction) =>
                                           openEditPaymentDialog(requirement.id, transaction)
                                         }
+                                        onCancel={(transaction) =>
+                                          openCancelPaymentDialog(requirement.id, transaction)
+                                        }
                                       />
 
                                       {partner.subPartners.length > 0 ? (
@@ -758,6 +836,9 @@ export default function AddMoneyPage() {
                                                 )}
                                                 onEdit={(transaction) =>
                                                   openEditPaymentDialog(requirement.id, transaction)
+                                                }
+                                                onCancel={(transaction) =>
+                                                  openCancelPaymentDialog(requirement.id, transaction)
                                                 }
                                               />
                                             </div>
@@ -1033,6 +1114,42 @@ export default function AddMoneyPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      <Dialog
+        open={cancelPaymentTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) closeCancelPaymentDialog();
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>Cancel this payment?</DialogTitle>
+          <DialogDescription>
+            Owner/Admin only. The original record is preserved with a &quot;Cancelled&quot; status and a
+            linked reversal record is created (FR42) -- nothing is deleted, but the amount stops counting
+            toward Paid Now the next time the Adjustment ledger is viewed.
+          </DialogDescription>
+
+          {cancelFormError ? (
+            <p role="alert" className="mt-4 text-[13.4px] text-danger">
+              {cancelFormError}
+            </p>
+          ) : null}
+
+          <div className="mt-4 flex gap-2.5">
+            <Button type="button" onClick={handleCancelPaymentConfirm} disabled={cancelSubmitting}>
+              {cancelSubmitting ? "Cancelling…" : "Confirm Cancel"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={closeCancelPaymentDialog}
+              disabled={cancelSubmitting}
+            >
+              Back
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1106,13 +1223,25 @@ function AdjustmentChip({ adjustment }: { adjustment: AdjustmentChipInfo | null 
  * above). Renders nothing when there's nothing to show (no fetch-state
  * handling here -- `recordedPaymentsFor` already resolves "not loaded yet"
  * to `[]`).
+ *
+ * Story 3.8 (FR42) adds a "Cancelled" `StatusChip` (reusing `packages/ui`'s
+ * component, per this story's Code Map) for any row whose `status` is
+ * already `"cancelled"` -- both the original (now-voided) row and its
+ * linked reversal row show it, since both carry `status: "cancelled"`; the
+ * reversal row is additionally labeled "(reversal)" so the two are never
+ * confused with each other in this list (FR42's "self-explanatory audit
+ * trail"). The "Cancel" affordance itself is hidden entirely for a row
+ * that's already cancelled -- there's nothing left to cancel -- and, like
+ * "Edit", is Owner/Admin-facing only (the API itself gates the rest).
  */
 function RecordedPayments({
   transactions,
   onEdit,
+  onCancel,
 }: {
   transactions: InvestmentTransaction[];
   onEdit: (transaction: InvestmentTransaction) => void;
+  onCancel: (transaction: InvestmentTransaction) => void;
 }) {
   if (transactions.length === 0) {
     return null;
@@ -1124,9 +1253,19 @@ function RecordedPayments({
           <span>{transaction.transactionDate}</span>
           <Amount value={transaction.amount} size="sm" />
           <span>{PAYMENT_MODE_LABELS[transaction.paymentMode]}</span>
+          {transaction.status === "cancelled" ? (
+            <StatusChip variant="danger">
+              Cancelled{transaction.reversalOfTransactionId ? " (reversal)" : ""}
+            </StatusChip>
+          ) : null}
           <Button variant="ghost" onClick={() => onEdit(transaction)}>
             Edit
           </Button>
+          {transaction.status === "active" ? (
+            <Button variant="ghost" onClick={() => onCancel(transaction)}>
+              Cancel
+            </Button>
+          ) : null}
         </div>
       ))}
     </div>
