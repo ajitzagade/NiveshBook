@@ -90,6 +90,13 @@ components:
     height: '44-46px (py-3 vertical padding on the 22px badge)'
     icon-size: '14px'
     icon-label-gap: '12px'
+    # Label color/weight corrected 2026-09-24: shipped as ink-soft/font-medium
+    # (too light to read as primary navigation, and the `active` prop was
+    # never actually wired to the current route so selection never showed).
+    # Enabled-but-not-current now reads at full ink contrast, bold; the
+    # current page additionally gets the accent tint + accent-strong text.
+    label-color: '{colors.ink}, font-weight 600 (was ink-soft, font-weight 500)'
+    active-label-color: '{colors.accent-strong} on {colors.accent-soft} background'
   nav-badge:
     radius: '{rounded.el}'
     size: '22px'
@@ -129,12 +136,15 @@ components:
     # shipped app -- short of a comfortable click target. 11px 18px lands in
     # the 40-44px range without changing font-size, weight, or radius.
     padding: '11px 18px'
+    # Icon convention added 2026-09-24 -- see Brand & Style's "Icons" note.
+    icon: 'lucide-react, 14px, leading (before the label text), 6px gap'
   button-ghost:
     background: '{colors.surface}'
     foreground: '{colors.ink-soft}'
     border: '{colors.border}'
     radius: '{rounded.el}'
     padding: '11px 18px'
+    icon: 'lucide-react, 14px, leading (before the label text), 6px gap'
   page-header:
     # Added 2026-09-24, extracted from a pattern every real screen (Projects,
     # Partner Shares, Add Money, Edit Project) had already independently
@@ -163,7 +173,9 @@ components:
 
 ## Brand & Style
 
-NiveshBook is the plain-English record of real money moving between real partners. The confirmed visual direction (`imports/founder-mockup.html`) is unfussy SaaS-dashboard: a soft grey-blue canvas, white cards with a light shadow for depth (not borders alone), a confident mid-blue accent, and five semantic colors doing real work rather than decoration -- every color in the palette maps to a specific transaction or adjustment meaning, never used as pure ornament. The mockup's own restraint is the brand: no gradients except one deliberate one (Available Balance's hero card), no decorative icons, system fonts throughout, numbers always tabular so they don't jitter.
+NiveshBook is the plain-English record of real money moving between real partners. The confirmed visual direction (`imports/founder-mockup.html`) is unfussy SaaS-dashboard: a soft grey-blue canvas, white cards with a light shadow for depth (not borders alone), a confident mid-blue accent, and five semantic colors doing real work rather than decoration -- every color in the palette maps to a specific transaction or adjustment meaning, never used as pure ornament. The mockup's own restraint is the brand: no gradients except one deliberate one (Available Balance's hero card), system fonts throughout, numbers always tabular so they don't jitter.
+
+**Icons (revised 2026-09-24)** — the mockup itself has none (it's a static prototype using literal glyphs like "+"/"←"), and this doc originally carried that forward as "no decorative icons." The real product overrides this: every `Button` and `PageHeader` back-link gets a matched `lucide-react` icon (14px for buttons, 12px for the back-arrow) alongside its text label -- never icon-only, never a unicode glyph (⌂ ▤ % + ←). Icons stay semantic, not decorative: `Plus` for create actions, `Pencil` for edit, `X`/`ArrowLeft` for cancel/back, `Save` for submit, `Ban` for a destructive cancel-payment confirmation, entity-specific icons (`UserPlus`, `Wallet`, `Percent`) where one exists. See `{components.button}`.
 
 The component set is dashboard/table-heavy (Partner Shares, Add Money, Money History are all tabular), which matches PRD §6's allowance for genuinely tabular data while still banning *complex nested* tables and multi-chart clutter -- the mockup holds to this: one table per card, sub-rows indented once (never twice), one hero number per screen at most.
 
@@ -212,8 +224,8 @@ Two radii cover the whole surface: `{rounded.card}` (14px) for cards, stat tiles
 - **Trail (vertical)** — a left-bordered vertical timeline, each node a small colored dot (`{colors}` per the node's transaction type, not a fixed color) + a what/meta/amount row. Paired with a **trace banner** above it (muted `surface-alt` bar showing "Trace ID: X" + an `info`-chip link) when viewing a specific money trail. This is the default/primary trail pattern.
 - **Trail Quick View (horizontal branching)** — an alternate, expanded rendering of the same trail data as boxes connected by lines, arranged left-to-right in generations (origin → withdrawal → its direct destinations → any of those destinations' own further splits), so a viewer sees the branching shape at a glance instead of reading a flat chronological list. Each box uses `{components.trail-branch}` — white card, `{rounded.card}`, a 3px left border colored per `{colors}` for that node's transaction type (same color mapping as the vertical trail's dots). Toggled via the existing "Trail Quick View" control next to Money History's trail (`DESIGN.md.Do's and Don'ts`: still one hero visualization per screen — this replaces the vertical trail in place when active, it doesn't add a second one alongside it).
 - **Report tile** — colored icon badge (30px, radius `el`) + name + one-line description, in the 3-up report grid.
-- **Button** — `primary` (accent fill, white text) and `ghost` (white fill, border, `ink-soft` text) only; both `{rounded.el}`, `11px 18px` padding (corrected 2026-09-24 from `9px 15px` — see `{components.button-primary}`), weight 650.
-- **Nav badge** — 22px square, `{rounded.el}`, colored per the mapping in frontmatter — 5 of 9 items get a semantic color, the rest (Home, Adjust Next Time, Money History, Reports) are neutral slate `#475569`. Real build uses `lucide-react` icons at **14px** (corrected 2026-09-24 from an unintentional 12px) inside the fixed 22px badge, `12px` gap to the label, `44-46px` nav-item row height (`{components.nav-item}`) — covers all 9 semantically: Home, LayoutGrid, Percent, Plus, Minus, Wallet, RotateCcw, History, BarChart3.
+- **Button** — `primary` (accent fill, white text) and `ghost` (white fill, border, `ink-soft` text) only; both `{rounded.el}`, `11px 18px` padding (corrected 2026-09-24 from `9px 15px` — see `{components.button-primary}`), weight 650. Every button carries a leading `lucide-react` icon (2026-09-24, see Brand & Style's "Icons" note and `{components.button-primary.icon}`) — never text-only, never a `+`/`←` literal character.
+- **Nav badge** — 22px square, `{rounded.el}`, colored per the mapping in frontmatter — 5 of 9 items get a semantic color, the rest (Home, Adjust Next Time, Money History, Reports) are neutral slate `#475569`. Real build uses `lucide-react` icons at **14px** (corrected 2026-09-24 from an unintentional 12px) inside the fixed 22px badge, `12px` gap to the label, `44-46px` nav-item row height (`{components.nav-item}`) — covers all 9 semantically: Home, LayoutGrid, Percent, Plus, Minus, Wallet, RotateCcw, History, BarChart3. Label is `ink`/semibold when enabled, `accent-strong` on `accent-soft` when the current route matches it (corrected 2026-09-24 — shipped too light, and selection never actually rendered because `active` was never wired to the route).
 - **Logo / brand mark** (added 2026-09-24, `packages/ui`'s `Logo`) — the mockup's `.brand-mark`: a 2x2 grid of 9px squares (2px gap, 3px radius each) in `accent`/`success`/`info`/`amber`, in that exact order. This existed in the source mockup from the start but was never actually built into the real app (only the "NiveshBook" wordmark was) — now used next to the wordmark on the login screen and the sidebar, everywhere the wordmark appears.
 - **Page header** (added 2026-09-24, `packages/ui`'s `PageHeader`) — every screen's title block: optional back-link, 22px `h1`, optional 13.4px description, right-aligned primary action. Extracted from a pattern four screens had already implemented independently and identically — use this component for any new screen's header rather than reimplementing the div/h1/p/button shape inline (`{components.page-header}`).
 - **Empty state** (added 2026-09-24, `packages/ui`'s `EmptyState`) — the "nothing here yet" pattern for any list screen: centered icon (lucide, 22px, in a 48px `surface-alt` circle) + 14.5px heading + optional 13px description (max-width 360px) + optional primary action, `48px` vertical padding. Replaces a bare sentence of text as the empty-state treatment for Projects, Partner Shares, Add Money, and any future list screen (`{components.empty-state}`).
@@ -234,5 +246,5 @@ Two radii cover the whole surface: `{rounded.card}` (14px) for cards, stat tiles
 | Use `packages/ui`'s `PageHeader` for every screen's title block | Re-implement the title/description/action header markup inline per page |
 | Use `packages/ui`'s `EmptyState` for a list screen with nothing in it yet | Ship a bare sentence of text as an empty state |
 | Fix a spacing/sizing inconsistency at the token or shared-component level (`tokens.css`, `packages/ui`) | Patch one page's CSS in isolation, leaving the same value wrong everywhere else |
-| Use `lucide-react` icons matched to the mockup's badge colors | Ship literal unicode glyphs (⌂ ▤ %) as the production icon set |
+| Use `lucide-react` icons matched to the mockup's badge colors, and on every `Button` (2026-09-24) | Ship literal unicode glyphs (⌂ ▤ % + ←) as the production icon or button-decoration set |
 | Measure a new fixed-size/padding/spacing value in `packages/ui` against an actual build (computed style, not a screenshot glance) before calling it done | Assume a Tailwind class compiled correctly just because the className string is correct in source — see AGENTS.md's "UI build gotchas": `packages/ui` is consumed as raw source, and a class used only there can silently generate no CSS at all |

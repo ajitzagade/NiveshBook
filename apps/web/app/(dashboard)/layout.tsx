@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Logo, NavItem, NAV_BADGE_COLOR } from "@niveshbook/ui";
+import { Logo } from "@niveshbook/ui";
 import {
   Home,
   LayoutGrid,
@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { requireOwnerAdminSession } from "@/lib/session-guard";
 import { getClientConfig } from "@/lib/client-config";
+import { SidebarNav, type SidebarNavItem } from "./SidebarNav";
 
 // Guards every route in this group with a live, owner_admin session (via
 // `requireOwnerAdminSession()`) on every request — never statically cached.
@@ -22,23 +23,26 @@ const ICON_SIZE = 14;
 
 /**
  * The fixed sidebar's 9 items, per NFR18 (`EXPERIENCE.md`'s Information
- * Architecture table) and `DESIGN.md`'s nav-badge mapping. This story
- * builds the full shell: all 9 render (Owner/Admin is authorized for all of
- * them — rendering isn't the "unauthorized item" case EXPERIENCE.md
- * forbids, that's about role, not build-completeness). Only Home and
- * Projects get a real `href` — the rest render icon+label with no
- * destination (inert, not a dead link) until their epics land.
+ * Architecture table) and `DESIGN.md`'s nav-badge mapping. All 9 render
+ * (Owner/Admin is authorized for all of them — rendering isn't the
+ * "unauthorized item" case EXPERIENCE.md forbids, that's about role, not
+ * build-completeness).
+ *
+ * Partner Shares and Add Money's own screens are Project-scoped
+ * (`/projects/[id]/shares`, `/projects/[id]/add-money`) and their epics
+ * (2, 3) are done, but there's no "current project" concept yet for the
+ * sidebar to jump straight into one -- so both link to the Projects list
+ * (2026-09-24 decision) rather than staying permanently inert now that
+ * their features exist. `SidebarNav` still highlights them correctly when
+ * you're actually on a Project's own Shares/Add Money page, independent of
+ * this link target. The rest render icon+label with no destination (inert,
+ * not a dead link) until their epics (4, 5) land.
  */
-const NAV_ITEMS: ReadonlyArray<{
-  key: keyof typeof NAV_BADGE_COLOR;
-  label: string;
-  icon: ReactNode;
-  href?: string;
-}> = [
+const NAV_ITEMS: readonly SidebarNavItem[] = [
   { key: "home", label: "Home", icon: <Home size={ICON_SIZE} />, href: "/home" },
   { key: "projects", label: "Projects", icon: <LayoutGrid size={ICON_SIZE} />, href: "/projects" },
-  { key: "partnerShares", label: "Partner Shares", icon: <Percent size={ICON_SIZE} /> },
-  { key: "addMoney", label: "Add Money", icon: <Plus size={ICON_SIZE} /> },
+  { key: "partnerShares", label: "Partner Shares", icon: <Percent size={ICON_SIZE} />, href: "/projects" },
+  { key: "addMoney", label: "Add Money", icon: <Plus size={ICON_SIZE} />, href: "/projects" },
   { key: "withdrawMoney", label: "Withdraw Money", icon: <Minus size={ICON_SIZE} /> },
   { key: "availableBalance", label: "Available Balance", icon: <Wallet size={ICON_SIZE} /> },
   { key: "adjustNextTime", label: "Adjust Next Time", icon: <RotateCcw size={ICON_SIZE} /> },
@@ -66,17 +70,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
           <Logo />
           <span className="text-[15px] font-bold tracking-tight text-ink">{appName}</span>
         </div>
-        <nav className="flex flex-col gap-0.5">
-          {NAV_ITEMS.map((item) => (
-            <NavItem
-              key={item.key}
-              icon={item.icon}
-              badgeColor={NAV_BADGE_COLOR[item.key]}
-              label={item.label}
-              href={item.href}
-            />
-          ))}
-        </nav>
+        <SidebarNav items={NAV_ITEMS} />
       </aside>
       <main className="max-w-[1020px] px-9 py-7 pb-16 max-[860px]:px-4 max-[860px]:py-5">
         {children}

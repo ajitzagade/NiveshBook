@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import Link from "next/link";
+import { LayoutDashboard } from "lucide-react";
 import { getSession, listSessions } from "@niveshbook/core";
 import { createSessionPort } from "@niveshbook/db";
 import { Button, Card, Logo } from "@niveshbook/ui";
@@ -48,7 +49,10 @@ export default async function HomePage() {
           <p className="text-[14px] text-ink">You&apos;re logged in.</p>
           <div className="mt-3 flex gap-2.5">
             <Button asChild>
-              <Link href="/home">Go to dashboard</Link>
+              <Link href="/home" className="inline-flex items-center gap-1.5">
+                <LayoutDashboard size={14} />
+                Go to dashboard
+              </Link>
             </Button>
             <LogoutButton />
           </div>

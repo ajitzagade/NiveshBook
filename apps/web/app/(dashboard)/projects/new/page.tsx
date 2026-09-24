@@ -2,7 +2,8 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Card, Field, FieldHint, Input, Label, PageHeader, Textarea } from "@niveshbook/ui";
+import { Save, X } from "lucide-react";
+import { Button, Card, Field, FieldHint, Input, Label, PageHeader, Textarea, toast } from "@niveshbook/ui";
 import { createProject } from "@/lib/projects";
 
 /**
@@ -24,6 +25,7 @@ export default function NewProjectPage() {
     setSubmitting(true);
     try {
       await createProject({ name, description: description.trim() ? description : null });
+      toast.success(`Project "${name}" created`);
       router.push("/projects");
       router.refresh();
     } catch (err) {
@@ -72,7 +74,7 @@ export default function NewProjectPage() {
           ) : null}
 
           <div className="flex gap-2.5">
-            <Button type="submit" disabled={submitting}>
+            <Button type="submit" disabled={submitting} icon={<Save size={14} />}>
               {submitting ? "Saving…" : "Save Project"}
             </Button>
             <Button
@@ -80,6 +82,7 @@ export default function NewProjectPage() {
               variant="ghost"
               onClick={() => router.push("/projects")}
               disabled={submitting}
+              icon={<X size={14} />}
             >
               Cancel
             </Button>

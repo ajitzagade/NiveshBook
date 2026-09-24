@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useRef, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
-import { Wallet } from "lucide-react";
+import { Wallet, Plus, ChevronUp, Calculator, Save, X, Ban, ArrowLeft, Pencil } from "lucide-react";
 import type { InvestmentRequirement, InvestmentTransaction, PaymentMode } from "@niveshbook/types";
 import type { PartnerInvestmentAdjustment, PartnerShouldPayWithRecommended } from "@niveshbook/core";
 import {
@@ -29,6 +29,8 @@ import {
   TableRow,
   Th,
   Td,
+  toast,
+  formatAmount,
   type StatusChipVariant,
 } from "@niveshbook/ui";
 import { listInvestmentRequirements, addInvestmentRequirement } from "@/lib/investment-requirements";
@@ -447,6 +449,7 @@ export default function AddMoneyPage() {
         },
         recordIdempotencyKey,
       );
+      toast.success(`${formatAmount(recordAmount)} recorded for ${recordPaymentTarget.personName}`);
     } catch (err) {
       setRecordFormError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
       setRecordSubmitting(false);
@@ -517,6 +520,7 @@ export default function AddMoneyPage() {
         },
         editIdempotencyKey,
       );
+      toast.success(`Payment updated to ${formatAmount(editAmount)}`);
     } catch (err) {
       setEditFormError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
       setEditSubmitting(false);
@@ -572,6 +576,7 @@ export default function AddMoneyPage() {
         null,
         cancelIdempotencyKey,
       );
+      toast.success("Payment cancelled");
     } catch (err) {
       setCancelFormError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
       setCancelSubmitting(false);
@@ -603,6 +608,7 @@ export default function AddMoneyPage() {
     setSubmitting(true);
     try {
       await addInvestmentRequirement(projectId, { amount, requirementDate });
+      toast.success(`Funding requirement of ${formatAmount(amount)} created for ${requirementDate}`);
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
       setSubmitting(false);
@@ -630,10 +636,14 @@ export default function AddMoneyPage() {
     <div>
       <PageHeader
         backHref="/projects"
-        backLabel="← Projects"
+        backLabel="Projects"
         title="Add Money"
         description="Create a funding requirement for this Project -- an amount and a date. Every Partner's Should Pay is calculated from this once their Share % is set."
-        action={<Button onClick={openAddDialog}>+ New Requirement</Button>}
+        action={
+          <Button onClick={openAddDialog} icon={<Plus size={14} />}>
+            New Requirement
+          </Button>
+        }
       />
 
       <Card>
@@ -649,8 +659,8 @@ export default function AddMoneyPage() {
             title="No funding requirements yet"
             description="Create the first one to get started -- an amount and a date is all it takes."
             action={
-              <Button variant="ghost" onClick={openAddDialog}>
-                + New Requirement
+              <Button variant="ghost" onClick={openAddDialog} icon={<Plus size={14} />}>
+                New Requirement
               </Button>
             }
           />
@@ -681,6 +691,7 @@ export default function AddMoneyPage() {
                           variant="ghost"
                           aria-expanded={expanded}
                           onClick={() => toggleShouldPay(requirement.id)}
+                          icon={expanded ? <ChevronUp size={14} /> : <Calculator size={14} />}
                         >
                           {expanded ? "Hide" : "Should Pay"}
                         </Button>
@@ -768,6 +779,7 @@ export default function AddMoneyPage() {
                                               partner.name,
                                             )
                                           }
+                                          icon={<Wallet size={14} />}
                                         >
                                           Record Payment
                                         </Button>
@@ -824,6 +836,7 @@ export default function AddMoneyPage() {
                                                       sub.name,
                                                     )
                                                   }
+                                                  icon={<Wallet size={14} />}
                                                 >
                                                   Record Payment
                                                 </Button>
@@ -911,10 +924,16 @@ export default function AddMoneyPage() {
             ) : null}
 
             <div className="flex gap-2.5">
-              <Button type="submit" disabled={submitting}>
+              <Button type="submit" disabled={submitting} icon={<Save size={14} />}>
                 {submitting ? "Saving…" : "Save"}
               </Button>
-              <Button type="button" variant="ghost" onClick={closeDialog} disabled={submitting}>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={closeDialog}
+                disabled={submitting}
+                icon={<X size={14} />}
+              >
                 Cancel
               </Button>
             </div>
@@ -1003,7 +1022,7 @@ export default function AddMoneyPage() {
             ) : null}
 
             <div className="flex gap-2.5">
-              <Button type="submit" disabled={recordSubmitting}>
+              <Button type="submit" disabled={recordSubmitting} icon={<Save size={14} />}>
                 {recordSubmitting ? "Saving…" : "Save"}
               </Button>
               <Button
@@ -1011,6 +1030,7 @@ export default function AddMoneyPage() {
                 variant="ghost"
                 onClick={closeRecordPaymentDialog}
                 disabled={recordSubmitting}
+                icon={<X size={14} />}
               >
                 Cancel
               </Button>
@@ -1099,7 +1119,7 @@ export default function AddMoneyPage() {
             ) : null}
 
             <div className="flex gap-2.5">
-              <Button type="submit" disabled={editSubmitting}>
+              <Button type="submit" disabled={editSubmitting} icon={<Save size={14} />}>
                 {editSubmitting ? "Saving…" : "Save"}
               </Button>
               <Button
@@ -1107,6 +1127,7 @@ export default function AddMoneyPage() {
                 variant="ghost"
                 onClick={closeEditPaymentDialog}
                 disabled={editSubmitting}
+                icon={<X size={14} />}
               >
                 Cancel
               </Button>
@@ -1136,7 +1157,12 @@ export default function AddMoneyPage() {
           ) : null}
 
           <div className="mt-4 flex gap-2.5">
-            <Button type="button" onClick={handleCancelPaymentConfirm} disabled={cancelSubmitting}>
+            <Button
+              type="button"
+              onClick={handleCancelPaymentConfirm}
+              disabled={cancelSubmitting}
+              icon={<Ban size={14} />}
+            >
               {cancelSubmitting ? "Cancelling…" : "Confirm Cancel"}
             </Button>
             <Button
@@ -1144,6 +1170,7 @@ export default function AddMoneyPage() {
               variant="ghost"
               onClick={closeCancelPaymentDialog}
               disabled={cancelSubmitting}
+              icon={<ArrowLeft size={14} />}
             >
               Back
             </Button>
@@ -1263,12 +1290,12 @@ function RecordedPayments({
             </StatusChip>
           ) : null}
           {transaction.status === "active" ? (
-            <Button variant="ghost" onClick={() => onEdit(transaction)}>
+            <Button variant="ghost" onClick={() => onEdit(transaction)} icon={<Pencil size={12} />}>
               Edit
             </Button>
           ) : null}
           {transaction.status === "active" ? (
-            <Button variant="ghost" onClick={() => onCancel(transaction)}>
+            <Button variant="ghost" onClick={() => onCancel(transaction)} icon={<Ban size={12} />}>
               Cancel
             </Button>
           ) : null}

@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { LogIn } from "lucide-react";
 import { Button, Field, Input, Label } from "@niveshbook/ui";
 
 export function LoginForm() {
@@ -73,7 +74,7 @@ export function LoginForm() {
         </p>
       ) : null}
 
-      <Button type="submit" disabled={submitting} className="w-full">
+      <Button type="submit" disabled={submitting} icon={<LogIn size={14} />} className="w-full">
         {submitting ? "Logging in…" : "Log in"}
       </Button>
     </form>

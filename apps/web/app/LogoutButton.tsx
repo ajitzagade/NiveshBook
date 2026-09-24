@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { LogOut } from "lucide-react";
 import { Button } from "@niveshbook/ui";
 
 export function LogoutButton() {
@@ -29,7 +30,7 @@ export function LogoutButton() {
           {error}
         </p>
       ) : null}
-      <Button type="button" variant="ghost" onClick={handleLogout} disabled={submitting}>
+      <Button type="button" variant="ghost" onClick={handleLogout} disabled={submitting} icon={<LogOut size={14} />}>
         {submitting ? "Logging out…" : "Log out"}
       </Button>
     </div>

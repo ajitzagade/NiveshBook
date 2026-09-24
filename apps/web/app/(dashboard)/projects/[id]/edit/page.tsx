@@ -2,7 +2,8 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Button, Card, Field, FieldHint, Input, Label, PageHeader, Textarea } from "@niveshbook/ui";
+import { Save, X } from "lucide-react";
+import { Button, Card, Field, FieldHint, Input, Label, PageHeader, Textarea, toast } from "@niveshbook/ui";
 import { getProject, updateProject } from "@/lib/projects";
 
 type LoadState =
@@ -58,6 +59,7 @@ export default function EditProjectPage() {
     setSubmitting(true);
     try {
       await updateProject(id, { name, description: description.trim() ? description : null });
+      toast.success(`Project "${name}" updated`);
       router.push("/projects");
       router.refresh();
     } catch (err) {
@@ -126,7 +128,7 @@ export default function EditProjectPage() {
           ) : null}
 
           <div className="flex gap-2.5">
-            <Button type="submit" disabled={submitting}>
+            <Button type="submit" disabled={submitting} icon={<Save size={14} />}>
               {submitting ? "Saving…" : "Save Changes"}
             </Button>
             <Button
@@ -134,6 +136,7 @@ export default function EditProjectPage() {
               variant="ghost"
               onClick={() => router.push("/projects")}
               disabled={submitting}
+              icon={<X size={14} />}
             >
               Cancel
             </Button>

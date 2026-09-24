@@ -47,8 +47,8 @@ export function NavItem({ icon, badgeColor, label, active, onClick, href }: NavI
   );
 
   const className = cn(
-    "flex w-full items-center gap-3 rounded-el px-[9px] py-3 text-left text-[13.6px] font-medium",
-    active ? "bg-accent-soft text-accent-strong" : "text-ink-soft hover:bg-surface-alt",
+    "flex w-full items-center gap-3 rounded-el px-[9px] py-3 text-left text-[13.6px] font-semibold",
+    active ? "bg-accent-soft text-accent-strong" : "text-ink hover:bg-surface-alt",
   );
 
   if (href) {

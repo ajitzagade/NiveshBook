@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
-import { Percent } from "lucide-react";
+import { Percent, UserPlus, Pencil, Users, ChevronUp, Save, X } from "lucide-react";
 import type { PartnerShare, SubPartnerShare } from "@niveshbook/types";
 import {
   Button,
@@ -21,6 +21,7 @@ import {
   PageHeader,
   ShareList,
   ShareRow,
+  toast,
 } from "@niveshbook/ui";
 import { listPartnerShares, addPartnerShare, updatePartnerShare } from "@/lib/partner-shares";
 import {
@@ -341,6 +342,7 @@ export default function PartnerSharesPage() {
           subPartnerVisibilityGrant,
         });
         await refresh();
+        toast.success(`${name} added with a ${formatSharePercent(sharePercent)}% share`);
       } else if (dialog.mode === "edit") {
         await updatePartnerShare(projectId, dialog.partnerId, {
           name,
@@ -349,9 +351,11 @@ export default function PartnerSharesPage() {
           subPartnerVisibilityGrant,
         });
         await refresh();
+        toast.success(`${name}'s share updated to ${formatSharePercent(sharePercent)}%`);
       } else if (dialog.mode === "add-sub") {
         await addSubPartnerShare(projectId, dialog.partnerId, { name, sharePercent, linkedUserEmail });
         await refreshSubShares(dialog.partnerId);
+        toast.success(`${name} added as a Sub-partner with a ${formatSharePercent(sharePercent)}% share`);
       } else {
         await updateSubPartnerShare(projectId, dialog.partnerId, dialog.subPartnerId, {
           name,
@@ -359,6 +363,7 @@ export default function PartnerSharesPage() {
           linkedUserEmail,
         });
         await refreshSubShares(dialog.partnerId);
+        toast.success(`${name}'s share updated to ${formatSharePercent(sharePercent)}%`);
       }
       // Refresh before closing the dialog -- if this throws, the `catch`
       // below sets `formError`, which must still render inside the (still
@@ -389,10 +394,14 @@ export default function PartnerSharesPage() {
     <div>
       <PageHeader
         backHref="/projects"
-        backLabel="← Projects"
+        backLabel="Projects"
         title="Partner Shares"
         description="Add Partners with a Share % of this Project. The total is checked against 100%, but you can save at any point -- Partners are often added over time."
-        action={<Button onClick={openAddDialog}>+ Add Partner</Button>}
+        action={
+          <Button onClick={openAddDialog} icon={<UserPlus size={14} />}>
+            Add Partner
+          </Button>
+        }
       />
 
       <Card>
@@ -408,8 +417,8 @@ export default function PartnerSharesPage() {
             title="No Partner Shares yet"
             description="Add the first Partner and their Share % to start tracking this Project's ownership."
             action={
-              <Button variant="ghost" onClick={openAddDialog}>
-                + Add Partner
+              <Button variant="ghost" onClick={openAddDialog} icon={<UserPlus size={14} />}>
+                Add Partner
               </Button>
             }
           />
@@ -430,13 +439,14 @@ export default function PartnerSharesPage() {
                     }
                     action={
                       <div className="flex gap-1.5">
-                        <Button variant="ghost" onClick={() => openEditDialog(share)}>
+                        <Button variant="ghost" onClick={() => openEditDialog(share)} icon={<Pencil size={14} />}>
                           Edit
                         </Button>
                         <Button
                           variant="ghost"
                           aria-expanded={expanded}
                           onClick={() => toggleExpanded(share.partnerId)}
+                          icon={expanded ? <ChevronUp size={14} /> : <Users size={14} />}
                         >
                           {expanded ? "Hide" : "Sub-partners"}
                         </Button>
@@ -473,6 +483,7 @@ export default function PartnerSharesPage() {
                                     <Button
                                       variant="ghost"
                                       onClick={() => openEditSubDialog(share.partnerId, subShare)}
+                                      icon={<Pencil size={14} />}
                                     >
                                       Edit
                                     </Button>
@@ -491,8 +502,12 @@ export default function PartnerSharesPage() {
                           </p>
 
                           <div>
-                            <Button variant="ghost" onClick={() => openAddSubDialog(share.partnerId)}>
-                              + Add Sub-partner
+                            <Button
+                              variant="ghost"
+                              onClick={() => openAddSubDialog(share.partnerId)}
+                              icon={<UserPlus size={14} />}
+                            >
+                              Add Sub-partner
                             </Button>
                           </div>
 
@@ -591,10 +606,20 @@ export default function PartnerSharesPage() {
             ) : null}
 
             <div className="flex gap-2.5">
-              <Button type="submit" disabled={submitting || linkedUserEmailPending}>
+              <Button
+                type="submit"
+                disabled={submitting || linkedUserEmailPending}
+                icon={<Save size={14} />}
+              >
                 {submitting ? "Saving…" : "Save"}
               </Button>
-              <Button type="button" variant="ghost" onClick={closeDialog} disabled={submitting}>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={closeDialog}
+                disabled={submitting}
+                icon={<X size={14} />}
+              >
                 Cancel
               </Button>
             </div>

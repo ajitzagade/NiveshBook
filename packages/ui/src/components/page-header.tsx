@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ArrowLeft } from "lucide-react";
 import { cn } from "../lib/cn";
 
 export interface PageHeaderProps {
@@ -32,8 +33,12 @@ export function PageHeader({
     <div className={cn("mb-6 flex flex-wrap items-start justify-between gap-4", className)}>
       <div>
         {backHref ? (
-          <a href={backHref} className="text-[12.6px] text-ink-soft hover:underline">
-            {backLabel ?? "← Back"}
+          <a
+            href={backHref}
+            className="inline-flex items-center gap-1 text-[12.6px] text-ink-soft hover:underline"
+          >
+            <ArrowLeft size={12} />
+            {backLabel ?? "Back"}
           </a>
         ) : null}
         <h1 className={cn("text-[22px]", backHref ? "mt-1" : undefined)}>{title}</h1>

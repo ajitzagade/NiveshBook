@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { LayoutDashboard } from "lucide-react";
+import { LayoutDashboard, LayoutGrid } from "lucide-react";
 import { Button, Card, EmptyState, PageHeader } from "@niveshbook/ui";
 import { LogoutButton } from "../../LogoutButton";
 
@@ -20,7 +20,10 @@ export default function DashboardHomePage() {
           description="Once you create a Project and add Partner Shares, an overview of money added, withdrawn, and pending will appear here."
           action={
             <Button asChild variant="ghost">
-              <Link href="/projects">Go to Projects</Link>
+              <Link href="/projects" className="inline-flex items-center gap-1.5">
+                <LayoutGrid size={14} />
+                Go to Projects
+              </Link>
             </Button>
           }
         />
