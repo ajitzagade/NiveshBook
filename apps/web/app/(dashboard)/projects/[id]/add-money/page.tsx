@@ -4,7 +4,7 @@ import { Fragment, useEffect, useRef, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import type { InvestmentRequirement, InvestmentTransaction, PaymentMode } from "@niveshbook/types";
-import type { PartnerInvestmentAdjustment, PartnerShouldPay } from "@niveshbook/core";
+import type { PartnerInvestmentAdjustment, PartnerShouldPayWithRecommended } from "@niveshbook/core";
 import {
   Amount,
   Button,
@@ -45,7 +45,7 @@ type ListState =
 type ShouldPayState =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "loaded"; partners: PartnerShouldPay[] };
+  | { status: "loaded"; partners: PartnerShouldPayWithRecommended[] };
 
 type TransactionsState =
   | { status: "loading" }
@@ -103,6 +103,7 @@ function formatSharePercent(raw: string): string {
   }
   return raw.replace(/0+$/, "").replace(/\.$/, "");
 }
+
 
 /**
  * Add Money page (Story 3.1): one page per Project, listing every funding
@@ -567,6 +568,16 @@ export default function AddMoneyPage() {
                                           Own: <Amount value={partner.ownShouldPay} size="sm" />
                                         </p>
                                       ) : null}
+                                      {partner.recommendedAmount !== undefined ? (
+                                        // Story 3.5: carry-forward from the previous round's Pending/
+                                        // Extra Paid -- shown alongside the plain Should Pay above
+                                        // (never in place of it). `mergeRecommendedAmounts` (packages/core)
+                                        // already leaves this `undefined` when it numerically equals the
+                                        // plain Should Pay, so no client-side comparison is needed here.
+                                        <p className="ml-1 mt-1 text-[12.6px] font-semibold text-ink-soft">
+                                          Recommended: <Amount value={partner.recommendedAmount} size="sm" />
+                                        </p>
+                                      ) : null}
                                       <p className="ml-1 mt-1 text-[11.6px] text-ink-faint">
                                         Share {formatSharePercent(partner.sharePercent)}% means if the
                                         project needs <Amount value={requirement.amount} size="sm" />,{" "}
@@ -625,6 +636,11 @@ export default function AddMoneyPage() {
                                                   )}
                                                 />
                                               </div>
+                                              {sub.recommendedAmount !== undefined ? (
+                                                <p className="ml-1 mt-1 text-[12.6px] font-semibold text-ink-soft">
+                                                  Recommended: <Amount value={sub.recommendedAmount} size="sm" />
+                                                </p>
+                                              ) : null}
                                               <div className="ml-1 mt-1.5">
                                                 <Button
                                                   variant="ghost"

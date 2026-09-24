@@ -298,6 +298,62 @@ export const investmentAdjustments = pgTable(
 export type InvestmentAdjustmentRow = typeof investmentAdjustments.$inferSelect;
 
 /**
+ * Story 3.5 (Epic 3): one row per `(requirementId, partyType, shareId)` --
+ * deliberately per-requirement, unlike `investment_adjustments`' single-
+ * current-row design, since a specific requirement's Recommended Amount
+ * must stay stable and readable for as long as that requirement exists, not
+ * get overwritten by a later one. Written exactly once, by
+ * `packages/db/src/ports.ts`'s `createRecommendedAmountPort.snapshot` --
+ * **never an upsert** -- immediately after `POST .../investment-requirements`
+ * creates the requirement (the one moment guaranteed race-free: nothing
+ * could have queried/overwritten `investment_adjustments` for a requirement
+ * that doesn't exist yet). `shareId` mirrors `investment_adjustments.shareId`'s
+ * precedent exactly: the *stable* `partner_shares.partnerId`/
+ * `subpartner_shares.subPartnerId`, never this row's own `id` and never
+ * `users.id` (AD-4) -- deliberately **not** a foreign key, for the identical
+ * reason neither share table has a uniqueness constraint on that stable id
+ * to reference. `baseAmount`/`previousPending`/`previousExtraPaid`/
+ * `recommendedAmount` are `numeric(14,2)`, matching
+ * `investment_requirements.amount`'s precision -- always non-negative by
+ * construction (AD-2), `recommendedAmount` clamped to a minimum of `"0"` at
+ * the application layer (this story's Decisions).
+ */
+export const recommendedAmounts = pgTable(
+  "recommended_amounts",
+  {
+    id: uuid("id").primaryKey(),
+    requirementId: uuid("requirement_id")
+      .notNull()
+      .references(() => investmentRequirements.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    partyType: text("party_type").notNull(),
+    shareId: uuid("share_id").notNull(),
+    baseAmount: numeric("base_amount", { precision: 14, scale: 2 }).notNull(),
+    previousPending: numeric("previous_pending", { precision: 14, scale: 2 }).notNull(),
+    previousExtraPaid: numeric("previous_extra_paid", { precision: 14, scale: 2 }).notNull(),
+    recommendedAmount: numeric("recommended_amount", { precision: 14, scale: 2 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // The one-snapshot-per-share-per-requirement guarantee (this story's
+    // Decisions) -- a data-integrity guard, not an upsert-conflict target
+    // (unlike `investment_adjustments_party_share_project_unique`): this
+    // story's `snapshot` is always a plain insert, never `onConflictDoUpdate`.
+    unique("recommended_amounts_requirement_party_share_unique").on(
+      table.requirementId,
+      table.partyType,
+      table.shareId,
+    ),
+    // `findByRequirementId` filters on requirement_id -- this resource's only read pattern.
+    index("recommended_amounts_requirement_id_idx").on(table.requirementId),
+  ],
+);
+
+export type RecommendedAmountRow = typeof recommendedAmounts.$inferSelect;
+
+/**
  * Story 3.3 (Epic 3): a single generic audit-trail table, reused unchanged
  * by every later financial-write story in Epic 3 and Epic 4 (AD-5) -- never
  * a per-entity audit table. `entityType`/`entityId` together identify the

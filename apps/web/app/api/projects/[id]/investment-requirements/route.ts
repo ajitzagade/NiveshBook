@@ -1,13 +1,27 @@
 import { NextResponse, type NextRequest } from "next/server";
+import type { InvestmentAdjustment, SubPartnerShare } from "@niveshbook/types";
 import {
   getSession,
   authorizeScope,
   createInvestmentRequirement,
   listInvestmentRequirements,
+  listCurrentPartnerShares,
+  listCurrentSubPartnerSharesForProject,
+  snapshotRecommendedAmounts,
+  shareKey,
   InvalidRequirementAmountError,
   InvalidRequirementDateError,
 } from "@niveshbook/core";
-import { createSessionPort, createUserPort, createProjectPort, createInvestmentRequirementPort } from "@niveshbook/db";
+import {
+  createSessionPort,
+  createUserPort,
+  createProjectPort,
+  createInvestmentRequirementPort,
+  createPartnerSharePort,
+  createSubPartnerSharePort,
+  createInvestmentAdjustmentPort,
+  createRecommendedAmountPort,
+} from "@niveshbook/db";
 import { readSessionToken } from "@/lib/session";
 import { UNAUTHENTICATED_MESSAGE, FORBIDDEN_MESSAGE } from "@/lib/users";
 import { isValidProjectId, projectNotFoundResponse } from "../../shared";
@@ -15,6 +29,45 @@ import { INVALID_REQUEST_MESSAGE, isValidInvestmentRequirementBody } from "./sha
 
 interface RouteContext {
   params: Promise<{ id: string }>;
+}
+
+/**
+ * Groups a Project's *current* Sub-partner Shares by their parent
+ * `partnerId` -- the shape `snapshotRecommendedAmounts` (via
+ * `computeShouldPay`) expects. Duplicated per-route rather than shared --
+ * mirrors `should-pay/route.ts`'s/`adjustments/route.ts`'s established
+ * precedent of a local helper of the same name in each route file.
+ */
+function groupByPartnerId(shares: readonly SubPartnerShare[]): Record<string, SubPartnerShare[]> {
+  const byPartnerId: Record<string, SubPartnerShare[]> = {};
+  for (const share of shares) {
+    const bucket = byPartnerId[share.partnerId];
+    if (bucket) {
+      bucket.push(share);
+    } else {
+      byPartnerId[share.partnerId] = [share];
+    }
+  }
+  return byPartnerId;
+}
+
+/**
+ * Groups a Project's current `investment_adjustments` rows (fetched exactly
+ * once, via `investmentAdjustmentPort.listByProjectId`) by `(partyType,
+ * shareId)` -- the shape `snapshotRecommendedAmounts` expects, via
+ * `shareKey`. Each key holds at most one row, since `investment_adjustments`
+ * is already single-current-row-per-share by design (unlike
+ * `adjustments/route.ts`'s `groupTransactionsByShareKey`, which buckets
+ * multiple transactions per share).
+ */
+function groupAdjustmentsByShareKey(
+  adjustments: readonly InvestmentAdjustment[],
+): Record<string, InvestmentAdjustment> {
+  const byShareKey: Record<string, InvestmentAdjustment> = {};
+  for (const adjustment of adjustments) {
+    byShareKey[shareKey(adjustment.partyType, adjustment.shareId)] = adjustment;
+  }
+  return byShareKey;
 }
 
 /**
@@ -80,6 +133,22 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
  * and the `YYYY-MM-DD` format check) happens inside `createInvestmentRequirement`
  * itself -- this route only catches the resulting domain errors and maps
  * them to a 400 `validation_error`.
+ *
+ * Story 3.5 adds one further step *after* `createInvestmentRequirement`
+ * succeeds: snapshotting Recommended Amount for every current Partner/
+ * Sub-partner (see the inline comment at that call site). That step's
+ * `catch` swallows **every** error, not just the two known precondition
+ * ones -- the requirement is already committed in Postgres by that point,
+ * this endpoint has no idempotency key (unlike Story 3.3's transactions),
+ * and re-throwing would turn an already-successful creation into a client-
+ * visible 500 that invites a retry that creates a genuine duplicate
+ * requirement (Review Triage Log row 2). If the snapshot step fails for any
+ * reason, `GET .../should-pay` for this requirement will simply show no
+ * Recommended Amount -- the same outcome as the legitimate first-ever-
+ * requirement case -- rather than corrupting or blocking the response here.
+ * `packages/db`'s `RecommendedAmountPort.snapshotAll` writes the whole batch
+ * inside one `database.transaction(...)` (Review Triage Log row 1), so a
+ * failure here is guaranteed all-or-nothing, never a partial snapshot.
  */
 export async function POST(request: NextRequest, { params }: RouteContext) {
   const token = readSessionToken(request);
@@ -130,13 +199,13 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
   }
 
   const investmentRequirementPort = createInvestmentRequirementPort();
+  let requirement;
   try {
-    const requirement = await createInvestmentRequirement(
+    requirement = await createInvestmentRequirement(
       projectId,
       { amount: body.amount, requirementDate: body.requirementDate },
       { investmentRequirements: investmentRequirementPort },
     );
-    return NextResponse.json(requirement, { status: 201 });
   } catch (error) {
     if (error instanceof InvalidRequirementAmountError || error instanceof InvalidRequirementDateError) {
       return NextResponse.json(
@@ -146,4 +215,51 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     }
     throw error;
   }
+
+  // Story 3.5: snapshot Recommended Amount for every current Partner/
+  // Sub-partner, in the *same* successful call that created `requirement`
+  // (this story's Boundaries) -- a side effect, never part of this
+  // response body. `investmentAdjustmentPort.listByProjectId` is read here,
+  // at the one moment guaranteed race-free: the new requirement didn't
+  // exist until the `createInvestmentRequirement` call above created it, so
+  // nothing could have queried/overwritten `investment_adjustments` for it
+  // via `GET .../adjustments` yet.
+  try {
+    const partnerSharePort = createPartnerSharePort();
+    const subPartnerSharePort = createSubPartnerSharePort();
+    const investmentAdjustmentPort = createInvestmentAdjustmentPort();
+    const [partnerShares, subPartnerShares, previousAdjustments] = await Promise.all([
+      listCurrentPartnerShares(projectId, { partnerShares: partnerSharePort }),
+      listCurrentSubPartnerSharesForProject(projectId, { subPartnerShares: subPartnerSharePort }),
+      investmentAdjustmentPort.listByProjectId(projectId),
+    ]);
+
+    const recommendedAmountPort = createRecommendedAmountPort();
+    await snapshotRecommendedAmounts(
+      requirement,
+      partnerShares,
+      groupByPartnerId(subPartnerShares),
+      groupAdjustmentsByShareKey(previousAdjustments),
+      { recommendedAmounts: recommendedAmountPort },
+    );
+  } catch {
+    // Best-effort, swallow ALL errors -- not just `computeShouldPay`'s two
+    // known precondition errors (a Project with Partner Shares not yet
+    // fully allocated, or a Partner's Sub-partner Shares over-allocated),
+    // but also any genuinely unexpected failure (e.g. a transient DB
+    // connection error). `requirement` is already committed above, this
+    // endpoint has no idempotency key (unlike Story 3.3's transactions),
+    // and re-throwing here would turn an already-successful creation into a
+    // client-visible 500 that invites a duplicate-creating retry (Review
+    // Triage Log row 2) -- mirrors this codebase's existing best-effort-
+    // refresh-never-blocks-the-primary-operation philosophy (e.g.
+    // `add-money/page.tsx`'s `handleSubmit`, Story 3.1). The snapshot is
+    // skipped for this call; `GET .../should-pay` simply finds no
+    // `recommendedAmount` to merge later, same as this story's
+    // pre-existing-requirement fallback case. Fix #1 (`snapshotAll`'s
+    // wrapping DB transaction) guarantees this is genuinely all-or-nothing,
+    // never a silent partial snapshot.
+  }
+
+  return NextResponse.json(requirement, { status: 201 });
 }

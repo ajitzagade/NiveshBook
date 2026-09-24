@@ -9,6 +9,11 @@ const findUserById = vi.fn();
 const findProjectById = vi.fn();
 const createInvestmentRequirement = vi.fn();
 const listByProjectId = vi.fn();
+const listPartnerSharesByProjectId = vi.fn();
+const listSubPartnerSharesByProjectId = vi.fn();
+const listAdjustmentsByProjectId = vi.fn();
+const upsertAdjustment = vi.fn();
+const snapshotAllRecommendedAmounts = vi.fn();
 
 vi.mock("@niveshbook/db", () => ({
   createSessionPort: () => ({
@@ -33,6 +38,26 @@ vi.mock("@niveshbook/db", () => ({
   createInvestmentRequirementPort: () => ({
     createInvestmentRequirement,
     listByProjectId,
+  }),
+  createPartnerSharePort: () => ({
+    createPartnerShare: vi.fn(),
+    findLatestByPartnerId: vi.fn(),
+    listByProjectId: listPartnerSharesByProjectId,
+    listAll: vi.fn(),
+  }),
+  createSubPartnerSharePort: () => ({
+    createSubPartnerShare: vi.fn(),
+    findLatestBySubPartnerId: vi.fn(),
+    listByPartnerId: vi.fn(),
+    listByProjectId: listSubPartnerSharesByProjectId,
+  }),
+  createInvestmentAdjustmentPort: () => ({
+    upsert: upsertAdjustment,
+    listByProjectId: listAdjustmentsByProjectId,
+  }),
+  createRecommendedAmountPort: () => ({
+    snapshotAll: snapshotAllRecommendedAmounts,
+    findByRequirementId: vi.fn(),
   }),
 }));
 
@@ -100,6 +125,40 @@ function makeRequirement(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makePartnerShareRow(overrides: Record<string, unknown> = {}) {
+  const now = new Date().toISOString();
+  return {
+    id: "share-row-1",
+    partnerId: "partner-1",
+    projectId: PROJECT_ID,
+    name: "A",
+    sharePercent: "100",
+    userId: null,
+    subPartnerVisibilityGrant: false,
+    effectiveFrom: now,
+    createdAt: now,
+    ...overrides,
+  };
+}
+
+function makeAdjustmentRow(overrides: Record<string, unknown> = {}) {
+  const now = new Date().toISOString();
+  return {
+    id: "adj-row-1",
+    projectId: PROJECT_ID,
+    partyType: "partner",
+    shareId: "partner-1",
+    requirementId: "prev-req",
+    shouldPay: "500000",
+    actualPaid: "500000",
+    adjustmentType: "none",
+    adjustmentAmount: "0",
+    updatedAt: now,
+    createdAt: now,
+    ...overrides,
+  };
+}
+
 const EXISTING_PROJECT = {
   id: PROJECT_ID,
   name: "Verification Project",
@@ -118,6 +177,27 @@ function resetMocks() {
   createInvestmentRequirement.mockReset();
   listByProjectId.mockReset();
   listByProjectId.mockResolvedValue([]);
+
+  // Story 3.5's additive snapshot step -- a single fully-allocated Partner
+  // by default (so `snapshotRecommendedAmounts`'s own `computeShouldPay`
+  // precondition passes and the snapshot flow actually runs in the
+  // "creates a requirement" happy-path test below), no prior adjustments
+  // (first-ever-requirement case).
+  listPartnerSharesByProjectId.mockReset();
+  listPartnerSharesByProjectId.mockResolvedValue([makePartnerShareRow()]);
+  listSubPartnerSharesByProjectId.mockReset();
+  listSubPartnerSharesByProjectId.mockResolvedValue([]);
+  listAdjustmentsByProjectId.mockReset();
+  listAdjustmentsByProjectId.mockResolvedValue([]);
+  upsertAdjustment.mockReset();
+  snapshotAllRecommendedAmounts.mockReset();
+  snapshotAllRecommendedAmounts.mockImplementation(async (inputs: Record<string, unknown>[]) =>
+    inputs.map((input, index) => ({
+      id: `ra-${index + 1}`,
+      createdAt: new Date().toISOString(),
+      ...input,
+    })),
+  );
 }
 
 describe("GET /api/projects/[id]/investment-requirements", () => {
@@ -213,6 +293,172 @@ describe("POST /api/projects/[id]/investment-requirements", () => {
     expect(createInvestmentRequirement).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: PROJECT_ID, amount: "1000000", requirementDate: "2026-10-01" }),
     );
+  });
+
+  it("Story 3.5: snapshots Recommended Amount for every current Partner/Sub-partner after creating a requirement, response body unchanged", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    createInvestmentRequirement.mockResolvedValue(makeRequirement({ id: "req-1" }));
+    listPartnerSharesByProjectId.mockResolvedValue([
+      makePartnerShareRow({ partnerId: "a", name: "A", sharePercent: "50" }),
+      makePartnerShareRow({ partnerId: "b", name: "B", sharePercent: "50" }),
+    ]);
+    listAdjustmentsByProjectId.mockResolvedValue([
+      makeAdjustmentRow({
+        partyType: "partner",
+        shareId: "a",
+        adjustmentType: "extra_paid",
+        adjustmentAmount: "200000",
+      }),
+    ]);
+
+    const response = await POST(
+      makePostRequest({
+        cookie: `${SESSION_COOKIE_NAME}=some-token`,
+        body: { amount: "1000000", requirementDate: "2026-10-01" },
+      }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    // The snapshot is a side effect, never part of this response body.
+    expect(body).toEqual({ id: "req-1", projectId: PROJECT_ID, amount: "1000000", requirementDate: "2026-10-01", createdAt: expect.any(String) });
+
+    expect(listAdjustmentsByProjectId).toHaveBeenCalledWith(PROJECT_ID);
+    // Exactly ONE call to the port, with the full 2-share batch -- never a
+    // per-share loop (Review Triage Log row 1's atomicity fix).
+    expect(snapshotAllRecommendedAmounts).toHaveBeenCalledTimes(1);
+    expect(snapshotAllRecommendedAmounts).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          requirementId: "req-1",
+          projectId: PROJECT_ID,
+          partyType: "partner",
+          shareId: "a",
+          baseAmount: "500000",
+          previousExtraPaid: "200000",
+          previousPending: "0",
+          recommendedAmount: "300000",
+        }),
+        expect.objectContaining({
+          requirementId: "req-1",
+          partyType: "partner",
+          shareId: "b",
+          baseAmount: "500000",
+          previousExtraPaid: "0",
+          previousPending: "0",
+          recommendedAmount: "500000",
+        }),
+      ]),
+    );
+    const [batch] = snapshotAllRecommendedAmounts.mock.calls[0] as [unknown[]];
+    expect(batch).toHaveLength(2);
+  });
+
+  it("Story 3.5: still returns 201 (snapshot skipped) when Partner Shares aren't fully allocated yet -- never blocks requirement creation", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    createInvestmentRequirement.mockResolvedValue(makeRequirement({ id: "req-1" }));
+    listPartnerSharesByProjectId.mockResolvedValue([
+      makePartnerShareRow({ partnerId: "a", name: "A", sharePercent: "50" }),
+    ]); // only 50% -- SharesNotFullyAllocatedError inside snapshotRecommendedAmounts
+
+    const response = await POST(
+      makePostRequest({
+        cookie: `${SESSION_COOKIE_NAME}=some-token`,
+        body: { amount: "1000000", requirementDate: "2026-10-01" },
+      }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.id).toBe("req-1");
+    expect(snapshotAllRecommendedAmounts).not.toHaveBeenCalled();
+  });
+
+  it("Story 3.5: still returns 201 (snapshot skipped) when a Partner's Sub-partner Shares are over-allocated -- SubPartnerSharesOverAllocatedError is swallowed the same way SharesNotFullyAllocatedError is", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    createInvestmentRequirement.mockResolvedValue(makeRequirement({ id: "req-1" }));
+    listPartnerSharesByProjectId.mockResolvedValue([
+      makePartnerShareRow({ partnerId: "a", name: "A", sharePercent: "50" }),
+      makePartnerShareRow({ partnerId: "b", name: "B", sharePercent: "50" }),
+    ]);
+    listSubPartnerSharesByProjectId.mockResolvedValue([
+      {
+        id: "sub-row-1",
+        subPartnerId: "sub-1",
+        partnerId: "a",
+        projectId: PROJECT_ID,
+        name: "Sub 1",
+        sharePercent: "60", // exceeds Partner A's own 50% share
+        userId: null,
+        effectiveFrom: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+
+    const response = await POST(
+      makePostRequest({
+        cookie: `${SESSION_COOKIE_NAME}=some-token`,
+        body: { amount: "1000000", requirementDate: "2026-10-01" },
+      }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.id).toBe("req-1");
+    expect(snapshotAllRecommendedAmounts).not.toHaveBeenCalled();
+  });
+
+  it("Story 3.5: still returns 201 (snapshot skipped, error swallowed) when the snapshot step hits a genuinely unexpected error -- never a 500 for an already-created requirement", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    createInvestmentRequirement.mockResolvedValue(makeRequirement({ id: "req-1" }));
+    // Neither precondition error -- a generic failure, e.g. a transient DB
+    // connection error during the atomic batch write.
+    snapshotAllRecommendedAmounts.mockRejectedValue(new Error("simulated transient connection error"));
+
+    const response = await POST(
+      makePostRequest({
+        cookie: `${SESSION_COOKIE_NAME}=some-token`,
+        body: { amount: "1000000", requirementDate: "2026-10-01" },
+      }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.id).toBe("req-1");
+    expect(snapshotAllRecommendedAmounts).toHaveBeenCalledTimes(1);
+  });
+
+  it("Story 3.5: the first-ever requirement for a Project (no prior adjustments) snapshots previousPending/previousExtraPaid both '0'", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    createInvestmentRequirement.mockResolvedValue(makeRequirement({ id: "req-1", amount: "1000000" }));
+    listPartnerSharesByProjectId.mockResolvedValue([makePartnerShareRow({ partnerId: "a", sharePercent: "100" })]);
+    listAdjustmentsByProjectId.mockResolvedValue([]);
+
+    await POST(
+      makePostRequest({
+        cookie: `${SESSION_COOKIE_NAME}=some-token`,
+        body: { amount: "1000000", requirementDate: "2026-10-01" },
+      }),
+      makeContext(),
+    );
+
+    expect(snapshotAllRecommendedAmounts).toHaveBeenCalledWith([
+      expect.objectContaining({
+        previousPending: "0",
+        previousExtraPaid: "0",
+        baseAmount: "1000000",
+        recommendedAmount: "1000000",
+      }),
+    ]);
   });
 
   it("returns 403 for a non-owner_admin with an otherwise-valid body -- no row created", async () => {

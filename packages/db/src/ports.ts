@@ -13,6 +13,7 @@ import {
   type InvestmentTransactionPort,
   type CreateInvestmentTransactionInput,
   type InvestmentAdjustmentPort,
+  type RecommendedAmountPort,
 } from "@niveshbook/core";
 import type {
   User,
@@ -25,6 +26,7 @@ import type {
   InvestmentRequirement,
   InvestmentTransaction,
   InvestmentAdjustment,
+  RecommendedAmount,
   PaymentMode,
   Money,
 } from "@niveshbook/types";
@@ -39,6 +41,7 @@ import {
   investmentRequirements,
   investmentTransactions,
   investmentAdjustments,
+  recommendedAmounts,
   auditLog,
   type SessionRow,
   type UserRow,
@@ -48,6 +51,7 @@ import {
   type InvestmentRequirementRow,
   type InvestmentTransactionRow,
   type InvestmentAdjustmentRow,
+  type RecommendedAmountRow,
 } from "./schema";
 
 function toUser(row: UserRow): User {
@@ -167,6 +171,27 @@ function toInvestmentAdjustment(row: InvestmentAdjustmentRow): InvestmentAdjustm
     adjustmentType: row.adjustmentType as InvestmentAdjustment["adjustmentType"],
     adjustmentAmount: row.adjustmentAmount as Money,
     updatedAt: row.updatedAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+/**
+ * Converts the numeric `base_amount`/`previous_pending`/`previous_extra_paid`/
+ * `recommended_amount` columns (Drizzle returns `numeric` as a `string`,
+ * never a native float -- AD-2) directly into `Money`, with no `parseFloat`/
+ * `Number()` round-trip. Mirrors `toInvestmentAdjustment` one table over.
+ */
+function toRecommendedAmount(row: RecommendedAmountRow): RecommendedAmount {
+  return {
+    id: row.id,
+    requirementId: row.requirementId,
+    projectId: row.projectId,
+    partyType: row.partyType as RecommendedAmount["partyType"],
+    shareId: row.shareId,
+    baseAmount: row.baseAmount as Money,
+    previousPending: row.previousPending as Money,
+    previousExtraPaid: row.previousExtraPaid as Money,
+    recommendedAmount: row.recommendedAmount as Money,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -701,6 +726,68 @@ export function createInvestmentAdjustmentPort(
         throw new Error("Failed to upsert investment adjustment");
       }
       return toInvestmentAdjustment(row);
+    },
+    async listByProjectId(projectId) {
+      const rows = await database
+        .select()
+        .from(investmentAdjustments)
+        .where(eq(investmentAdjustments.projectId, projectId));
+      return rows.map(toInvestmentAdjustment);
+    },
+  };
+}
+
+/**
+ * Drizzle-backed implementation of `packages/core`'s `RecommendedAmountPort`
+ * (Story 3.5). Unlike `createInvestmentAdjustmentPort`'s `upsert`,
+ * `snapshotAll` is a plain multi-row insert -- never `onConflictDoUpdate` --
+ * a requirement's Recommended Amount is written exactly once, at creation
+ * time (this story's Decisions); the table's UNIQUE `(requirementId,
+ * partyType, shareId)` constraint exists purely as a data-integrity guard,
+ * not an upsert-conflict target.
+ *
+ * `snapshotAll` wraps the insert in `database.transaction(...)` -- mirroring
+ * `createInvestmentTransactionPort.recordTransaction`'s atomic-multi-write
+ * precedent -- so every Partner/Sub-partner's row for one requirement is
+ * written all-or-nothing: if the write fails partway (e.g. a transient
+ * connection error), the transaction rolls back and NO rows are committed,
+ * rather than leaving a silent partial snapshot (Review Triage Log row 1).
+ */
+export function createRecommendedAmountPort(database: Database = getDb()): RecommendedAmountPort {
+  return {
+    async snapshotAll(inputs) {
+      if (inputs.length === 0) {
+        return [];
+      }
+      return database.transaction(async (tx) => {
+        const rows = await tx
+          .insert(recommendedAmounts)
+          .values(
+            inputs.map((input) => ({
+              id: uuidv7(),
+              requirementId: input.requirementId,
+              projectId: input.projectId,
+              partyType: input.partyType,
+              shareId: input.shareId,
+              baseAmount: input.baseAmount,
+              previousPending: input.previousPending,
+              previousExtraPaid: input.previousExtraPaid,
+              recommendedAmount: input.recommendedAmount,
+            })),
+          )
+          .returning();
+        if (rows.length !== inputs.length) {
+          throw new Error("Failed to snapshot all recommended amounts");
+        }
+        return rows.map(toRecommendedAmount);
+      });
+    },
+    async findByRequirementId(requirementId) {
+      const rows = await database
+        .select()
+        .from(recommendedAmounts)
+        .where(eq(recommendedAmounts.requirementId, requirementId));
+      return rows.map(toRecommendedAmount);
     },
   };
 }

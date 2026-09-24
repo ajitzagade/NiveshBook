@@ -29,4 +29,15 @@ export interface InvestmentAdjustmentPort {
    * identical row (no duplicate, no drift).
    */
   upsert(input: UpsertInvestmentAdjustmentInput): Promise<InvestmentAdjustment>;
+
+  /**
+   * Lists every current `(partyType, shareId)` adjustment row for a Project
+   * (Story 3.5) -- a plain `WHERE project_id = ...` read, no reduction
+   * needed since this table is already single-row-per-share by design.
+   * Story 3.5's `POST .../investment-requirements` route calls this exactly
+   * once per creation, at the one moment guaranteed race-free: the new
+   * requirement doesn't exist yet, so nothing could have queried/overwritten
+   * adjustments for it via `GET .../adjustments` before this read runs.
+   */
+  listByProjectId(projectId: string): Promise<InvestmentAdjustment[]>;
 }

@@ -8,6 +8,7 @@ import {
   investmentRequirements,
   investmentTransactions,
   investmentAdjustments,
+  recommendedAmounts,
   auditLog,
 } from "./schema";
 
@@ -249,6 +250,54 @@ describe("investment_adjustments table schema (Story 3.4)", () => {
     expect(investmentAdjustments.updatedAt.hasDefault).toBe(true);
     expect(investmentAdjustments.createdAt.notNull).toBe(true);
     expect(investmentAdjustments.createdAt.hasDefault).toBe(true);
+  });
+});
+
+describe("recommended_amounts table schema (Story 3.5)", () => {
+  it("marks requirementId/projectId/partyType/shareId/baseAmount/previousPending/previousExtraPaid/recommendedAmount NOT NULL", () => {
+    expect(recommendedAmounts.requirementId.notNull).toBe(true);
+    expect(recommendedAmounts.projectId.notNull).toBe(true);
+    expect(recommendedAmounts.partyType.notNull).toBe(true);
+    expect(recommendedAmounts.shareId.notNull).toBe(true);
+    expect(recommendedAmounts.baseAmount.notNull).toBe(true);
+    expect(recommendedAmounts.previousPending.notNull).toBe(true);
+    expect(recommendedAmounts.previousExtraPaid.notNull).toBe(true);
+    expect(recommendedAmounts.recommendedAmount.notNull).toBe(true);
+  });
+
+  it("gives id no implicit default -- application code (uuidv7) always supplies one", () => {
+    expect(recommendedAmounts.id.hasDefault).toBe(false);
+  });
+
+  it("stores baseAmount/previousPending/previousExtraPaid/recommendedAmount as numeric(14,2), mirroring investment_requirements.amount's precision", () => {
+    expect(recommendedAmounts.baseAmount.columnType).toBe("PgNumeric");
+    expect(recommendedAmounts.baseAmount.getSQLType()).toBe("numeric(14, 2)");
+    expect(recommendedAmounts.previousPending.columnType).toBe("PgNumeric");
+    expect(recommendedAmounts.previousPending.getSQLType()).toBe("numeric(14, 2)");
+    expect(recommendedAmounts.previousExtraPaid.columnType).toBe("PgNumeric");
+    expect(recommendedAmounts.previousExtraPaid.getSQLType()).toBe("numeric(14, 2)");
+    expect(recommendedAmounts.recommendedAmount.columnType).toBe("PgNumeric");
+    expect(recommendedAmounts.recommendedAmount.getSQLType()).toBe("numeric(14, 2)");
+  });
+
+  it("stores shareId as uuid with no FK reference -- mirrors investment_adjustments.shareId's precedent (this story's Code Map)", () => {
+    expect(recommendedAmounts.shareId.columnType).toBe("PgUUID");
+  });
+
+  it("enforces a composite UNIQUE constraint on (requirementId, partyType, shareId) -- a data-integrity guard against a double-snapshot, not an upsert-conflict target (this story's Decisions: snapshot is always a plain insert)", () => {
+    const { uniqueConstraints } = getTableConfig(recommendedAmounts);
+    expect(uniqueConstraints).toHaveLength(1);
+    const constraint = uniqueConstraints[0];
+    expect(constraint?.columns.map((column) => column.name)).toEqual([
+      "requirement_id",
+      "party_type",
+      "share_id",
+    ]);
+  });
+
+  it("marks createdAt NOT NULL with a DB-side default", () => {
+    expect(recommendedAmounts.createdAt.notNull).toBe(true);
+    expect(recommendedAmounts.createdAt.hasDefault).toBe(true);
   });
 });
 

@@ -101,7 +101,7 @@ describe("computeInvestmentAdjustment", () => {
     };
 
     const result = await computeInvestmentAdjustment(requirement, partners, {}, transactionsByShareKey, {
-      investmentAdjustments: { upsert },
+      investmentAdjustments: { upsert, listByProjectId: vi.fn() },
     });
 
     const a = result.find((p) => p.partnerId === "a");
@@ -116,7 +116,7 @@ describe("computeInvestmentAdjustment", () => {
     const partners = [makePartner({ partnerId: "c", name: "C", sharePercent: "100" as Percent })];
 
     const result = await computeInvestmentAdjustment(requirement, partners, {}, {}, {
-      investmentAdjustments: { upsert },
+      investmentAdjustments: { upsert, listByProjectId: vi.fn() },
     });
 
     const c = result.find((p) => p.partnerId === "c");
@@ -134,7 +134,7 @@ describe("computeInvestmentAdjustment", () => {
     };
 
     const result = await computeInvestmentAdjustment(requirement, partners, {}, transactionsByShareKey, {
-      investmentAdjustments: { upsert },
+      investmentAdjustments: { upsert, listByProjectId: vi.fn() },
     });
 
     const b = result.find((p) => p.partnerId === "b");
@@ -147,14 +147,14 @@ describe("computeInvestmentAdjustment", () => {
     const partners = [makePartner({ partnerId: "c", name: "C", sharePercent: "100" as Percent })];
 
     const noneRecorded = await computeInvestmentAdjustment(requirement, partners, {}, {}, {
-      investmentAdjustments: { upsert: makeUpsertMock() },
+      investmentAdjustments: { upsert: makeUpsertMock(), listByProjectId: vi.fn() },
     });
     const explicitZero = await computeInvestmentAdjustment(
       requirement,
       partners,
       {},
       { [shareKey("partner", "c")]: ["0"].map(toMoney) },
-      { investmentAdjustments: { upsert: makeUpsertMock() } },
+      { investmentAdjustments: { upsert: makeUpsertMock(), listByProjectId: vi.fn() } },
     );
 
     // Compare only the domain-meaningful fields -- `id`/`updatedAt`/`createdAt`
@@ -199,7 +199,7 @@ describe("computeInvestmentAdjustment", () => {
       partners,
       subsByPartnerId,
       transactionsByShareKey,
-      { investmentAdjustments: { upsert } },
+      { investmentAdjustments: { upsert, listByProjectId: vi.fn() } },
     );
 
     const a = result.find((p) => p.partnerId === "a");
@@ -226,7 +226,7 @@ describe("computeInvestmentAdjustment", () => {
     };
 
     await computeInvestmentAdjustment(requirement, partners, subsByPartnerId, {}, {
-      investmentAdjustments: { upsert },
+      investmentAdjustments: { upsert, listByProjectId: vi.fn() },
     });
 
     expect(upsert).toHaveBeenCalledTimes(3);
@@ -254,10 +254,10 @@ describe("computeInvestmentAdjustment", () => {
     const transactionsByShareKey = { [shareKey("partner", "a")]: ["300000"].map(toMoney) };
 
     await computeInvestmentAdjustment(requirement, partners, {}, transactionsByShareKey, {
-      investmentAdjustments: { upsert },
+      investmentAdjustments: { upsert, listByProjectId: vi.fn() },
     });
     await computeInvestmentAdjustment(requirement, partners, {}, transactionsByShareKey, {
-      investmentAdjustments: { upsert },
+      investmentAdjustments: { upsert, listByProjectId: vi.fn() },
     });
 
     expect(upsert).toHaveBeenCalledTimes(2);
@@ -274,14 +274,14 @@ describe("computeInvestmentAdjustment", () => {
       partners,
       {},
       { [shareKey("partner", "a")]: ["300000"].map(toMoney) },
-      { investmentAdjustments: { upsert } },
+      { investmentAdjustments: { upsert, listByProjectId: vi.fn() } },
     );
     const second = await computeInvestmentAdjustment(
       requirement,
       partners,
       {},
       { [shareKey("partner", "a")]: ["300000", "200000"].map(toMoney) },
-      { investmentAdjustments: { upsert } },
+      { investmentAdjustments: { upsert, listByProjectId: vi.fn() } },
     );
 
     expect(first[0]?.actualPaid).toBe("300000");
@@ -298,7 +298,7 @@ describe("computeInvestmentAdjustment", () => {
     ];
 
     await expect(
-      computeInvestmentAdjustment(requirement, partners, {}, {}, { investmentAdjustments: { upsert } }),
+      computeInvestmentAdjustment(requirement, partners, {}, {}, { investmentAdjustments: { upsert, listByProjectId: vi.fn() } }),
     ).rejects.toThrow(SharesNotFullyAllocatedError);
     expect(upsert).not.toHaveBeenCalled();
   });
@@ -315,7 +315,7 @@ describe("computeInvestmentAdjustment", () => {
 
     await expect(
       computeInvestmentAdjustment(requirement, partners, subsByPartnerId, {}, {
-        investmentAdjustments: { upsert },
+        investmentAdjustments: { upsert, listByProjectId: vi.fn() },
       }),
     ).rejects.toThrow(SubPartnerSharesOverAllocatedError);
     expect(upsert).not.toHaveBeenCalled();
@@ -339,7 +339,7 @@ describe("computeInvestmentAdjustment", () => {
     }));
 
     const result = await computeInvestmentAdjustment(requirement, partners, {}, {}, {
-      investmentAdjustments: { upsert: persistingUpsert },
+      investmentAdjustments: { upsert: persistingUpsert, listByProjectId: vi.fn() },
     });
 
     expect(result[0]?.actualPaid).toBe("999999");

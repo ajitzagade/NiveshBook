@@ -251,3 +251,40 @@ export interface InvestmentAdjustment {
   /** ISO 8601 timestamp -- when this row was first created. */
   createdAt: string;
 }
+
+/**
+ * A snapshotted Recommended Amount for one Partner or Sub-partner against
+ * one funding requirement (Epic 3, Story 3.5) -- ONE row per `(requirementId,
+ * partyType, shareId)`, written exactly once, at the requirement's creation
+ * time (never upserted/overwritten) -- deliberately per-requirement, unlike
+ * `InvestmentAdjustment`'s single-current-row-per-share design, since a
+ * specific requirement's Recommended Amount must stay stable and readable
+ * for as long as that requirement exists.
+ *
+ * `baseAmount` is this Partner/Sub-partner's Should Pay against the *new*
+ * requirement (Story 3.2's `computeShouldPay`, run once at creation time).
+ * `previousPending`/`previousExtraPaid` are copied from `InvestmentAdjustment`'s
+ * still-intact current row at the exact moment of creation -- both `"0"` if
+ * no prior adjustment row exists (first-ever requirement for the Project, or
+ * a share with no prior adjustment). `recommendedAmount = baseAmount +
+ * previousPending - previousExtraPaid`, clamped to a minimum of `"0"`
+ * (`Money` itself forbids negative values, AD-2) -- never re-derived later
+ * from `InvestmentAdjustment`, which is exactly what makes this snapshot
+ * immune to Story 3.4's `GET .../adjustments` upserting that table on every
+ * view.
+ */
+export interface RecommendedAmount {
+  id: string;
+  requirementId: string;
+  projectId: string;
+  partyType: "partner" | "sub_partner";
+  /** The stable `partnerId`/`subPartnerId` this snapshot is keyed to -- never `User.id` (AD-4). */
+  shareId: string;
+  baseAmount: Money;
+  previousPending: Money;
+  previousExtraPaid: Money;
+  /** `baseAmount + previousPending - previousExtraPaid`, clamped to a minimum of `"0"` -- never negative (AD-2). */
+  recommendedAmount: Money;
+  /** ISO 8601 timestamp -- when this row was written (creation time only, never updated). */
+  createdAt: string;
+}

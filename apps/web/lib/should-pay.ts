@@ -1,17 +1,23 @@
-import type { PartnerShouldPay } from "@niveshbook/core";
+import type { PartnerShouldPayWithRecommended } from "@niveshbook/core";
 
 /**
  * Thin client-side fetch helper for the Add Money screen's Should Pay
  * expand affordance (Story 3.2) -- mirrors `apps/web/lib/investment-requirements.ts`'s
  * pattern. Read-only -- there is no write helper here, since the endpoint
  * itself is a pure calculation with no write path (this story's Boundaries).
+ *
+ * Story 3.5: the response's `partners` entries are `PartnerShouldPayWithRecommended`
+ * (`PartnerShouldPay` plus optional `recommendedAmount`/`previousPending`/
+ * `previousExtraPaid`, one level richer for Sub-partners too) -- `undefined`
+ * for a pre-existing requirement with no `recommended_amounts` snapshot,
+ * never an error.
  */
 
 const GENERIC_ERROR_MESSAGE = "Something went wrong. Please try again.";
 
 /** `GET .../investment-requirements/[requirementId]/should-pay`'s response shape. */
 export interface ShouldPayResponse {
-  partners: PartnerShouldPay[];
+  partners: PartnerShouldPayWithRecommended[];
 }
 
 async function readErrorMessage(response: Response): Promise<string> {

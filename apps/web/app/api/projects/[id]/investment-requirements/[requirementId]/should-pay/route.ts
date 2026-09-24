@@ -6,6 +6,7 @@ import {
   listCurrentPartnerShares,
   listCurrentSubPartnerSharesForProject,
   computeShouldPay,
+  mergeRecommendedAmounts,
   SharesNotFullyAllocatedError,
   SubPartnerSharesOverAllocatedError,
 } from "@niveshbook/core";
@@ -16,6 +17,7 @@ import {
   createPartnerSharePort,
   createSubPartnerSharePort,
   createInvestmentRequirementPort,
+  createRecommendedAmountPort,
 } from "@niveshbook/db";
 import { readSessionToken } from "@/lib/session";
 import { UNAUTHENTICATED_MESSAGE, FORBIDDEN_MESSAGE } from "@/lib/users";
@@ -113,7 +115,19 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
 
   try {
     const partners = computeShouldPay(requirement, partnerShares, groupByPartnerId(subPartnerShares));
-    return NextResponse.json({ partners });
+
+    // Story 3.5: merge in this requirement's already-snapshotted Recommended
+    // Amount (if any) -- read-only, no write here (Boundaries: this route
+    // never re-derives it from `investment_adjustments`, only reads the
+    // creation-time snapshot). A pre-existing requirement (created before
+    // this story shipped) simply has no `recommended_amounts` rows --
+    // `mergeRecommendedAmounts` leaves `recommendedAmount` undefined for
+    // every share in that case, no error.
+    const recommendedAmountPort = createRecommendedAmountPort();
+    const recommendedAmounts = await recommendedAmountPort.findByRequirementId(requirementId);
+    const merged = mergeRecommendedAmounts(partners, recommendedAmounts);
+
+    return NextResponse.json({ partners: merged });
   } catch (error) {
     if (error instanceof SharesNotFullyAllocatedError) {
       return NextResponse.json(

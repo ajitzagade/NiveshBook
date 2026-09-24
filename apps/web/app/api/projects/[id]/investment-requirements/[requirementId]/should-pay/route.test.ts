@@ -10,6 +10,7 @@ const findProjectById = vi.fn();
 const findById = vi.fn();
 const listPartnerSharesByProjectId = vi.fn();
 const listSubPartnerSharesByProjectId = vi.fn();
+const findRecommendedAmountsByRequirementId = vi.fn();
 
 vi.mock("@niveshbook/db", () => ({
   createSessionPort: () => ({
@@ -47,6 +48,10 @@ vi.mock("@niveshbook/db", () => ({
     createInvestmentRequirement: vi.fn(),
     listByProjectId: vi.fn(),
     findById,
+  }),
+  createRecommendedAmountPort: () => ({
+    snapshot: vi.fn(),
+    findByRequirementId: findRecommendedAmountsByRequirementId,
   }),
 }));
 
@@ -158,6 +163,24 @@ function resetMocks() {
   ]);
   listSubPartnerSharesByProjectId.mockReset();
   listSubPartnerSharesByProjectId.mockResolvedValue([]);
+  findRecommendedAmountsByRequirementId.mockReset();
+  findRecommendedAmountsByRequirementId.mockResolvedValue([]);
+}
+
+function makeRecommendedAmountRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "ra-row-1",
+    requirementId: REQUIREMENT_ID,
+    projectId: PROJECT_ID,
+    partyType: "partner",
+    shareId: "a",
+    baseAmount: "500000",
+    previousPending: "0",
+    previousExtraPaid: "200000",
+    recommendedAmount: "300000",
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
 }
 
 describe("GET .../investment-requirements/[requirementId]/should-pay", () => {
@@ -374,5 +397,39 @@ describe("GET .../investment-requirements/[requirementId]/should-pay", () => {
     expect(body.message).toBe(
       "Should Pay isn't available -- A's Sub-partner Shares add up to more than A's own Share %.",
     );
+  });
+
+  it("Story 3.5: merges recommendedAmount/previousPending/previousExtraPaid into a Partner's entry when a snapshot exists for this requirement", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    findRecommendedAmountsByRequirementId.mockResolvedValue([makeRecommendedAmountRow()]);
+
+    const response = await GET(makeRequest(`${SESSION_COOKIE_NAME}=some-token`), makeContext());
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(findRecommendedAmountsByRequirementId).toHaveBeenCalledWith(REQUIREMENT_ID);
+    const a = body.partners.find((p: { partnerId: string }) => p.partnerId === "a");
+    expect(a.recommendedAmount).toBe("300000");
+    expect(a.previousPending).toBe("0");
+    expect(a.previousExtraPaid).toBe("200000");
+    // A share with no matching snapshot row keeps recommendedAmount undefined (absent from the JSON body).
+    const b = body.partners.find((p: { partnerId: string }) => p.partnerId === "b");
+    expect(b.recommendedAmount).toBeUndefined();
+  });
+
+  it("Story 3.5: falls back to no recommendedAmount for a pre-existing requirement with no recommended_amounts rows -- no error, no crash", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    findRecommendedAmountsByRequirementId.mockResolvedValue([]);
+
+    const response = await GET(makeRequest(`${SESSION_COOKIE_NAME}=some-token`), makeContext());
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.partners).toHaveLength(3);
+    for (const partner of body.partners) {
+      expect(partner.recommendedAmount).toBeUndefined();
+    }
   });
 });
