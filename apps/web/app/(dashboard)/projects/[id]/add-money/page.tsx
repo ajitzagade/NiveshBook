@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useRef, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import type { InvestmentRequirement } from "@niveshbook/types";
+import type { InvestmentRequirement, InvestmentTransaction, PaymentMode } from "@niveshbook/types";
 import type { PartnerShouldPay } from "@niveshbook/core";
 import {
   Amount,
@@ -29,6 +29,10 @@ import {
 } from "@niveshbook/ui";
 import { listInvestmentRequirements, addInvestmentRequirement } from "@/lib/investment-requirements";
 import { getShouldPay } from "@/lib/should-pay";
+import {
+  listInvestmentTransactions,
+  recordInvestmentTransaction,
+} from "@/lib/investment-transactions";
 
 type ListState =
   | { status: "loading" }
@@ -39,6 +43,39 @@ type ShouldPayState =
   | { status: "loading" }
   | { status: "error"; message: string }
   | { status: "loaded"; partners: PartnerShouldPay[] };
+
+type TransactionsState =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "loaded"; transactions: InvestmentTransaction[] };
+
+interface RecordPaymentTarget {
+  requirementId: string;
+  partyType: "partner" | "sub_partner";
+  shareId: string;
+  personName: string;
+}
+
+/**
+ * Every valid `PaymentMode`, in display order -- the `Record<PaymentMode, string>`
+ * forces this list to stay exhaustive against `packages/types`'s `PaymentMode`
+ * union at compile time, mirroring `apps/web/lib/users.ts`'s `ROLE_LABEL`
+ * precedent. Kept local to this page (rather than imported across the `app/api`
+ * route-group boundary) -- this page's only consumer.
+ */
+const PAYMENT_MODE_LABELS: Record<PaymentMode, string> = {
+  cash: "Cash",
+  cheque: "Cheque",
+  neft: "NEFT",
+  rtgs: "RTGS",
+  imps: "IMPS",
+  upi: "UPI",
+  bank_transfer: "Bank Transfer",
+  other: "Other",
+};
+const PAYMENT_MODE_OPTIONS = (Object.entries(PAYMENT_MODE_LABELS) as [PaymentMode, string][]).map(
+  ([value, label]) => ({ value, label }),
+);
 
 /**
  * Postgres's `numeric(7,4)` column always round-trips at its full declared
@@ -86,6 +123,28 @@ export default function AddMoneyPage() {
   // before its `getShouldPay` fetch resolves, the stale response must never
   // overwrite state for a panel the user is no longer looking at.
   const expandedRequirementIdRef = useRef<string | null>(null);
+
+  // Story 3.3: the recorded-payments list shown alongside each Should Pay
+  // panel -- fetched alongside Should Pay when a panel expands, guarded by
+  // the same `expandedRequirementIdRef` staleness check.
+  const [transactionsByRequirement, setTransactionsByRequirement] = useState<
+    Record<string, TransactionsState>
+  >({});
+
+  const [recordPaymentTarget, setRecordPaymentTarget] = useState<RecordPaymentTarget | null>(null);
+  const [recordAmount, setRecordAmount] = useState("");
+  const [recordDate, setRecordDate] = useState("");
+  const [recordPaymentMode, setRecordPaymentMode] = useState<PaymentMode>("cash");
+  const [recordReferenceNumber, setRecordReferenceNumber] = useState("");
+  const [recordNotes, setRecordNotes] = useState("");
+  const [recordFormError, setRecordFormError] = useState<string | null>(null);
+  const [recordSubmitting, setRecordSubmitting] = useState(false);
+  // Minted once per *logical* submission attempt (when the dialog opens),
+  // never inside the submit handler -- a retry after a failure (same dialog
+  // still open) reuses this same key, so a real double-submit is actually
+  // deduped server-side (AD-5/AC4). Only closing and reopening the dialog
+  // (or a successful save, which closes it) mints a new one.
+  const [recordIdempotencyKey, setRecordIdempotencyKey] = useState("");
 
   async function refresh() {
     const result = await listInvestmentRequirements(projectId);
@@ -146,6 +205,31 @@ export default function AddMoneyPage() {
     }
   }
 
+  /**
+   * Fetches the recorded payments for one funding requirement (Story 3.3) --
+   * mirrors `refreshShouldPay`'s staleness-guard pattern exactly, sharing the
+   * same `expandedRequirementIdRef`.
+   */
+  async function refreshTransactions(requirementId: string) {
+    try {
+      const result = await listInvestmentTransactions(projectId, requirementId);
+      if (expandedRequirementIdRef.current !== requirementId) return;
+      setTransactionsByRequirement((prev) => ({
+        ...prev,
+        [requirementId]: { status: "loaded", transactions: result.transactions },
+      }));
+    } catch (error) {
+      if (expandedRequirementIdRef.current !== requirementId) return;
+      setTransactionsByRequirement((prev) => ({
+        ...prev,
+        [requirementId]: {
+          status: "error",
+          message: error instanceof Error ? error.message : "Something went wrong.",
+        },
+      }));
+    }
+  }
+
   function toggleShouldPay(requirementId: string) {
     if (expandedRequirementId === requirementId) {
       setExpandedRequirementId(null);
@@ -164,6 +248,12 @@ export default function AddMoneyPage() {
         delete next[requirementId];
         return next;
       });
+      setTransactionsByRequirement((prev) => {
+        if (prev[requirementId]?.status !== "loading") return prev;
+        const next = { ...prev };
+        delete next[requirementId];
+        return next;
+      });
       return;
     }
     setExpandedRequirementId(requirementId);
@@ -173,6 +263,91 @@ export default function AddMoneyPage() {
       setShouldPayByRequirement((prev) => ({ ...prev, [requirementId]: { status: "loading" } }));
       void refreshShouldPay(requirementId);
     }
+    const existingTransactions = transactionsByRequirement[requirementId];
+    if (!existingTransactions || existingTransactions.status === "error") {
+      setTransactionsByRequirement((prev) => ({ ...prev, [requirementId]: { status: "loading" } }));
+      void refreshTransactions(requirementId);
+    }
+  }
+
+  /** Every transaction recorded against `shareId`/`partyType` for one requirement, or `[]` if the list hasn't loaded (yet). */
+  function recordedPaymentsFor(
+    requirementId: string,
+    partyType: "partner" | "sub_partner",
+    shareId: string,
+  ): InvestmentTransaction[] {
+    const state = transactionsByRequirement[requirementId];
+    if (!state || state.status !== "loaded") return [];
+    return state.transactions.filter((t) => t.partyType === partyType && t.shareId === shareId);
+  }
+
+  function openRecordPaymentDialog(
+    requirementId: string,
+    partyType: "partner" | "sub_partner",
+    shareId: string,
+    personName: string,
+  ) {
+    setRecordPaymentTarget({ requirementId, partyType, shareId, personName });
+    setRecordAmount("");
+    setRecordDate("");
+    setRecordPaymentMode("cash");
+    setRecordReferenceNumber("");
+    setRecordNotes("");
+    setRecordFormError(null);
+    // A fresh key for this new logical submission -- see the state's own doc comment.
+    setRecordIdempotencyKey(crypto.randomUUID());
+  }
+
+  function closeRecordPaymentDialog() {
+    setRecordPaymentTarget(null);
+  }
+
+  /**
+   * Saves a Paid Now transaction (Story 3.3) -- Owner/Admin-facing only, per
+   * this story's Decisions (no self-service UI yet). On success, refreshes
+   * the recorded-payments list for this requirement so the new payment shows
+   * up immediately in the same panel.
+   *
+   * Passes `recordIdempotencyKey` through unchanged -- it's minted once, when
+   * the dialog opens (`openRecordPaymentDialog`), not here. A retry of a
+   * failed submission (the user clicking Save again with the dialog still
+   * open) reuses that same key, so a real double-submit is deduped
+   * server-side rather than creating two rows.
+   */
+  async function handleRecordPaymentSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!recordPaymentTarget) return;
+
+    setRecordFormError(null);
+    setRecordSubmitting(true);
+    try {
+      await recordInvestmentTransaction(
+        projectId,
+        recordPaymentTarget.requirementId,
+        {
+          partyType: recordPaymentTarget.partyType,
+          shareId: recordPaymentTarget.shareId,
+          amount: recordAmount,
+          transactionDate: recordDate,
+          paymentMode: recordPaymentMode,
+          referenceNumber: recordReferenceNumber.trim().length > 0 ? recordReferenceNumber.trim() : null,
+          notes: recordNotes.trim().length > 0 ? recordNotes.trim() : null,
+        },
+        recordIdempotencyKey,
+      );
+    } catch (err) {
+      setRecordFormError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+      setRecordSubmitting(false);
+      return;
+    }
+
+    setRecordSubmitting(false);
+    const requirementId = recordPaymentTarget.requirementId;
+    closeRecordPaymentDialog();
+    // `refreshTransactions` catches its own errors -- a failed refresh just
+    // leaves the recorded-payments list showing its prior (stale) state, the
+    // same best-effort convention `handleSubmit` above uses for `refresh()`.
+    await refreshTransactions(requirementId);
   }
 
   function openAddDialog() {
@@ -326,19 +501,71 @@ export default function AddMoneyPage() {
                                         <Amount value={partner.ownShouldPay} size="sm" />.
                                       </p>
 
+                                      {/* Story 3.3: Owner/Admin-facing only (this story's Decisions --
+                                          no self-service UI yet), so this button is shown unconditionally
+                                          here rather than gated by role -- the API itself enforces
+                                          self-access vs. Owner/Admin, this page is only ever reached by
+                                          an Owner/Admin route in the current nav (Epic 5 builds the
+                                          self-service equivalent). */}
+                                      <div className="ml-1 mt-1.5">
+                                        <Button
+                                          variant="ghost"
+                                          onClick={() =>
+                                            openRecordPaymentDialog(
+                                              requirement.id,
+                                              "partner",
+                                              partner.partnerId,
+                                              partner.name,
+                                            )
+                                          }
+                                        >
+                                          Record Payment
+                                        </Button>
+                                      </div>
+                                      <RecordedPayments
+                                        transactions={recordedPaymentsFor(
+                                          requirement.id,
+                                          "partner",
+                                          partner.partnerId,
+                                        )}
+                                      />
+
                                       {partner.subPartners.length > 0 ? (
                                         <ShareList>
                                           {partner.subPartners.map((sub) => (
-                                            <ShareRow
-                                              key={sub.subPartnerId}
-                                              name={`↳ ${sub.name}`}
-                                              input={
-                                                <span className="justify-self-end font-mono text-[12.6px] tabular-nums text-ink-soft">
-                                                  {formatSharePercent(sub.sharePercent)}%
-                                                </span>
-                                              }
-                                              action={<Amount value={sub.shouldPay} size="sm" />}
-                                            />
+                                            <div key={sub.subPartnerId}>
+                                              <ShareRow
+                                                name={`↳ ${sub.name}`}
+                                                input={
+                                                  <span className="justify-self-end font-mono text-[12.6px] tabular-nums text-ink-soft">
+                                                    {formatSharePercent(sub.sharePercent)}%
+                                                  </span>
+                                                }
+                                                action={<Amount value={sub.shouldPay} size="sm" />}
+                                              />
+                                              <div className="ml-1 mt-1.5">
+                                                <Button
+                                                  variant="ghost"
+                                                  onClick={() =>
+                                                    openRecordPaymentDialog(
+                                                      requirement.id,
+                                                      "sub_partner",
+                                                      sub.subPartnerId,
+                                                      sub.name,
+                                                    )
+                                                  }
+                                                >
+                                                  Record Payment
+                                                </Button>
+                                              </div>
+                                              <RecordedPayments
+                                                transactions={recordedPaymentsFor(
+                                                  requirement.id,
+                                                  "sub_partner",
+                                                  sub.subPartnerId,
+                                                )}
+                                              />
+                                            </div>
                                           ))}
                                         </ShareList>
                                       ) : null}
@@ -418,6 +645,127 @@ export default function AddMoneyPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      <Dialog
+        open={recordPaymentTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) closeRecordPaymentDialog();
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>
+            Record Payment{recordPaymentTarget ? ` — ${recordPaymentTarget.personName}` : ""}
+          </DialogTitle>
+          <DialogDescription>
+            Owner/Admin only. Saved with an audit record -- a past payment is never edited here.
+          </DialogDescription>
+          <form onSubmit={handleRecordPaymentSubmit} className="mt-4">
+            <Field>
+              <Label htmlFor="tx-amount">Amount</Label>
+              <Input
+                id="tx-amount"
+                name="amount"
+                inputMode="decimal"
+                value={recordAmount}
+                onChange={(event) => setRecordAmount(event.target.value)}
+                required
+                autoFocus
+              />
+              <Helper>0 is accepted -- no minimum payment enforced.</Helper>
+            </Field>
+            <Field>
+              <Label htmlFor="tx-date">Date</Label>
+              <Input
+                id="tx-date"
+                name="transactionDate"
+                type="date"
+                value={recordDate}
+                onChange={(event) => setRecordDate(event.target.value)}
+                required
+              />
+            </Field>
+            <Field>
+              <Label htmlFor="tx-payment-mode">Payment Mode</Label>
+              <select
+                id="tx-payment-mode"
+                name="paymentMode"
+                className="w-full rounded-el border border-border bg-surface px-3 py-2.5 text-[14px] text-ink focus:border-accent focus:outline focus:outline-2 focus:outline-accent-soft"
+                value={recordPaymentMode}
+                onChange={(event) => setRecordPaymentMode(event.target.value as PaymentMode)}
+              >
+                {PAYMENT_MODE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field>
+              <Label htmlFor="tx-reference">Reference Number</Label>
+              <Input
+                id="tx-reference"
+                name="referenceNumber"
+                value={recordReferenceNumber}
+                onChange={(event) => setRecordReferenceNumber(event.target.value)}
+              />
+              <Helper>Optional -- e.g. a cash payment often has none.</Helper>
+            </Field>
+            <Field>
+              <Label htmlFor="tx-notes">Notes</Label>
+              <Input
+                id="tx-notes"
+                name="notes"
+                value={recordNotes}
+                onChange={(event) => setRecordNotes(event.target.value)}
+              />
+            </Field>
+
+            {recordFormError ? (
+              <p role="alert" className="mb-4 text-[13.4px] text-danger">
+                {recordFormError}
+              </p>
+            ) : null}
+
+            <div className="flex gap-2.5">
+              <Button type="submit" disabled={recordSubmitting}>
+                {recordSubmitting ? "Saving…" : "Save"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={closeRecordPaymentDialog}
+                disabled={recordSubmitting}
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+/**
+ * The recorded-payments list shown under a Partner/Sub-partner's Should Pay
+ * row once transactions exist for them against this requirement (Story
+ * 3.3's Code Map) -- Date, Amount, Payment Mode, nothing more. Renders
+ * nothing when there's nothing to show (no fetch-state handling here --
+ * `recordedPaymentsFor` already resolves "not loaded yet" to `[]`).
+ */
+function RecordedPayments({ transactions }: { transactions: InvestmentTransaction[] }) {
+  if (transactions.length === 0) {
+    return null;
+  }
+  return (
+    <div className="ml-1 mt-1.5 flex flex-col gap-1">
+      {transactions.map((transaction) => (
+        <div key={transaction.id} className="flex items-center gap-2 text-[11.6px] text-ink-soft">
+          <span>{transaction.transactionDate}</span>
+          <Amount value={transaction.amount} size="sm" />
+          <span>{PAYMENT_MODE_LABELS[transaction.paymentMode]}</span>
+        </div>
+      ))}
     </div>
   );
 }

@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { PartnerShouldPay } from "@niveshbook/core";
 import type { Money, Percent } from "@niveshbook/types";
 import type { ShouldPayResponse } from "@/lib/should-pay";
+import type { InvestmentTransactionsResponse } from "@/lib/investment-transactions";
 import AddMoneyPage from "./page";
 
 /**
@@ -31,6 +32,14 @@ const getShouldPay = vi.fn();
 
 vi.mock("@/lib/should-pay", () => ({
   getShouldPay: (...args: unknown[]) => getShouldPay(...args),
+}));
+
+const listInvestmentTransactions = vi.fn();
+const recordInvestmentTransaction = vi.fn();
+
+vi.mock("@/lib/investment-transactions", () => ({
+  listInvestmentTransactions: (...args: unknown[]) => listInvestmentTransactions(...args),
+  recordInvestmentTransaction: (...args: unknown[]) => recordInvestmentTransaction(...args),
 }));
 
 const REQUIREMENT = {
@@ -92,6 +101,8 @@ describe("AddMoneyPage -- Should Pay expand (regression, spec-3-2 Review Triage 
     listInvestmentRequirements.mockReset().mockResolvedValue({ requirements: [REQUIREMENT] });
     addInvestmentRequirement.mockReset();
     getShouldPay.mockReset();
+    listInvestmentTransactions.mockReset().mockResolvedValue({ transactions: [] });
+    recordInvestmentTransaction.mockReset();
   });
 
   afterEach(() => {
@@ -161,5 +172,113 @@ describe("AddMoneyPage -- Should Pay expand (regression, spec-3-2 Review Triage 
     releaseFirstFetch?.();
     await Promise.resolve();
     expect(findParagraphContaining("Own: ₹2,50,000")).toBeInTheDocument();
+  });
+});
+
+describe("AddMoneyPage -- Record Payment idempotency key reuse across a retry (regression, spec-3-3 Review Triage row 1)", () => {
+  beforeEach(() => {
+    listInvestmentRequirements.mockReset().mockResolvedValue({ requirements: [REQUIREMENT] });
+    getShouldPay.mockReset().mockResolvedValue(SHOULD_PAY_RESPONSE);
+    listInvestmentTransactions
+      .mockReset()
+      .mockResolvedValue({ transactions: [] } satisfies InvestmentTransactionsResponse);
+    recordInvestmentTransaction.mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("sends the SAME idempotencyKey on a retry after a failed submission, not a fresh one", async () => {
+    recordInvestmentTransaction
+      .mockRejectedValueOnce(new Error("Network error -- please try again."))
+      .mockResolvedValueOnce({
+        id: "tx-1",
+        requirementId: "req-1",
+        projectId: "project-1",
+        partyType: "partner",
+        shareId: "a",
+        sharePercentSnapshot: "50",
+        shouldPaySnapshot: "500000",
+        amount: "700000",
+        transactionDate: "2026-10-05",
+        paymentMode: "cash",
+        referenceNumber: null,
+        notes: null,
+        createdAt: new Date().toISOString(),
+      });
+
+    const user = await renderAndExpand();
+
+    // A "Record Payment" button exists per Partner/Sub-partner row -- the
+    // Partner's own row is the first one.
+    await user.click(screen.getAllByRole("button", { name: "Record Payment" })[0] as HTMLElement);
+
+    const amountInput = await screen.findByLabelText("Amount");
+    fireEvent.change(amountInput, { target: { value: "700000" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+
+    // First attempt: fails.
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(recordInvestmentTransaction).toHaveBeenCalledTimes(1);
+    });
+    await screen.findByRole("alert");
+
+    // Retry, with the dialog still open and the same field values -- exactly
+    // the "user clicks Save again after a perceived failure" scenario this
+    // fix protects.
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(recordInvestmentTransaction).toHaveBeenCalledTimes(2);
+    });
+
+    const firstCallKey = recordInvestmentTransaction.mock.calls[0]?.[3] as string;
+    const secondCallKey = recordInvestmentTransaction.mock.calls[1]?.[3] as string;
+
+    expect(typeof firstCallKey).toBe("string");
+    expect(firstCallKey.length).toBeGreaterThan(0);
+    expect(secondCallKey).toBe(firstCallKey);
+  });
+
+  it("mints a NEW idempotencyKey for a genuinely new submission (dialog closed and reopened)", async () => {
+    recordInvestmentTransaction.mockResolvedValue({
+      id: "tx-1",
+      requirementId: "req-1",
+      projectId: "project-1",
+      partyType: "partner",
+      shareId: "a",
+      sharePercentSnapshot: "50",
+      shouldPaySnapshot: "500000",
+      amount: "700000",
+      transactionDate: "2026-10-05",
+      paymentMode: "cash",
+      referenceNumber: null,
+      notes: null,
+      createdAt: new Date().toISOString(),
+    });
+
+    const user = await renderAndExpand();
+
+    await user.click(screen.getAllByRole("button", { name: "Record Payment" })[0] as HTMLElement);
+    fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "100000" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(recordInvestmentTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    // Dialog closes on success -- open it again for a second, distinct payment.
+    await user.click(screen.getAllByRole("button", { name: "Record Payment" })[0] as HTMLElement);
+    fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "200000" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-06" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(recordInvestmentTransaction).toHaveBeenCalledTimes(2);
+    });
+
+    const firstCallKey = recordInvestmentTransaction.mock.calls[0]?.[3] as string;
+    const secondCallKey = recordInvestmentTransaction.mock.calls[1]?.[3] as string;
+    expect(secondCallKey).not.toBe(firstCallKey);
   });
 });

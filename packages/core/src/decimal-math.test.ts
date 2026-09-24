@@ -6,6 +6,7 @@ import {
   InvalidPercentError,
   toMoney,
   isZeroMoney,
+  moneyEquals,
   InvalidMoneyError,
   sumMoney,
   subtractPercents,
@@ -140,6 +141,38 @@ describe("isZeroMoney", () => {
 
   it("returns false for a small nonzero fractional amount", () => {
     expect(isZeroMoney(toMoney("0.01"))).toBe(false);
+  });
+});
+
+describe("moneyEquals", () => {
+  it("returns true for a value round-tripped through Postgres's numeric(14,2) column against its freshly-submitted, unpadded form (the bug this function fixes)", () => {
+    // A submitted "700000" is stored and read back as "700000.00" -- exact,
+    // no precision lost, just padded to the column's full declared scale.
+    expect(moneyEquals(toMoney("700000"), toMoney("700000.00"))).toBe(true);
+  });
+
+  it("returns true for the identical string compared to itself", () => {
+    expect(moneyEquals(toMoney("1234.56"), toMoney("1234.56"))).toBe(true);
+  });
+
+  it("returns true for zero written two different ways", () => {
+    expect(moneyEquals(toMoney("0"), toMoney("0.00"))).toBe(true);
+  });
+
+  it("returns true for a single trailing zero vs. none (e.g. '5.10' vs '5.1')", () => {
+    expect(moneyEquals(toMoney("5.10"), toMoney("5.1"))).toBe(true);
+  });
+
+  it("returns false for genuinely different values with the same number of decimal places", () => {
+    expect(moneyEquals(toMoney("700000.00"), toMoney("700000.01"))).toBe(false);
+  });
+
+  it("returns false for genuinely different whole-number values", () => {
+    expect(moneyEquals(toMoney("700000"), toMoney("700001"))).toBe(false);
+  });
+
+  it("returns false when one value is much larger, even with matching decimal formatting", () => {
+    expect(moneyEquals(toMoney("700000.00"), toMoney("7000000.00"))).toBe(false);
   });
 });
 

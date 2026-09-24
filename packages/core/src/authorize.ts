@@ -28,7 +28,9 @@ export type Action =
   | "subpartner_shares:view"
   | "investment_requirements:create"
   | "investment_requirements:list"
-  | "should_pay:view";
+  | "should_pay:view"
+  | "investment_transactions:create"
+  | "investment_transactions:list";
 
 /**
  * Role -> allowed-actions permission table. All actions here are
@@ -104,6 +106,18 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // self-service view), not this gate's, matching Epic 2/3's incremental-
   // opening pattern.
   "should_pay:view": new Set(["owner_admin"]),
+  // Story 3.3: Epic 3's first self-access action -- a Partner/Sub-partner may
+  // record their own payment (the AC's persona is explicit: "As a user (or
+  // Owner/Admin on their behalf)"), unlike 3.1/3.2's deliberately Owner/
+  // Admin-only scope. The role-table entry below still gates the
+  // Owner/Admin-acting-for-someone-else path; self-access itself is admitted
+  // via `SELF_ACCESS_ACTIONS` below, not by adding `partner`/`sub_partner`
+  // here. `investment_transactions:list` stays Owner/Admin-only, no
+  // self/scope override -- listing every transaction for a requirement is
+  // oversight functionality (mirrors `investment_requirements:list`'s
+  // precedent); a person's own transaction history view is Epic 5's job.
+  "investment_transactions:create": new Set(["owner_admin"]),
+  "investment_transactions:list": new Set(["owner_admin"]),
 };
 
 /**
@@ -127,11 +141,20 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
  * `subpartner_shares:list` above, just one level deeper (a Sub-partner's own
  * row rather than a Partner's whole structure) and matched against the
  * Sub-partner's own `userId` rather than a Partner's.
+ *
+ * Story 3.3 adds `investment_transactions:create`: a Partner or Sub-partner
+ * may record their own payment (`resourceRef.ownerId` is the target
+ * Partner/Sub-partner Share's own `userId`, resolved by the route from the
+ * Project's current Partner/Sub-partner Shares before calling `authorize()`
+ * -- mirrors `partner_shares:list`/`partner_shares:view_grant`'s Story
+ * 2.4/2.6 precedent of resolving `scopeOwnerIds` from a shares fetch first,
+ * one level down at single-resource granularity instead of a scoped list).
  */
 const SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set([
   "users:view",
   "subpartner_shares:list",
   "subpartner_shares:view",
+  "investment_transactions:create",
 ]);
 
 /**

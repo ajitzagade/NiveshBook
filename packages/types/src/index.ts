@@ -161,3 +161,57 @@ export interface InvestmentRequirement {
   /** ISO 8601 timestamp */
   createdAt: string;
 }
+
+/**
+ * How a recorded payment (Epic 3, Story 3.3) was made -- a fixed enum
+ * matching epic-3-context.md's UX list verbatim. Stored as plain `text` in
+ * Postgres (validated against this exact set by `packages/core`'s
+ * `investment-transaction.ts`), never a DB-level enum type.
+ */
+export type PaymentMode =
+  | "cash"
+  | "cheque"
+  | "neft"
+  | "rtgs"
+  | "imps"
+  | "upi"
+  | "bank_transfer"
+  | "other";
+
+/**
+ * A recorded "Paid Now" payment against one funding requirement's Should Pay
+ * for a specific Partner or Sub-partner (Epic 3, Story 3.3) -- one row per
+ * recorded payment, never edited/versioned in this story (Stories 3.7/3.8
+ * add edit/cancel later). `shareId` is `PartnerShare.partnerId` or
+ * `SubPartnerShare.subPartnerId` -- the *stable* id shared across every
+ * version row of that Partner/Sub-partner, never a version row's own `id`
+ * and never `User.id` (AD-4) -- disambiguated by `partyType`. Not a foreign
+ * key to either share table -- neither `partner_shares.partnerId` nor
+ * `subpartner_shares.subPartnerId` has a uniqueness constraint to reference
+ * (the same reason `subpartner_shares.partnerId` already isn't one).
+ *
+ * `sharePercentSnapshot`/`shouldPaySnapshot` are captured once, at creation
+ * time, by re-running Story 3.2's `computeShouldPay` server-side -- never a
+ * client-submitted value, and never recomputed later from the share's
+ * current state (AD-3), so this row remains an accurate historical record
+ * even after a Partner's `sharePercent` later changes.
+ */
+export interface InvestmentTransaction {
+  id: string;
+  requirementId: string;
+  projectId: string;
+  partyType: "partner" | "sub_partner";
+  /** The stable `partnerId`/`subPartnerId` this payment was recorded against -- see this type's own doc comment. */
+  shareId: string;
+  sharePercentSnapshot: Percent;
+  shouldPaySnapshot: Money;
+  /** "Paid Now" -- `toMoney()`'s baseline validation only, no `> 0` floor (this story's Decisions): `"0"` is explicitly accepted, no minimum payment enforced. */
+  amount: Money;
+  /** Plain date, `YYYY-MM-DD` -- no time component. */
+  transactionDate: string;
+  paymentMode: PaymentMode;
+  referenceNumber: string | null;
+  notes: string | null;
+  /** ISO 8601 timestamp */
+  createdAt: string;
+}

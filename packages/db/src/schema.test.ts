@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { users, projects, partnerShares, subpartnerShares, investmentRequirements } from "./schema";
+import {
+  users,
+  projects,
+  partnerShares,
+  subpartnerShares,
+  investmentRequirements,
+  investmentTransactions,
+  auditLog,
+} from "./schema";
 
 describe("users table schema (FR6)", () => {
   it("marks role NOT NULL — the DB itself rejects a null/missing role", () => {
@@ -137,5 +145,88 @@ describe("investment_requirements table schema (Story 3.1)", () => {
   it("marks createdAt NOT NULL with a DB-side default", () => {
     expect(investmentRequirements.createdAt.notNull).toBe(true);
     expect(investmentRequirements.createdAt.hasDefault).toBe(true);
+  });
+});
+
+describe("investment_transactions table schema (Story 3.3)", () => {
+  it("marks requirementId/projectId/partyType/shareId/sharePercentSnapshot/shouldPaySnapshot/amount/transactionDate/paymentMode/idempotencyKey NOT NULL", () => {
+    expect(investmentTransactions.requirementId.notNull).toBe(true);
+    expect(investmentTransactions.projectId.notNull).toBe(true);
+    expect(investmentTransactions.partyType.notNull).toBe(true);
+    expect(investmentTransactions.shareId.notNull).toBe(true);
+    expect(investmentTransactions.sharePercentSnapshot.notNull).toBe(true);
+    expect(investmentTransactions.shouldPaySnapshot.notNull).toBe(true);
+    expect(investmentTransactions.amount.notNull).toBe(true);
+    expect(investmentTransactions.transactionDate.notNull).toBe(true);
+    expect(investmentTransactions.paymentMode.notNull).toBe(true);
+    expect(investmentTransactions.idempotencyKey.notNull).toBe(true);
+  });
+
+  it("gives id no implicit default -- application code (uuidv7) always supplies one", () => {
+    expect(investmentTransactions.id.hasDefault).toBe(false);
+  });
+
+  it("leaves referenceNumber/notes nullable -- both optional (this story's Decisions)", () => {
+    expect(investmentTransactions.referenceNumber.notNull).toBe(false);
+    expect(investmentTransactions.notes.notNull).toBe(false);
+  });
+
+  it("stores sharePercentSnapshot as numeric(7,4), mirroring partner_shares.sharePercent's precision", () => {
+    expect(investmentTransactions.sharePercentSnapshot.columnType).toBe("PgNumeric");
+    expect(investmentTransactions.sharePercentSnapshot.getSQLType()).toBe("numeric(7, 4)");
+  });
+
+  it("stores shouldPaySnapshot/amount as numeric(14,2), mirroring investment_requirements.amount's precision", () => {
+    expect(investmentTransactions.shouldPaySnapshot.columnType).toBe("PgNumeric");
+    expect(investmentTransactions.shouldPaySnapshot.getSQLType()).toBe("numeric(14, 2)");
+    expect(investmentTransactions.amount.columnType).toBe("PgNumeric");
+    expect(investmentTransactions.amount.getSQLType()).toBe("numeric(14, 2)");
+  });
+
+  it("stores transactionDate as a plain date column (no time component)", () => {
+    expect(investmentTransactions.transactionDate.columnType).toBe("PgDateString");
+    expect(investmentTransactions.transactionDate.getSQLType()).toBe("date");
+  });
+
+  it("stores shareId as uuid with no FK reference -- neither partner_shares.partnerId nor subpartner_shares.subPartnerId has a uniqueness constraint to reference (this story's Decisions)", () => {
+    expect(investmentTransactions.shareId.columnType).toBe("PgUUID");
+  });
+
+  it("enforces idempotencyKey UNIQUE at the DB level -- the actual double-submit protection, not just an application-layer check", () => {
+    expect(investmentTransactions.idempotencyKey.isUnique).toBe(true);
+  });
+
+  it("marks createdAt NOT NULL with a DB-side default", () => {
+    expect(investmentTransactions.createdAt.notNull).toBe(true);
+    expect(investmentTransactions.createdAt.hasDefault).toBe(true);
+  });
+});
+
+describe("audit_log table schema (Story 3.3, AD-5)", () => {
+  it("marks entityType/entityId/action/actorUserId/newValue NOT NULL", () => {
+    expect(auditLog.entityType.notNull).toBe(true);
+    expect(auditLog.entityId.notNull).toBe(true);
+    expect(auditLog.action.notNull).toBe(true);
+    expect(auditLog.actorUserId.notNull).toBe(true);
+    expect(auditLog.newValue.notNull).toBe(true);
+  });
+
+  it("leaves oldValue/reason nullable -- null for this story's create-only entries, populated by later edit/cancel stories", () => {
+    expect(auditLog.oldValue.notNull).toBe(false);
+    expect(auditLog.reason.notNull).toBe(false);
+  });
+
+  it("gives id no implicit default -- application code (uuidv7) always supplies one", () => {
+    expect(auditLog.id.hasDefault).toBe(false);
+  });
+
+  it("stores oldValue/newValue as jsonb", () => {
+    expect(auditLog.oldValue.columnType).toBe("PgJsonb");
+    expect(auditLog.newValue.columnType).toBe("PgJsonb");
+  });
+
+  it("marks createdAt NOT NULL with a DB-side default", () => {
+    expect(auditLog.createdAt.notNull).toBe(true);
+    expect(auditLog.createdAt.hasDefault).toBe(true);
   });
 });

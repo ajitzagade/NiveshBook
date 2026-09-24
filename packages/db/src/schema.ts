@@ -1,4 +1,4 @@
-import { boolean, date, index, numeric, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, date, index, jsonb, numeric, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 /**
  * `users` and `sessions` are the only tables this epic creates (further
@@ -178,3 +178,92 @@ export const investmentRequirements = pgTable(
 );
 
 export type InvestmentRequirementRow = typeof investmentRequirements.$inferSelect;
+
+/**
+ * Story 3.3 (Epic 3): one row per recorded "Paid Now" payment against a
+ * funding requirement's Should Pay for a specific Partner/Sub-partner --
+ * never versioned/edited in this story (Stories 3.7/3.8 add edit/cancel
+ * later, via their own migrations). `shareId` is the *stable*
+ * `partner_shares.partnerId`/`subpartner_shares.subPartnerId` (disambiguated
+ * by `partyType`), never this row's own `id` and never `users.id` (AD-4) --
+ * deliberately **not** a foreign key, since neither `partner_shares` nor
+ * `subpartner_shares` has a uniqueness constraint on that stable id to
+ * reference (the same reason `subpartner_shares.partnerId` already isn't
+ * one -- see that table's own doc comment above). `sharePercentSnapshot`/
+ * `shouldPaySnapshot` mirror `partner_shares.sharePercent`/
+ * `investment_requirements.amount`'s exact column shapes (`numeric(7,4)`/
+ * `numeric(14,2)`) -- captured once at creation time (AD-3), never updated
+ * afterward even if the underlying share later changes. `amount` has no
+ * `> 0` floor at the DB layer either (mirrors `investment_requirements.amount`'s
+ * own no-upper-bound precedent, one level down) -- `"0"` is a valid Paid Now
+ * amount (this story's Decisions). `idempotencyKey` is UNIQUE at the DB
+ * level (this story's Decisions) -- the actual double-submit protection
+ * mechanism, not merely an application-layer check.
+ */
+export const investmentTransactions = pgTable(
+  "investment_transactions",
+  {
+    id: uuid("id").primaryKey(),
+    requirementId: uuid("requirement_id")
+      .notNull()
+      .references(() => investmentRequirements.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    partyType: text("party_type").notNull(),
+    shareId: uuid("share_id").notNull(),
+    sharePercentSnapshot: numeric("share_percent_snapshot", { precision: 7, scale: 4 }).notNull(),
+    shouldPaySnapshot: numeric("should_pay_snapshot", { precision: 14, scale: 2 }).notNull(),
+    amount: numeric("amount", { precision: 14, scale: 2 }).notNull(),
+    transactionDate: date("transaction_date").notNull(),
+    paymentMode: text("payment_mode").notNull(),
+    referenceNumber: text("reference_number"),
+    notes: text("notes"),
+    idempotencyKey: text("idempotency_key").notNull().unique(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // `listByRequirementId` filters on requirement_id -- this resource's
+    // primary read pattern. `(shareId, projectId)` is indexed per AD-4 for
+    // a person's eventual own-history lookup (Epic 5), even though nothing
+    // in this story queries by it yet.
+    index("investment_transactions_requirement_id_idx").on(table.requirementId),
+    index("investment_transactions_share_id_project_id_idx").on(table.shareId, table.projectId),
+  ],
+);
+
+export type InvestmentTransactionRow = typeof investmentTransactions.$inferSelect;
+
+/**
+ * Story 3.3 (Epic 3): a single generic audit-trail table, reused unchanged
+ * by every later financial-write story in Epic 3 and Epic 4 (AD-5) -- never
+ * a per-entity audit table. `entityType`/`entityId` together identify the
+ * row this entry is about (e.g. `entityType: "investment_transaction"`,
+ * `entityId` = that row's `id`); `oldValue` is nullable (`null` for a
+ * create-only entry, populated by later edit/cancel stories); `newValue` is
+ * always required -- even a cancel entry needs *some* resulting state to
+ * record; `reason` is nullable and unused (`null`) by this story's
+ * create-only entries, populated by edit/cancel stories.
+ */
+export const auditLog = pgTable(
+  "audit_log",
+  {
+    id: uuid("id").primaryKey(),
+    entityType: text("entity_type").notNull(),
+    entityId: uuid("entity_id").notNull(),
+    action: text("action").notNull(),
+    actorUserId: uuid("actor_user_id")
+      .notNull()
+      .references(() => users.id),
+    oldValue: jsonb("old_value"),
+    newValue: jsonb("new_value").notNull(),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // Every consumer looks up an entity's audit trail by (entityType, entityId) together.
+    index("audit_log_entity_type_entity_id_idx").on(table.entityType, table.entityId),
+  ],
+);
+
+export type AuditLogRow = typeof auditLog.$inferSelect;

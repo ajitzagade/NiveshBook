@@ -174,6 +174,24 @@ export function isZeroMoney(value: Money): boolean {
   return parseMoneyScaled(value) === 0;
 }
 
+/**
+ * `true` if `a` and `b` represent the same numeric `Money` value, decimal-safe
+ * via `parseMoneyScaled` -- never `parseFloat`/`Number()`, and never a raw
+ * `===` on the strings themselves. Needed because a value round-trips through
+ * Postgres's `numeric(14,2)` column at its full declared scale (a stored
+ * `"700000"` reads back as `"700000.00"` -- exact, no precision lost, just
+ * padded, the same well-known behavior `formatSharePercent`/`formatAmount`
+ * already handle for *display*) while `toMoney` itself deliberately never
+ * reformats the value it's given -- so two `Money` strings can be numerically
+ * identical yet byte-different depending on whether one came fresh from a
+ * caller or back out of a `numeric` column. `packages/db`'s
+ * `matchesRequest` (Story 3.3's idempotency-replay check) uses this instead
+ * of `===` for exactly that reason.
+ */
+export function moneyEquals(a: Money, b: Money): boolean {
+  return parseMoneyScaled(a) === parseMoneyScaled(b);
+}
+
 /** Formats an integer scaled by `MONEY_SCALE` (100, i.e. 2 decimal places) back into a plain decimal string, trimming trailing fractional zeros -- mirrors `formatScaled` one decimal-place-count down. */
 function formatMoneyScaled(scaled: number): string {
   const whole = Math.trunc(scaled / MONEY_SCALE);
