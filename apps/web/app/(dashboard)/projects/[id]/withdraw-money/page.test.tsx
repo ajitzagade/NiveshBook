@@ -203,8 +203,13 @@ describe("WithdrawMoneyPage -- Withdrawal Adjustment chip (Story 4.3)", () => {
     render(<WithdrawMoneyPage />);
 
     await screen.findByText("A");
-    expect(await screen.findByText("Keep for Later")).toBeInTheDocument();
-    expect(screen.getByText("₹90,000")).toBeInTheDocument();
+    const chip = (await screen.findByText("Keep for Later")).closest("span") as HTMLElement;
+    // Scoped to the chip itself (not the page as a whole) -- Story 4.4's
+    // separate Recommended Available Withdrawal line legitimately renders
+    // the same ₹90,000 figure elsewhere on the row (they algebraically
+    // coincide for `keep_for_later`), so a page-wide `getByText` is
+    // ambiguous now; the chip's own amount is what this test is about.
+    expect(within(chip).getByText("₹90,000")).toBeInTheDocument();
   });
 
   it("renders an Extra Taken chip with its amount when Taken exceeds Can Take", async () => {
@@ -296,7 +301,12 @@ describe("WithdrawMoneyPage -- Withdrawal Adjustment chip (Story 4.3)", () => {
     const sub2Row = screen.getByText("↳ Sub2").closest("div")?.parentElement as HTMLElement;
 
     expect(within(sub1Row).getByText("Keep for Later")).toBeInTheDocument();
-    expect(within(sub1Row).getByText("₹20,000")).toBeInTheDocument();
+    // Scoped to the chip itself, not the whole sub1Row -- Story 4.4's
+    // separate Recommended Available Withdrawal line also renders ₹20,000
+    // on this same row (they algebraically coincide for `keep_for_later`),
+    // so a row-wide lookup is ambiguous now.
+    const sub1Chip = within(sub1Row).getByText("Keep for Later").closest("span") as HTMLElement;
+    expect(within(sub1Chip).getByText("₹20,000")).toBeInTheDocument();
     expect(within(sub1Row).queryByText("Extra Taken")).not.toBeInTheDocument();
 
     expect(within(sub2Row).getByText("Extra Taken")).toBeInTheDocument();
@@ -322,9 +332,157 @@ describe("WithdrawMoneyPage -- Withdrawal Adjustment chip (Story 4.3)", () => {
     render(<WithdrawMoneyPage />);
 
     await screen.findByText("A");
-    expect(await screen.findByText("No Adjustment")).toBeInTheDocument();
-    expect(screen.queryByText("₹0")).not.toBeInTheDocument();
+    const chip = (await screen.findByText("No Adjustment")).closest("span") as HTMLElement;
+    // Scoped to the chip itself -- Story 4.4's separate Recommended Available
+    // Withdrawal line legitimately renders "₹0" elsewhere on this row for
+    // adjustmentType "none" (AC3's "nothing further recommended" case), so a
+    // page-wide `queryByText("₹0")` is no longer a valid proxy for "the chip
+    // shows no spurious amount"; this test's actual intent (see its title).
+    expect(within(chip).queryByText("₹0")).not.toBeInTheDocument();
     expect(screen.queryByText("Keep for Later")).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Story 4.4 (FR24): the Recommended Available Withdrawal line shown next to
+ * the Withdrawal Adjustment chip -- `recommendedWithdrawalFor` derived
+ * entirely from the already-fetched Story 4.3 adjustment (no new fetch, no
+ * new API), covering all three `adjustmentType` values plus the
+ * not-yet-loaded case per this story's Intent.
+ */
+describe("WithdrawMoneyPage -- Recommended Available Withdrawal (Story 4.4)", () => {
+  beforeEach(() => {
+    getCanTake.mockReset();
+    listWithdrawalTransactions.mockReset().mockResolvedValue(EMPTY_WITHDRAWALS_RESPONSE);
+    getWithdrawalAdjustments.mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("recommends the Keep for Later amount when adjustmentType is keep_for_later", async () => {
+    getCanTake.mockResolvedValue(CAN_TAKE_RESPONSE);
+    getWithdrawalAdjustments.mockResolvedValue({
+      partners: [
+        makePartnerAdjustment({
+          partnerId: "b",
+          name: "B",
+          adjustmentType: "keep_for_later",
+          adjustmentAmount: "90000" as Money,
+        }),
+      ],
+    });
+
+    render(<WithdrawMoneyPage />);
+
+    await screen.findByText("A");
+    expect(await findParagraphContaining("Recommended Available Withdrawal:")).toHaveTextContent(
+      "₹90,000",
+    );
+  });
+
+  it("recommends 0 when adjustmentType is extra_taken -- nothing further until back under entitlement", async () => {
+    getCanTake.mockResolvedValue(CAN_TAKE_RESPONSE);
+    getWithdrawalAdjustments.mockResolvedValue({
+      partners: [
+        makePartnerAdjustment({
+          partnerId: "b",
+          name: "B",
+          adjustmentType: "extra_taken",
+          adjustmentAmount: "150000" as Money,
+        }),
+      ],
+    });
+
+    render(<WithdrawMoneyPage />);
+
+    await screen.findByText("A");
+    expect(await findParagraphContaining("Recommended Available Withdrawal:")).toHaveTextContent("₹0");
+  });
+
+  it("renders no Recommended Available Withdrawal line when adjustmentType is none -- restating a figure the No Adjustment chip already implies adds no information (orchestrator-authorized refinement, 2026-09-24)", async () => {
+    getCanTake.mockResolvedValue(CAN_TAKE_RESPONSE);
+    getWithdrawalAdjustments.mockResolvedValue({
+      partners: [
+        makePartnerAdjustment({
+          partnerId: "b",
+          name: "B",
+          adjustmentType: "none",
+          adjustmentAmount: "0" as Money,
+        }),
+      ],
+    });
+
+    render(<WithdrawMoneyPage />);
+
+    await screen.findByText("A");
+    await screen.findByText("No Adjustment");
+    expect(screen.queryByText(/Recommended Available Withdrawal/)).not.toBeInTheDocument();
+  });
+
+  it("renders no Recommended Available Withdrawal line while the adjustments fetch hasn't resolved yet (never a misleading ₹0)", async () => {
+    getCanTake.mockResolvedValue(CAN_TAKE_RESPONSE);
+    getWithdrawalAdjustments.mockReturnValue(new Promise(() => {}));
+
+    render(<WithdrawMoneyPage />);
+
+    await screen.findByText("A");
+    expect(screen.queryByText(/Recommended Available Withdrawal/)).not.toBeInTheDocument();
+  });
+
+  it("renders each Sub-partner's own Recommended Available Withdrawal line under their own row, never swapped with a sibling's (mirrors Story 4.3's findSubPartnerAdjustment chip coverage)", async () => {
+    getCanTake.mockResolvedValue(CAN_TAKE_RESPONSE);
+    getWithdrawalAdjustments.mockResolvedValue({
+      partners: [
+        makePartnerAdjustment({
+          partnerId: "a",
+          name: "A",
+          subPartners: [
+            {
+              subPartnerId: "sub1",
+              name: "Sub1",
+              sharePercent: "12.5" as Percent,
+              canTake: "62500" as Money,
+              taken: "0" as Money,
+              adjustmentType: "keep_for_later",
+              adjustmentAmount: "20000" as Money,
+            },
+            {
+              subPartnerId: "sub2",
+              name: "Sub2",
+              sharePercent: "12.5" as Percent,
+              canTake: "62500" as Money,
+              taken: "70000" as Money,
+              adjustmentType: "extra_taken",
+              adjustmentAmount: "7500" as Money,
+            },
+          ],
+        }),
+      ],
+    });
+
+    render(<WithdrawMoneyPage />);
+
+    await screen.findByText("A");
+    const sub1Row = screen.getByText("↳ Sub1").closest("div")?.parentElement as HTMLElement;
+    const sub2Row = screen.getByText("↳ Sub2").closest("div")?.parentElement as HTMLElement;
+
+    // Sub1 (keep_for_later): recommends its Keep for Later amount.
+    expect(
+      within(sub1Row).getByText((_, element) => {
+        if (element?.tagName !== "P") return false;
+        return (element.textContent ?? "").includes("Recommended Available Withdrawal:");
+      }),
+    ).toHaveTextContent("₹20,000");
+
+    // Sub2 (extra_taken): recommends 0, never Sub1's ₹20,000.
+    expect(
+      within(sub2Row).getByText((_, element) => {
+        if (element?.tagName !== "P") return false;
+        return (element.textContent ?? "").includes("Recommended Available Withdrawal:");
+      }),
+    ).toHaveTextContent("₹0");
   });
 });
 
@@ -463,8 +621,12 @@ describe("WithdrawMoneyPage -- Record Withdrawal dialog (Story 4.2)", () => {
     await waitFor(() => {
       expect(getWithdrawalAdjustments).toHaveBeenCalledTimes(2);
     });
-    expect(await screen.findByText("Keep for Later")).toBeInTheDocument();
-    expect(screen.getByText("₹1,50,000")).toBeInTheDocument();
+    // Scoped to the chip itself -- Story 4.4's separate Recommended
+    // Available Withdrawal line also renders ₹1,50,000 on this same row
+    // (they algebraically coincide for `keep_for_later`), so a page-wide
+    // lookup is ambiguous now.
+    const chip = (await screen.findByText("Keep for Later")).closest("span") as HTMLElement;
+    expect(within(chip).getByText("₹1,50,000")).toBeInTheDocument();
   });
 
   it("renders a validation/server error inside the dialog on failure, without closing it", async () => {

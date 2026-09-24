@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
 import { BanknoteArrowDown, Minus, Save, X } from "lucide-react";
 import type { PartnerCanTake, PartnerWithdrawalAdjustment } from "@niveshbook/core";
-import type { PaymentMode, WithdrawalTransaction } from "@niveshbook/types";
+import type { Money, PaymentMode, WithdrawalTransaction } from "@niveshbook/types";
 import {
   Amount,
   Button,
@@ -374,7 +374,14 @@ export default function WithdrawMoneyPage() {
               Project.
             </p>
             <ShareList>
-              {state.partners.map((partner) => (
+              {state.partners.map((partner) => {
+                // Computed once per row and passed to both `<AdjustmentChip>`
+                // and `<RecommendedWithdrawal>` below -- calling
+                // `findPartnerAdjustment` twice would re-scan
+                // `adjustmentsState.partners` (an O(n) `.find`) a second time
+                // for the same result.
+                const partnerAdjustment = findPartnerAdjustment(partner.partnerId);
+                return (
                 <div key={partner.partnerId}>
                   <ShareRow
                     name={partner.name}
@@ -402,8 +409,9 @@ export default function WithdrawMoneyPage() {
                     {partner.name}&apos;s normal Can Take is{" "}
                     <Amount value={partner.ownCanTake} size="sm" />.
                   </p>
-                  <div className="ml-1 mt-1.5">
-                    <AdjustmentChip adjustment={findPartnerAdjustment(partner.partnerId)} />
+                  <div className="ml-1 mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <AdjustmentChip adjustment={partnerAdjustment} />
+                    <RecommendedWithdrawal adjustment={partnerAdjustment} />
                   </div>
 
                   <div className="ml-1 mt-1.5">
@@ -421,7 +429,11 @@ export default function WithdrawMoneyPage() {
 
                   {partner.subPartners.length > 0 ? (
                     <ShareList>
-                      {partner.subPartners.map((sub) => (
+                      {partner.subPartners.map((sub) => {
+                        // Same once-per-row rationale as `partnerAdjustment`
+                        // above, one level down.
+                        const subAdjustment = findSubPartnerAdjustment(partner.partnerId, sub.subPartnerId);
+                        return (
                         <div key={sub.subPartnerId}>
                           <ShareRow
                             name={`↳ ${sub.name}`}
@@ -432,10 +444,9 @@ export default function WithdrawMoneyPage() {
                             }
                             action={<Amount value={sub.canTake} size="sm" />}
                           />
-                          <div className="ml-1 mt-1.5">
-                            <AdjustmentChip
-                              adjustment={findSubPartnerAdjustment(partner.partnerId, sub.subPartnerId)}
-                            />
+                          <div className="ml-1 mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                            <AdjustmentChip adjustment={subAdjustment} />
+                            <RecommendedWithdrawal adjustment={subAdjustment} />
                           </div>
                           <div className="ml-1 mt-1.5">
                             <Button
@@ -452,11 +463,13 @@ export default function WithdrawMoneyPage() {
                             transactions={recordedWithdrawalsFor("sub_partner", sub.subPartnerId)}
                           />
                         </div>
-                      ))}
+                        );
+                      })}
                     </ShareList>
                   ) : null}
                 </div>
-              ))}
+                );
+              })}
             </ShareList>
             <DistributedCheck
               label="Can Take total"
@@ -651,5 +664,67 @@ function AdjustmentChip({ adjustment }: { adjustment: AdjustmentChipInfo | null 
         </>
       ) : null}
     </StatusChip>
+  );
+}
+
+/**
+ * Story 4.4 (FR24): the next cycle's Recommended Available Withdrawal,
+ * derived entirely from Story 4.3's already-fetched Withdrawal Adjustment --
+ * no new backend mechanism (confirmed with the user 2026-09-24; see this
+ * story's Intent). Withdrawals have no discrete "new cycle" snapshot event
+ * the way Story 3.5's Investment carry-forward does (Can Take/Taken are both
+ * continuous, cumulative, Project-scoped totals), so `Can Take − Taken`
+ * already algebraically equals `new Base Entitlement + Previous Keep For
+ * Later` -- Story 4.3's `keep_for_later` adjustmentAmount already *is* the
+ * recommendation, continuously, with no separate computation needed here.
+ *
+ * Returns `null` (renders nothing) both when the adjustment hasn't loaded yet
+ * (never a misleading "₹0" -- mirrors `AdjustmentChip`'s identical
+ * not-yet-loaded convention) AND for `"none"` (orchestrator-authorized
+ * refinement, 2026-09-24: mirroring Add Money's "Recommended: ₹X" line,
+ * which suppresses itself rather than restating a figure that adds no
+ * information beyond the chip already shown -- "No Adjustment" already says
+ * there's nothing to recommend). `"extra_taken"` still recommends `"0"` --
+ * that zero *does* carry information distinct from "none"'s silence: nothing
+ * further is recommended until back under entitlement (this epic's AC3).
+ * `"extra_taken"` can't reuse the plain `Can Take − Taken` framing directly
+ * either -- Taken exceeding Can Take there would make that subtraction
+ * negative, which is never a valid Recommended Available Withdrawal.
+ */
+function recommendedWithdrawalFor(adjustment: AdjustmentChipInfo | null): Money | null {
+  if (!adjustment || adjustment.adjustmentType === "none") return null;
+  if (adjustment.adjustmentType === "keep_for_later") {
+    return adjustment.adjustmentAmount;
+  }
+  // A validated `toMoney("0")` call would be nicer than this cast, but
+  // `@niveshbook/core` has no subpath export -- any *runtime* (non-type-only)
+  // import from it pulls in the whole barrel via `index.ts`, including
+  // `auth.ts`'s `argon2` dependency (a native Node addon). That breaks the
+  // client bundle for this "use client" page (confirmed: `next build` fails
+  // with "Module not found: Can't resolve 'fs'" tracing straight back to
+  // this import). `"0"` is a static literal, not untrusted input, so the
+  // validation `toMoney` would perform is unneeded here anyway.
+  return "0" as Money;
+}
+
+/**
+ * Renders "Recommended Available Withdrawal: {Amount}" next to the
+ * Withdrawal Adjustment chip (Story 4.4) -- distinct in framing (a
+ * forward-looking suggestion for the *next* Take Now) from the chip (the
+ * *current* cycle's status), mirroring Add Money's separate "Recommended:
+ * ₹X" line next to its own Investment Adjustment chip (spec-3-5). Renders
+ * nothing until `recommendedWithdrawalFor` resolves past `null`. No `ml-1
+ * mt-1` margin here (unlike this file's other row lines) -- intentional, not
+ * a missed copy-paste: this sits inside the shared flex row alongside
+ * `<AdjustmentChip>` now, so spacing is owned by that parent's `gap-x-3`
+ * instead.
+ */
+function RecommendedWithdrawal({ adjustment }: { adjustment: AdjustmentChipInfo | null }) {
+  const recommended = recommendedWithdrawalFor(adjustment);
+  if (recommended === null) return null;
+  return (
+    <p className="text-[12.6px] font-semibold text-ink-soft">
+      Recommended Available Withdrawal: <Amount value={recommended} size="sm" />
+    </p>
   );
 }
