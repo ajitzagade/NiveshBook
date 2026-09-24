@@ -12,6 +12,7 @@
     "lint:boundaries": "depcruise apps packages --config .dependency-cruiser.cjs",
     "audit": "pnpm audit",
     "test": "turbo run test",
+    "e2e": "pnpm --filter web e2e",
     "typecheck": "turbo run typecheck",
     "clean": "turbo run clean && rm -rf node_modules",
     "db:migrate": "pnpm --filter @niveshbook/db db:migrate"
