@@ -38,7 +38,8 @@ export type Action =
   | "investment_status:view"
   | "can_take:view"
   | "withdrawal_transactions:create"
-  | "withdrawal_transactions:list";
+  | "withdrawal_transactions:list"
+  | "withdrawal_adjustments:view";
 
 /**
  * Role -> allowed-actions permission table. All actions here are
@@ -187,6 +188,14 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // precedent one ledger over; a person's own withdrawal history view is
   // Epic 5's job.
   "withdrawal_transactions:list": new Set(["owner_admin"]),
+  // Story 4.3 (Epic 4): Withdrawal Adjustment (Can Take - Taken) is
+  // Owner/Admin-only in this story, mirroring `investment_adjustments:view`'s
+  // identical precedent (spec-4-3's Decisions) -- the AC's "As a Partner"
+  // framing describes whose money is tracked, not who calls the API today;
+  // no self-service UI exists yet (Epic 5's planned job). No
+  // `SELF_ACCESS_ACTIONS`/`SCOPE_SELF_ACCESS_ACTIONS` entry, matching
+  // `investment_adjustments:view`'s exact all-or-nothing-for-the-role shape.
+  "withdrawal_adjustments:view": new Set(["owner_admin"]),
 };
 
 /**

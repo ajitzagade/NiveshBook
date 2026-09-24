@@ -370,3 +370,40 @@ export interface WithdrawalTransaction {
   /** ISO 8601 timestamp */
   createdAt: string;
 }
+
+/**
+ * The Withdrawal Adjustment ledger row for one Partner or Sub-partner on one
+ * Project (Epic 4, Story 4.3) -- ONE current row per `(partyType, shareId,
+ * projectId)`, upserted every time it's viewed, mirroring `InvestmentAdjustment`'s
+ * exact single-current-row shape one ledger over. Unlike `InvestmentAdjustment`
+ * there is no `requirementId` column -- Can Take (Story 4.1) is Project-scoped
+ * with no funding-round equivalent, so Withdrawal Adjustment mirrors that
+ * scoping exactly (this story's Decisions).
+ *
+ * `canTake`/`taken`/`adjustmentAmount` are all `Money` -- always non-negative
+ * by construction (AD-2) -- so the sign of the gap lives in the separate
+ * `adjustmentType` discriminator instead, mirroring `InvestmentAdjustment`'s
+ * `pending`/`extra_paid`/`none` three-way split exactly, renamed for this
+ * ledger's own domain terms: `"keep_for_later"` when Can Take exceeds Taken,
+ * `"extra_taken"` when Taken exceeds Can Take (accepted per Story 4.2's
+ * no-cap decision -- Story 4.5 adds the authorization gate later, not this
+ * computation), `"none"` when they're exactly equal (`adjustmentAmount: "0"`).
+ */
+export interface WithdrawalAdjustment {
+  id: string;
+  projectId: string;
+  partyType: "partner" | "sub_partner";
+  /** The stable `partnerId`/`subPartnerId` this adjustment is keyed to -- never `User.id` (AD-4). */
+  shareId: string;
+  /** The live Can Take entitlement (Story 4.1) this row was last computed against. */
+  canTake: Money;
+  /** Sum of every `WithdrawalTransaction.amount` recorded for this `(partyType, shareId)` across the whole Project to date -- `"0"` whether nothing was recorded yet or an explicit `"0"` transaction was. */
+  taken: Money;
+  adjustmentType: "keep_for_later" | "extra_taken" | "none";
+  /** Non-negative magnitude of the gap -- `"0"` when `adjustmentType` is `"none"`. */
+  adjustmentAmount: Money;
+  /** ISO 8601 timestamp -- when this row was last upserted. */
+  updatedAt: string;
+  /** ISO 8601 timestamp -- when this row was first created. */
+  createdAt: string;
+}

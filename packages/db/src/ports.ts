@@ -20,6 +20,7 @@ import {
   type RecommendedAmountPort,
   type WithdrawalTransactionPort,
   type CreateWithdrawalTransactionInput,
+  type WithdrawalAdjustmentPort,
 } from "@niveshbook/core";
 import type {
   User,
@@ -34,6 +35,7 @@ import type {
   InvestmentAdjustment,
   RecommendedAmount,
   WithdrawalTransaction,
+  WithdrawalAdjustment,
   PaymentMode,
   Money,
   AuditLogEntry,
@@ -51,6 +53,7 @@ import {
   investmentAdjustments,
   recommendedAmounts,
   withdrawalTransactions,
+  withdrawalAdjustments,
   auditLog,
   type SessionRow,
   type UserRow,
@@ -62,6 +65,7 @@ import {
   type InvestmentAdjustmentRow,
   type RecommendedAmountRow,
   type WithdrawalTransactionRow,
+  type WithdrawalAdjustmentRow,
   type AuditLogRow,
 } from "./schema";
 
@@ -251,6 +255,21 @@ function toWithdrawalTransaction(row: WithdrawalTransactionRow): WithdrawalTrans
     paymentMode: row.paymentMode as PaymentMode,
     referenceNumber: row.referenceNumber,
     notes: row.notes,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function toWithdrawalAdjustment(row: WithdrawalAdjustmentRow): WithdrawalAdjustment {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    partyType: row.partyType as WithdrawalAdjustment["partyType"],
+    shareId: row.shareId,
+    canTake: row.canTake as Money,
+    taken: row.taken as Money,
+    adjustmentType: row.adjustmentType as WithdrawalAdjustment["adjustmentType"],
+    adjustmentAmount: row.adjustmentAmount as Money,
+    updatedAt: row.updatedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -829,6 +848,66 @@ export function createWithdrawalTransactionPort(
         .where(eq(withdrawalTransactions.projectId, projectId))
         .orderBy(asc(withdrawalTransactions.createdAt));
       return rows.map(toWithdrawalTransaction);
+    },
+  };
+}
+
+/**
+ * Drizzle-backed implementation of `packages/core`'s `WithdrawalAdjustmentPort`
+ * (Story 4.3) -- mirrors `createInvestmentAdjustmentPort`'s exact
+ * `.onConflictDoUpdate(...)` shape one ledger over. `upsert` writes exactly
+ * one current row per `(partyType, shareId, projectId)` (this story's
+ * Boundaries): the first call for a given key inserts a new row; every later
+ * call for the *same* key overwrites that row's `canTake`/`taken`/
+ * `adjustmentType`/`adjustmentAmount`/`updatedAt` in place, targeting the
+ * table's UNIQUE `(partyType, shareId, projectId)` constraint
+ * (`withdrawal_adjustments_party_share_project_unique`) -- never a second row
+ * for the same person, and never a duplicate on a re-view with no new
+ * withdrawal transactions in between.
+ */
+export function createWithdrawalAdjustmentPort(
+  database: Database = getDb(),
+): WithdrawalAdjustmentPort {
+  return {
+    async upsert(input) {
+      const [row] = await database
+        .insert(withdrawalAdjustments)
+        .values({
+          id: uuidv7(),
+          projectId: input.projectId,
+          partyType: input.partyType,
+          shareId: input.shareId,
+          canTake: input.canTake,
+          taken: input.taken,
+          adjustmentAmount: input.adjustmentAmount,
+          adjustmentType: input.adjustmentType,
+        })
+        .onConflictDoUpdate({
+          target: [
+            withdrawalAdjustments.partyType,
+            withdrawalAdjustments.shareId,
+            withdrawalAdjustments.projectId,
+          ],
+          set: {
+            canTake: input.canTake,
+            taken: input.taken,
+            adjustmentAmount: input.adjustmentAmount,
+            adjustmentType: input.adjustmentType,
+            updatedAt: new Date(),
+          },
+        })
+        .returning();
+      if (!row) {
+        throw new Error("Failed to upsert withdrawal adjustment");
+      }
+      return toWithdrawalAdjustment(row);
+    },
+    async listByProjectId(projectId) {
+      const rows = await database
+        .select()
+        .from(withdrawalAdjustments)
+        .where(eq(withdrawalAdjustments.projectId, projectId));
+      return rows.map(toWithdrawalAdjustment);
     },
   };
 }

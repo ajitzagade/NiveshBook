@@ -494,3 +494,56 @@ export const withdrawalTransactions = pgTable(
 );
 
 export type WithdrawalTransactionRow = typeof withdrawalTransactions.$inferSelect;
+
+/**
+ * Story 4.3 (Epic 4): ONE current row per `(partyType, shareId, projectId)`
+ * (AD-4: never `users.id`) -- mirrors `investment_adjustments`' exact
+ * single-current-row shape one ledger over. Every write is an upsert keyed
+ * by the table's UNIQUE `(partyType, shareId, projectId)` constraint below
+ * (Drizzle's `onConflictDoUpdate`, `packages/db/src/ports.ts`'s
+ * `createWithdrawalAdjustmentPort`), so `canTake`/`taken`/`adjustmentAmount`/
+ * `adjustmentType` always reflect the *most recently viewed* state.
+ *
+ * Unlike `investment_adjustments`, there is **no `requirementId` column** --
+ * Can Take (Story 4.1) is Project-scoped with no funding-round equivalent,
+ * so inventing one here would contradict Story 4.1's own design (this
+ * story's Decisions). `shareId` mirrors `investment_adjustments.shareId`'s
+ * precedent exactly: the *stable* `partner_shares.partnerId`/
+ * `subpartner_shares.subPartnerId` (disambiguated by `partyType`), never
+ * this row's own `id` and never `users.id` -- deliberately **not** a foreign
+ * key, for the identical reason neither share table has a uniqueness
+ * constraint on that stable id to reference. `canTake`/`taken`/
+ * `adjustmentAmount` are `numeric(14,2)`, matching
+ * `investment_adjustments.shouldPay`'s exact precision -- always
+ * non-negative by construction (AD-2); the gap's sign lives in
+ * `adjustmentType` (`"keep_for_later" | "extra_taken" | "none"`) instead.
+ */
+export const withdrawalAdjustments = pgTable(
+  "withdrawal_adjustments",
+  {
+    id: uuid("id").primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    partyType: text("party_type").notNull(),
+    shareId: uuid("share_id").notNull(),
+    canTake: numeric("can_take", { precision: 14, scale: 2 }).notNull(),
+    taken: numeric("taken", { precision: 14, scale: 2 }).notNull(),
+    adjustmentAmount: numeric("adjustment_amount", { precision: 14, scale: 2 }).notNull(),
+    adjustmentType: text("adjustment_type").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // The single-row-per-person guarantee (this story's Boundaries) -- the
+    // actual upsert-conflict target `createWithdrawalAdjustmentPort` targets,
+    // not merely an application-layer check.
+    unique("withdrawal_adjustments_party_share_project_unique").on(
+      table.partyType,
+      table.shareId,
+      table.projectId,
+    ),
+  ],
+);
+
+export type WithdrawalAdjustmentRow = typeof withdrawalAdjustments.$inferSelect;

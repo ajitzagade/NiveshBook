@@ -10,6 +10,7 @@ import {
   investmentAdjustments,
   recommendedAmounts,
   withdrawalTransactions,
+  withdrawalAdjustments,
   auditLog,
 } from "./schema";
 
@@ -321,6 +322,66 @@ describe("withdrawal_transactions table schema (Story 4.2)", () => {
     expect(
       shareProjectIndex!.config.columns.map((column) => (column as { name: string }).name),
     ).toEqual(["share_id", "project_id"]);
+  });
+});
+
+describe("withdrawal_adjustments table schema (Story 4.3)", () => {
+  it("marks projectId/partyType/shareId/canTake/taken/adjustmentAmount/adjustmentType NOT NULL", () => {
+    expect(withdrawalAdjustments.projectId.notNull).toBe(true);
+    expect(withdrawalAdjustments.partyType.notNull).toBe(true);
+    expect(withdrawalAdjustments.shareId.notNull).toBe(true);
+    expect(withdrawalAdjustments.canTake.notNull).toBe(true);
+    expect(withdrawalAdjustments.taken.notNull).toBe(true);
+    expect(withdrawalAdjustments.adjustmentAmount.notNull).toBe(true);
+    expect(withdrawalAdjustments.adjustmentType.notNull).toBe(true);
+  });
+
+  it("has no requirementId column -- unlike investment_adjustments, Can Take has no funding-round equivalent (this story's Decisions)", () => {
+    expect(Object.keys(withdrawalAdjustments)).not.toContain("requirementId");
+  });
+
+  it("gives id no implicit default -- application code (uuidv7) always supplies one", () => {
+    expect(withdrawalAdjustments.id.hasDefault).toBe(false);
+  });
+
+  it("stores canTake/taken/adjustmentAmount as numeric(14,2), mirroring investment_adjustments.shouldPay's precision", () => {
+    expect(withdrawalAdjustments.canTake.columnType).toBe("PgNumeric");
+    expect(withdrawalAdjustments.canTake.getSQLType()).toBe("numeric(14, 2)");
+    expect(withdrawalAdjustments.taken.columnType).toBe("PgNumeric");
+    expect(withdrawalAdjustments.taken.getSQLType()).toBe("numeric(14, 2)");
+    expect(withdrawalAdjustments.adjustmentAmount.columnType).toBe("PgNumeric");
+    expect(withdrawalAdjustments.adjustmentAmount.getSQLType()).toBe("numeric(14, 2)");
+  });
+
+  it("stores shareId as uuid with no FK reference -- mirrors investment_adjustments.shareId's precedent", () => {
+    expect(withdrawalAdjustments.shareId.columnType).toBe("PgUUID");
+  });
+
+  it("cascade-deletes when its projectId's project is deleted", () => {
+    const { foreignKeys } = getTableConfig(withdrawalAdjustments);
+    const projectFk = foreignKeys.find((fk) =>
+      fk.reference().columns.some((column) => column.name === "project_id"),
+    );
+    expect(projectFk).toBeDefined();
+    expect(projectFk!.onDelete).toBe("cascade");
+  });
+
+  it("enforces a composite UNIQUE constraint on (partyType, shareId, projectId) -- the single-row-per-person guarantee (this story's Boundaries), not just an application-layer check", () => {
+    const { uniqueConstraints } = getTableConfig(withdrawalAdjustments);
+    expect(uniqueConstraints).toHaveLength(1);
+    const constraint = uniqueConstraints[0];
+    expect(constraint?.columns.map((column) => column.name)).toEqual([
+      "party_type",
+      "share_id",
+      "project_id",
+    ]);
+  });
+
+  it("marks updatedAt/createdAt NOT NULL with a DB-side default", () => {
+    expect(withdrawalAdjustments.updatedAt.notNull).toBe(true);
+    expect(withdrawalAdjustments.updatedAt.hasDefault).toBe(true);
+    expect(withdrawalAdjustments.createdAt.notNull).toBe(true);
+    expect(withdrawalAdjustments.createdAt.hasDefault).toBe(true);
   });
 });
 

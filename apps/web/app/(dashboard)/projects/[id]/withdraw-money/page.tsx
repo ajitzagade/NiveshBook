@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
 import { BanknoteArrowDown, Minus, Save, X } from "lucide-react";
-import type { PartnerCanTake } from "@niveshbook/core";
+import type { PartnerCanTake, PartnerWithdrawalAdjustment } from "@niveshbook/core";
 import type { PaymentMode, WithdrawalTransaction } from "@niveshbook/types";
 import {
   Amount,
@@ -22,10 +22,13 @@ import {
   PageHeader,
   ShareList,
   ShareRow,
+  StatusChip,
   toast,
   formatAmount,
+  type StatusChipVariant,
 } from "@niveshbook/ui";
 import { getCanTake } from "@/lib/can-take";
+import { getWithdrawalAdjustments } from "@/lib/withdrawal-adjustments";
 import {
   listWithdrawalTransactions,
   recordWithdrawalTransaction,
@@ -40,6 +43,18 @@ type WithdrawalsState =
   | { status: "loading" }
   | { status: "error"; message: string }
   | { status: "loaded"; transactions: WithdrawalTransaction[] };
+
+/**
+ * Story 4.3: the Withdrawal Adjustment status per Partner/Sub-partner,
+ * mirroring `add-money/page.tsx`'s `AdjustmentsState` one ledger over.
+ * Project-scoped (unlike Investment Adjustment's per-requirement fetch), so
+ * fetched once on page load alongside Can Take/recorded withdrawals, not
+ * per-expanded-panel.
+ */
+type AdjustmentsState =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "loaded"; partners: PartnerWithdrawalAdjustment[] };
 
 interface RecordWithdrawalTarget {
   partyType: "partner" | "sub_partner";
@@ -107,6 +122,7 @@ export default function WithdrawMoneyPage() {
 
   const [state, setState] = useState<CanTakeState>({ status: "loading" });
   const [withdrawalsState, setWithdrawalsState] = useState<WithdrawalsState>({ status: "loading" });
+  const [adjustmentsState, setAdjustmentsState] = useState<AdjustmentsState>({ status: "loading" });
 
   const [recordTarget, setRecordTarget] = useState<RecordWithdrawalTarget | null>(null);
   const [recordAmount, setRecordAmount] = useState("");
@@ -140,6 +156,37 @@ export default function WithdrawMoneyPage() {
       });
     }
   }
+
+  /**
+   * Fetches the Withdrawal Adjustment status per Partner/Sub-partner (Story
+   * 4.3) -- Project-scoped, so fetched once for the whole page rather than
+   * per-expanded-panel like Add Money's per-requirement `refreshAdjustments`.
+   * A failed fetch here just means no chips show (secondary enrichment of
+   * the Can Take panel, not its primary content) -- mirrors
+   * `add-money/page.tsx`'s identical swallow-to-"error"-state convention.
+   * Called directly from both the mount effect and
+   * `handleRecordWithdrawalSubmit`'s post-save refresh -- a single
+   * implementation, never duplicated inline, mirroring `add-money/page.tsx`'s
+   * `void refreshAdjustments(requirementId)` mount-effect precedent.
+   *
+   * Wrapped in `useCallback` (keyed on `projectId`) so its identity stays
+   * stable across renders -- lets the mount effect below list it as a real
+   * dependency (satisfying `react-hooks/exhaustive-deps`) without a stable
+   * reference, `projectId` changing would be the only thing that should
+   * re-trigger the effect, but an unmemoized function recreated every render
+   * would falsely trigger it on every render instead.
+   */
+  const refreshAdjustments = useCallback(async () => {
+    try {
+      const result = await getWithdrawalAdjustments(projectId);
+      setAdjustmentsState({ status: "loaded", partners: result.partners });
+    } catch (error) {
+      setAdjustmentsState({
+        status: "error",
+        message: error instanceof Error ? error.message : "Something went wrong.",
+      });
+    }
+  }, [projectId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -178,10 +225,37 @@ export default function WithdrawMoneyPage() {
         }
       });
 
+    // Calls the single `refreshAdjustments` implementation (never duplicates
+    // its fetch/setState/error-handling body inline, unlike this effect's
+    // other two fetches above -- those have no standalone function to call
+    // since nothing else needs to re-trigger them). Wrapped in an async IIFE,
+    // not a bare `void refreshAdjustments()` -- the `react-hooks/set-state-in-effect`
+    // lint rule flags a direct call to a component-scoped function whose body
+    // sets state as if it happened synchronously in the effect; nesting the
+    // call inside a callback (mirroring the `.then()`-callback shape above)
+    // satisfies the rule the same way `getCanTake(...).then((result) => ...)`
+    // already does.
+    void (async () => {
+      await refreshAdjustments();
+    })();
+
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, [projectId, refreshAdjustments]);
+
+  /** Finds a Partner's Withdrawal Adjustment status (Story 4.3) in an already-loaded `AdjustmentsState` -- `null` if not loaded yet, errored, or (defensively) not found. */
+  function findPartnerAdjustment(partnerId: string): AdjustmentChipInfo | null {
+    if (adjustmentsState.status !== "loaded") return null;
+    return adjustmentsState.partners.find((partner) => partner.partnerId === partnerId) ?? null;
+  }
+
+  /** Finds a Sub-partner's Withdrawal Adjustment status (Story 4.3) nested under its parent Partner -- mirrors `findPartnerAdjustment` one level down. */
+  function findSubPartnerAdjustment(partnerId: string, subPartnerId: string): AdjustmentChipInfo | null {
+    if (adjustmentsState.status !== "loaded") return null;
+    const partner = adjustmentsState.partners.find((candidate) => candidate.partnerId === partnerId);
+    return partner?.subPartners.find((sub) => sub.subPartnerId === subPartnerId) ?? null;
+  }
 
   /** Every withdrawal recorded against `shareId`/`partyType` on this Project, or `[]` if the list hasn't loaded (yet). */
   function recordedWithdrawalsFor(
@@ -260,10 +334,14 @@ export default function WithdrawMoneyPage() {
     setRecordSubmitting(false);
     closeRecordWithdrawalDialog();
     // Best-effort, mirroring `add-money/page.tsx`'s identical convention --
-    // the withdrawal is already saved server-side either way.
+    // the withdrawal is already saved server-side either way. Refreshing
+    // adjustments here is what keeps Story 4.3's Withdrawal Adjustment chip
+    // in sync with the newly-recorded Taken amount -- no separate recompute
+    // call needed, since viewing the endpoint is what upserts the ledger.
     await Promise.all([
       refreshWithdrawals().catch(() => {}),
       refreshCanTake().catch(() => {}),
+      refreshAdjustments().catch(() => {}),
     ]);
   }
 
@@ -324,6 +402,9 @@ export default function WithdrawMoneyPage() {
                     {partner.name}&apos;s normal Can Take is{" "}
                     <Amount value={partner.ownCanTake} size="sm" />.
                   </p>
+                  <div className="ml-1 mt-1.5">
+                    <AdjustmentChip adjustment={findPartnerAdjustment(partner.partnerId)} />
+                  </div>
 
                   <div className="ml-1 mt-1.5">
                     <Button
@@ -351,6 +432,11 @@ export default function WithdrawMoneyPage() {
                             }
                             action={<Amount value={sub.canTake} size="sm" />}
                           />
+                          <div className="ml-1 mt-1.5">
+                            <AdjustmentChip
+                              adjustment={findSubPartnerAdjustment(partner.partnerId, sub.subPartnerId)}
+                            />
+                          </div>
                           <div className="ml-1 mt-1.5">
                             <Button
                               variant="ghost"
@@ -519,5 +605,51 @@ function RecordedWithdrawals({ transactions }: { transactions: WithdrawalTransac
         </div>
       ))}
     </div>
+  );
+}
+
+type AdjustmentChipInfo = Pick<PartnerWithdrawalAdjustment, "adjustmentType" | "adjustmentAmount">;
+
+const ADJUSTMENT_LABEL: Record<AdjustmentChipInfo["adjustmentType"], string> = {
+  keep_for_later: "Keep for Later",
+  extra_taken: "Extra Taken",
+  none: "No Adjustment",
+};
+
+/**
+ * spec-4-3's Decisions verbatim: `extra_taken` -> `danger` (mirrors
+ * Investment Pending's "concerning, exceeds entitlement" treatment --
+ * pre-Story-4.5, an over-take has no authorization trail yet); `keep_for_later`
+ * -> `violet` (per epic-4-context.md's explicit UX convention: "`violet`
+ * marks ... Keep for Later"); `none` -> `neutral` (mirrors Investment
+ * Adjustment's identical "none" precedent).
+ */
+const ADJUSTMENT_VARIANT: Record<AdjustmentChipInfo["adjustmentType"], StatusChipVariant> = {
+  extra_taken: "danger",
+  keep_for_later: "violet",
+  none: "neutral",
+};
+
+/**
+ * The Withdrawal Adjustment status chip (Story 4.3) shown per Partner/
+ * Sub-partner row once the page's `adjustments` fetch resolves -- reuses
+ * `packages/ui`'s `StatusChip`, always paired with a text label (and, for
+ * Keep for Later/Extra Taken, the amount) rather than color alone, mirroring
+ * `add-money/page.tsx`'s `AdjustmentChip` one ledger over. Renders nothing
+ * while the page's adjustments fetch hasn't loaded yet (or errored) -- a
+ * secondary enrichment of the Can Take panel, never a blocking element.
+ */
+function AdjustmentChip({ adjustment }: { adjustment: AdjustmentChipInfo | null }) {
+  if (!adjustment) return null;
+  return (
+    <StatusChip variant={ADJUSTMENT_VARIANT[adjustment.adjustmentType]}>
+      {ADJUSTMENT_LABEL[adjustment.adjustmentType]}
+      {adjustment.adjustmentType !== "none" ? (
+        <>
+          {" "}
+          <Amount value={adjustment.adjustmentAmount} size="sm" />
+        </>
+      ) : null}
+    </StatusChip>
   );
 }

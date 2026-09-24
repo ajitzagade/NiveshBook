@@ -1290,3 +1290,46 @@ describe("authorizeScope — withdrawal_transactions:list (Story 4.2, Owner/Admi
     expect(result).toEqual({ allowed: false });
   });
 });
+
+describe("authorizeScope — withdrawal_adjustments:view (Story 4.3, identical shape to investment_adjustments:view)", () => {
+  it("allows an owner_admin to view Withdrawal Adjustments", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("owner-1", "withdrawal_adjustments:view", deps);
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it.each(["partner", "sub_partner", "project_admin"] as const)(
+    "denies a %s from viewing Withdrawal Adjustments -- Owner/Admin-only in this story, no self/scope override",
+    async (role) => {
+      const users = createFakeUserPort([makeUser({ id: "actor-1", role })]);
+      const deps: AuthorizeDeps = { users };
+
+      const result = await authorizeScope("actor-1", "withdrawal_adjustments:view", deps);
+
+      expect(result).toEqual({ allowed: false });
+    },
+  );
+
+  it("denies a partner even when their own userId is passed as scopeOwnerIds -- not a SCOPE_SELF_ACCESS_ACTIONS entry", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("partner-user-1", "withdrawal_adjustments:view", deps, [
+      "partner-user-1",
+    ]);
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies an actor that no longer exists", async () => {
+    const users = createFakeUserPort([]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("ghost", "withdrawal_adjustments:view", deps);
+
+    expect(result).toEqual({ allowed: false });
+  });
+});

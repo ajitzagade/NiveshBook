@@ -23,3 +23,5 @@ export * from "./investment-status";
 export * from "./can-take";
 export * from "./withdrawal-transaction";
 export * from "./withdrawal-transaction-port";
+export * from "./withdrawal-adjustment";
+export * from "./withdrawal-adjustment-port";
