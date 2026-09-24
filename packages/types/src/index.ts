@@ -215,3 +215,39 @@ export interface InvestmentTransaction {
   /** ISO 8601 timestamp */
   createdAt: string;
 }
+
+/**
+ * The current Should Pay vs. Actual Paid gap for one Partner or Sub-partner
+ * on a Project (Epic 3, Story 3.4) -- ONE current row per `(partyType,
+ * shareId, projectId)` (AD-4: never `User.id`), not one row per funding
+ * round. Upserted every time `GET .../adjustments` is viewed for a given
+ * funding `requirementId` -- `requirementId` on this row always reflects the
+ * *most recently viewed* round, ready for Story 3.5's carry-forward to read
+ * as "previous" before the next round's view overwrites it.
+ *
+ * `shouldPay`/`actualPaid`/`adjustmentAmount` are all `Money` -- always
+ * non-negative by construction (AD-2) -- so the sign of the gap lives in the
+ * separate `adjustmentType` discriminator instead, mirroring Story 3.2's
+ * `ownShouldPay`-never-negative precedent exactly: `"pending"` when Should
+ * Pay exceeds Actual Paid, `"extra_paid"` when Actual Paid exceeds Should
+ * Pay, `"none"` when they're exactly equal (`adjustmentAmount: "0"`).
+ */
+export interface InvestmentAdjustment {
+  id: string;
+  projectId: string;
+  partyType: "partner" | "sub_partner";
+  /** The stable `partnerId`/`subPartnerId` this adjustment is keyed to -- never `User.id` (AD-4). */
+  shareId: string;
+  /** The funding requirement this row's numbers were last computed against. */
+  requirementId: string;
+  shouldPay: Money;
+  /** Sum of every `InvestmentTransaction.amount` recorded against `requirementId` for this `(partyType, shareId)` -- `"0"` whether nothing was recorded yet or an explicit `"0"` transaction was. */
+  actualPaid: Money;
+  adjustmentType: "pending" | "extra_paid" | "none";
+  /** Non-negative magnitude of the gap -- `"0"` when `adjustmentType` is `"none"`. */
+  adjustmentAmount: Money;
+  /** ISO 8601 timestamp -- when this row was last upserted. */
+  updatedAt: string;
+  /** ISO 8601 timestamp -- when this row was first created. */
+  createdAt: string;
+}

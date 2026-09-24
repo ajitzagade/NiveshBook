@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { getTableConfig } from "drizzle-orm/pg-core";
 import {
   users,
   projects,
@@ -6,6 +7,7 @@ import {
   subpartnerShares,
   investmentRequirements,
   investmentTransactions,
+  investmentAdjustments,
   auditLog,
 } from "./schema";
 
@@ -199,6 +201,54 @@ describe("investment_transactions table schema (Story 3.3)", () => {
   it("marks createdAt NOT NULL with a DB-side default", () => {
     expect(investmentTransactions.createdAt.notNull).toBe(true);
     expect(investmentTransactions.createdAt.hasDefault).toBe(true);
+  });
+});
+
+describe("investment_adjustments table schema (Story 3.4)", () => {
+  it("marks projectId/partyType/shareId/requirementId/shouldPay/actualPaid/adjustmentAmount/adjustmentType NOT NULL", () => {
+    expect(investmentAdjustments.projectId.notNull).toBe(true);
+    expect(investmentAdjustments.partyType.notNull).toBe(true);
+    expect(investmentAdjustments.shareId.notNull).toBe(true);
+    expect(investmentAdjustments.requirementId.notNull).toBe(true);
+    expect(investmentAdjustments.shouldPay.notNull).toBe(true);
+    expect(investmentAdjustments.actualPaid.notNull).toBe(true);
+    expect(investmentAdjustments.adjustmentAmount.notNull).toBe(true);
+    expect(investmentAdjustments.adjustmentType.notNull).toBe(true);
+  });
+
+  it("gives id no implicit default -- application code (uuidv7) always supplies one", () => {
+    expect(investmentAdjustments.id.hasDefault).toBe(false);
+  });
+
+  it("stores shouldPay/actualPaid/adjustmentAmount as numeric(14,2), mirroring investment_requirements.amount's precision", () => {
+    expect(investmentAdjustments.shouldPay.columnType).toBe("PgNumeric");
+    expect(investmentAdjustments.shouldPay.getSQLType()).toBe("numeric(14, 2)");
+    expect(investmentAdjustments.actualPaid.columnType).toBe("PgNumeric");
+    expect(investmentAdjustments.actualPaid.getSQLType()).toBe("numeric(14, 2)");
+    expect(investmentAdjustments.adjustmentAmount.columnType).toBe("PgNumeric");
+    expect(investmentAdjustments.adjustmentAmount.getSQLType()).toBe("numeric(14, 2)");
+  });
+
+  it("stores shareId as uuid with no FK reference -- mirrors investment_transactions.shareId's precedent (this story's Code Map)", () => {
+    expect(investmentAdjustments.shareId.columnType).toBe("PgUUID");
+  });
+
+  it("enforces a composite UNIQUE constraint on (partyType, shareId, projectId) -- the single-row-per-person guarantee (this story's Boundaries), not just an application-layer check", () => {
+    const { uniqueConstraints } = getTableConfig(investmentAdjustments);
+    expect(uniqueConstraints).toHaveLength(1);
+    const constraint = uniqueConstraints[0];
+    expect(constraint?.columns.map((column) => column.name)).toEqual([
+      "party_type",
+      "share_id",
+      "project_id",
+    ]);
+  });
+
+  it("marks updatedAt/createdAt NOT NULL with a DB-side default", () => {
+    expect(investmentAdjustments.updatedAt.notNull).toBe(true);
+    expect(investmentAdjustments.updatedAt.hasDefault).toBe(true);
+    expect(investmentAdjustments.createdAt.notNull).toBe(true);
+    expect(investmentAdjustments.createdAt.hasDefault).toBe(true);
   });
 });
 

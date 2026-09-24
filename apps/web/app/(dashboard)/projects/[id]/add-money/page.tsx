@@ -4,7 +4,7 @@ import { Fragment, useEffect, useRef, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import type { InvestmentRequirement, InvestmentTransaction, PaymentMode } from "@niveshbook/types";
-import type { PartnerShouldPay } from "@niveshbook/core";
+import type { PartnerInvestmentAdjustment, PartnerShouldPay } from "@niveshbook/core";
 import {
   Amount,
   Button,
@@ -20,12 +20,14 @@ import {
   Label,
   ShareList,
   ShareRow,
+  StatusChip,
   Table,
   TableHead,
   TableBody,
   TableRow,
   Th,
   Td,
+  type StatusChipVariant,
 } from "@niveshbook/ui";
 import { listInvestmentRequirements, addInvestmentRequirement } from "@/lib/investment-requirements";
 import { getShouldPay } from "@/lib/should-pay";
@@ -33,6 +35,7 @@ import {
   listInvestmentTransactions,
   recordInvestmentTransaction,
 } from "@/lib/investment-transactions";
+import { getInvestmentAdjustments } from "@/lib/investment-adjustments";
 
 type ListState =
   | { status: "loading" }
@@ -48,6 +51,16 @@ type TransactionsState =
   | { status: "loading" }
   | { status: "error"; message: string }
   | { status: "loaded"; transactions: InvestmentTransaction[] };
+
+// Story 3.4: the per-person Adjustment status chip shown alongside each
+// Should Pay row -- fetched alongside Should Pay/transactions when a panel
+// expands. Errors here are swallowed rather than shown (see
+// `refreshAdjustments`'s own doc comment) -- unlike Should Pay/transactions,
+// this is a secondary enrichment, not the panel's primary content.
+type AdjustmentsState =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "loaded"; partners: PartnerInvestmentAdjustment[] };
 
 interface RecordPaymentTarget {
   requirementId: string;
@@ -129,6 +142,12 @@ export default function AddMoneyPage() {
   // the same `expandedRequirementIdRef` staleness check.
   const [transactionsByRequirement, setTransactionsByRequirement] = useState<
     Record<string, TransactionsState>
+  >({});
+
+  // Story 3.4: the Adjustment status chip data shown per Partner/Sub-partner
+  // row -- fetched alongside Should Pay/transactions when a panel expands.
+  const [adjustmentsByRequirement, setAdjustmentsByRequirement] = useState<
+    Record<string, AdjustmentsState>
   >({});
 
   const [recordPaymentTarget, setRecordPaymentTarget] = useState<RecordPaymentTarget | null>(null);
@@ -230,6 +249,36 @@ export default function AddMoneyPage() {
     }
   }
 
+  /**
+   * Fetches the Investment Adjustment status per Partner/Sub-partner for one
+   * funding requirement (Story 3.4) -- mirrors `refreshShouldPay`'s
+   * staleness-guard pattern exactly, sharing the same
+   * `expandedRequirementIdRef`. Failures are swallowed to `"error"` state
+   * (never surfaced as a blocking page error) -- an adjustment chip is a
+   * secondary enrichment of the Should Pay panel, not its primary content,
+   * so a failed fetch here simply means no chips show, while Should Pay
+   * itself still renders normally.
+   */
+  async function refreshAdjustments(requirementId: string) {
+    try {
+      const result = await getInvestmentAdjustments(projectId, requirementId);
+      if (expandedRequirementIdRef.current !== requirementId) return;
+      setAdjustmentsByRequirement((prev) => ({
+        ...prev,
+        [requirementId]: { status: "loaded", partners: result.partners },
+      }));
+    } catch (error) {
+      if (expandedRequirementIdRef.current !== requirementId) return;
+      setAdjustmentsByRequirement((prev) => ({
+        ...prev,
+        [requirementId]: {
+          status: "error",
+          message: error instanceof Error ? error.message : "Something went wrong.",
+        },
+      }));
+    }
+  }
+
   function toggleShouldPay(requirementId: string) {
     if (expandedRequirementId === requirementId) {
       setExpandedRequirementId(null);
@@ -254,6 +303,12 @@ export default function AddMoneyPage() {
         delete next[requirementId];
         return next;
       });
+      setAdjustmentsByRequirement((prev) => {
+        if (prev[requirementId]?.status !== "loading") return prev;
+        const next = { ...prev };
+        delete next[requirementId];
+        return next;
+      });
       return;
     }
     setExpandedRequirementId(requirementId);
@@ -267,6 +322,11 @@ export default function AddMoneyPage() {
     if (!existingTransactions || existingTransactions.status === "error") {
       setTransactionsByRequirement((prev) => ({ ...prev, [requirementId]: { status: "loading" } }));
       void refreshTransactions(requirementId);
+    }
+    const existingAdjustments = adjustmentsByRequirement[requirementId];
+    if (!existingAdjustments || existingAdjustments.status === "error") {
+      setAdjustmentsByRequirement((prev) => ({ ...prev, [requirementId]: { status: "loading" } }));
+      void refreshAdjustments(requirementId);
     }
   }
 
@@ -344,10 +404,14 @@ export default function AddMoneyPage() {
     setRecordSubmitting(false);
     const requirementId = recordPaymentTarget.requirementId;
     closeRecordPaymentDialog();
-    // `refreshTransactions` catches its own errors -- a failed refresh just
-    // leaves the recorded-payments list showing its prior (stale) state, the
-    // same best-effort convention `handleSubmit` above uses for `refresh()`.
-    await refreshTransactions(requirementId);
+    // `refreshTransactions`/`refreshAdjustments` both catch their own errors
+    // -- a failed refresh just leaves the recorded-payments list/adjustment
+    // chips showing their prior (stale) state, the same best-effort
+    // convention `handleSubmit` above uses for `refresh()`. Adjustments are
+    // re-fetched too (not just transactions) so the chip reflects the new
+    // Actual Paid total immediately, matching this story's "a new
+    // transaction is recorded between two views" I/O case.
+    await Promise.all([refreshTransactions(requirementId), refreshAdjustments(requirementId)]);
   }
 
   function openAddDialog() {
@@ -436,6 +500,7 @@ export default function AddMoneyPage() {
               {state.requirements.map((requirement) => {
                 const expanded = expandedRequirementId === requirement.id;
                 const shouldPayState = shouldPayByRequirement[requirement.id];
+                const adjustmentsState = adjustmentsByRequirement[requirement.id];
 
                 return (
                   <Fragment key={requirement.id}>
@@ -483,6 +548,14 @@ export default function AddMoneyPage() {
                                         }
                                         action={<Amount value={partner.shouldPay} size="sm" />}
                                       />
+                                      <div className="ml-1 mt-1">
+                                        <AdjustmentChip
+                                          adjustment={findPartnerAdjustment(
+                                            adjustmentsState,
+                                            partner.partnerId,
+                                          )}
+                                        />
+                                      </div>
                                       {partner.subPartners.length > 0 ? (
                                         // A Partner with Sub-partners has delegated part of their
                                         // Should Pay away -- the `ShareRow` action above is the
@@ -543,6 +616,15 @@ export default function AddMoneyPage() {
                                                 }
                                                 action={<Amount value={sub.shouldPay} size="sm" />}
                                               />
+                                              <div className="ml-1 mt-1">
+                                                <AdjustmentChip
+                                                  adjustment={findSubPartnerAdjustment(
+                                                    adjustmentsState,
+                                                    partner.partnerId,
+                                                    sub.subPartnerId,
+                                                  )}
+                                                />
+                                              </div>
                                               <div className="ml-1 mt-1.5">
                                                 <Button
                                                   variant="ghost"
@@ -743,6 +825,66 @@ export default function AddMoneyPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+type AdjustmentChipInfo = Pick<PartnerInvestmentAdjustment, "adjustmentType" | "adjustmentAmount">;
+
+/** Finds a Partner's Adjustment status (Story 3.4) in an already-loaded `AdjustmentsState` -- `null` if not loaded yet, errored, or (defensively) not found. */
+function findPartnerAdjustment(
+  state: AdjustmentsState | undefined,
+  partnerId: string,
+): AdjustmentChipInfo | null {
+  if (!state || state.status !== "loaded") return null;
+  return state.partners.find((partner) => partner.partnerId === partnerId) ?? null;
+}
+
+/** Finds a Sub-partner's Adjustment status (Story 3.4) nested under its parent Partner -- mirrors `findPartnerAdjustment` one level down. */
+function findSubPartnerAdjustment(
+  state: AdjustmentsState | undefined,
+  partnerId: string,
+  subPartnerId: string,
+): AdjustmentChipInfo | null {
+  if (!state || state.status !== "loaded") return null;
+  const partner = state.partners.find((candidate) => candidate.partnerId === partnerId);
+  return partner?.subPartners.find((sub) => sub.subPartnerId === subPartnerId) ?? null;
+}
+
+const ADJUSTMENT_LABEL: Record<AdjustmentChipInfo["adjustmentType"], string> = {
+  extra_paid: "Extra Paid",
+  pending: "Pending",
+  none: "No Adjustment",
+};
+
+/** epic-3-context.md's UX note verbatim: "success" for Extra Paid, "danger" for Pending, neutral for No Adjustment. */
+const ADJUSTMENT_VARIANT: Record<AdjustmentChipInfo["adjustmentType"], StatusChipVariant> = {
+  extra_paid: "success",
+  pending: "danger",
+  none: "neutral",
+};
+
+/**
+ * The Investment Adjustment status chip (Story 3.4) shown per Partner/
+ * Sub-partner row once the panel's `adjustments` fetch resolves -- reuses
+ * `packages/ui`'s `StatusChip`, always paired with a text label (and, for
+ * Pending/Extra Paid, the amount) rather than color alone. Renders nothing
+ * while the panel's adjustments fetch hasn't loaded yet (or errored) --
+ * Should Pay/Record Payment/recorded payments above it stay fully
+ * functional either way (this story's Boundaries: never breaking Story
+ * 3.2/3.3's existing panel behavior).
+ */
+function AdjustmentChip({ adjustment }: { adjustment: AdjustmentChipInfo | null }) {
+  if (!adjustment) return null;
+  return (
+    <StatusChip variant={ADJUSTMENT_VARIANT[adjustment.adjustmentType]}>
+      {ADJUSTMENT_LABEL[adjustment.adjustmentType]}
+      {adjustment.adjustmentType !== "none" ? (
+        <>
+          {" "}
+          <Amount value={adjustment.adjustmentAmount} size="sm" />
+        </>
+      ) : null}
+    </StatusChip>
   );
 }
 

@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-23-2026 00:28
-last_updated: 09-24-2026 15:10
+last_updated: 09-24-2026 15:45
 project: NiveshBook
 project_key: NOKEY
 tracking_system: file-system
@@ -60,7 +60,7 @@ development_status:
   3-1-create-investment-requirement: done
   3-2-auto-calculate-should-pay: done
   3-3-record-add-money-transaction-audited: done
-  3-4-compute-investment-adjustment: backlog
+  3-4-compute-investment-adjustment: done
   3-5-carry-forward-recommended-amount: backlog
   3-6-sub-partner-investment-adjustment-private: backlog
   3-7-edit-an-investment-transaction-audited: backlog

@@ -15,3 +15,5 @@ export * from "./investment-requirement-port";
 export * from "./should-pay";
 export * from "./investment-transaction";
 export * from "./investment-transaction-port";
+export * from "./investment-adjustment";
+export * from "./investment-adjustment-port";

@@ -12,6 +12,7 @@ import {
   type InvestmentRequirementPort,
   type InvestmentTransactionPort,
   type CreateInvestmentTransactionInput,
+  type InvestmentAdjustmentPort,
 } from "@niveshbook/core";
 import type {
   User,
@@ -23,6 +24,7 @@ import type {
   Percent,
   InvestmentRequirement,
   InvestmentTransaction,
+  InvestmentAdjustment,
   PaymentMode,
   Money,
 } from "@niveshbook/types";
@@ -36,6 +38,7 @@ import {
   subpartnerShares,
   investmentRequirements,
   investmentTransactions,
+  investmentAdjustments,
   auditLog,
   type SessionRow,
   type UserRow,
@@ -44,6 +47,7 @@ import {
   type SubPartnerShareRow,
   type InvestmentRequirementRow,
   type InvestmentTransactionRow,
+  type InvestmentAdjustmentRow,
 } from "./schema";
 
 function toUser(row: UserRow): User {
@@ -141,6 +145,28 @@ function toInvestmentTransaction(row: InvestmentTransactionRow): InvestmentTrans
     paymentMode: row.paymentMode as PaymentMode,
     referenceNumber: row.referenceNumber,
     notes: row.notes,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+/**
+ * Converts the numeric `should_pay`/`actual_paid`/`adjustment_amount`
+ * columns (Drizzle returns `numeric` as a `string`, never a native float --
+ * AD-2) directly into `Money`, with no `parseFloat`/`Number()` round-trip.
+ * Mirrors `toInvestmentTransaction` one table over.
+ */
+function toInvestmentAdjustment(row: InvestmentAdjustmentRow): InvestmentAdjustment {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    partyType: row.partyType as InvestmentAdjustment["partyType"],
+    shareId: row.shareId,
+    requirementId: row.requirementId,
+    shouldPay: row.shouldPay as Money,
+    actualPaid: row.actualPaid as Money,
+    adjustmentType: row.adjustmentType as InvestmentAdjustment["adjustmentType"],
+    adjustmentAmount: row.adjustmentAmount as Money,
+    updatedAt: row.updatedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -620,6 +646,61 @@ export function createInvestmentTransactionPort(
         .where(eq(investmentTransactions.requirementId, requirementId))
         .orderBy(asc(investmentTransactions.createdAt));
       return rows.map(toInvestmentTransaction);
+    },
+  };
+}
+
+/**
+ * Drizzle-backed implementation of `packages/core`'s `InvestmentAdjustmentPort`
+ * (Story 3.4) -- the first port method in this codebase to use Drizzle's
+ * `.onConflictDoUpdate(...)` API. `upsert` writes exactly one current row per
+ * `(partyType, shareId, projectId)` (this story's Boundaries): the first call
+ * for a given key inserts a new row; every later call for the *same* key
+ * overwrites that row's `requirementId`/`shouldPay`/`actualPaid`/
+ * `adjustmentType`/`adjustmentAmount`/`updatedAt` in place, targeting the
+ * table's UNIQUE `(partyType, shareId, projectId)` constraint
+ * (`investment_adjustments_party_share_project_unique`) -- never a second
+ * row for the same person, and never a duplicate on a re-view with no new
+ * transactions in between.
+ */
+export function createInvestmentAdjustmentPort(
+  database: Database = getDb(),
+): InvestmentAdjustmentPort {
+  return {
+    async upsert(input) {
+      const [row] = await database
+        .insert(investmentAdjustments)
+        .values({
+          id: uuidv7(),
+          projectId: input.projectId,
+          partyType: input.partyType,
+          shareId: input.shareId,
+          requirementId: input.requirementId,
+          shouldPay: input.shouldPay,
+          actualPaid: input.actualPaid,
+          adjustmentAmount: input.adjustmentAmount,
+          adjustmentType: input.adjustmentType,
+        })
+        .onConflictDoUpdate({
+          target: [
+            investmentAdjustments.partyType,
+            investmentAdjustments.shareId,
+            investmentAdjustments.projectId,
+          ],
+          set: {
+            requirementId: input.requirementId,
+            shouldPay: input.shouldPay,
+            actualPaid: input.actualPaid,
+            adjustmentAmount: input.adjustmentAmount,
+            adjustmentType: input.adjustmentType,
+            updatedAt: new Date(),
+          },
+        })
+        .returning();
+      if (!row) {
+        throw new Error("Failed to upsert investment adjustment");
+      }
+      return toInvestmentAdjustment(row);
     },
   };
 }

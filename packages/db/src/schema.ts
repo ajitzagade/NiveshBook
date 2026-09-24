@@ -1,4 +1,15 @@
-import { boolean, date, index, jsonb, numeric, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  date,
+  index,
+  jsonb,
+  numeric,
+  pgTable,
+  text,
+  timestamp,
+  unique,
+  uuid,
+} from "drizzle-orm/pg-core";
 
 /**
  * `users` and `sessions` are the only tables this epic creates (further
@@ -233,6 +244,58 @@ export const investmentTransactions = pgTable(
 );
 
 export type InvestmentTransactionRow = typeof investmentTransactions.$inferSelect;
+
+/**
+ * Story 3.4 (Epic 3): ONE current row per `(partyType, shareId, projectId)`
+ * (AD-4: never `users.id`) -- never one row per funding round. Every write
+ * is an upsert keyed by the table's UNIQUE `(partyType, shareId, projectId)`
+ * constraint below (Drizzle's `onConflictDoUpdate`, `packages/db/src/ports.ts`'s
+ * `createInvestmentAdjustmentPort`), so `requirementId`/`shouldPay`/
+ * `actualPaid`/`adjustmentAmount`/`adjustmentType` always reflect the
+ * *most recently viewed* funding round for that person -- exactly what
+ * Story 3.5's carry-forward needs to read as "previous" before the next
+ * round's view overwrites it. `shareId` mirrors `investment_transactions.shareId`'s
+ * precedent exactly: the *stable* `partner_shares.partnerId`/
+ * `subpartner_shares.subPartnerId` (disambiguated by `partyType`), never
+ * this row's own `id` and never `users.id` -- deliberately **not** a foreign
+ * key, for the identical reason neither share table has a uniqueness
+ * constraint on that stable id to reference. `shouldPay`/`actualPaid`/
+ * `adjustmentAmount` are `numeric(14,2)`, matching `investment_requirements.amount`'s
+ * precision -- always non-negative by construction (AD-2); the gap's sign
+ * lives in `adjustmentType` (`"pending" | "extra_paid" | "none"`) instead.
+ */
+export const investmentAdjustments = pgTable(
+  "investment_adjustments",
+  {
+    id: uuid("id").primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    partyType: text("party_type").notNull(),
+    shareId: uuid("share_id").notNull(),
+    requirementId: uuid("requirement_id")
+      .notNull()
+      .references(() => investmentRequirements.id, { onDelete: "cascade" }),
+    shouldPay: numeric("should_pay", { precision: 14, scale: 2 }).notNull(),
+    actualPaid: numeric("actual_paid", { precision: 14, scale: 2 }).notNull(),
+    adjustmentAmount: numeric("adjustment_amount", { precision: 14, scale: 2 }).notNull(),
+    adjustmentType: text("adjustment_type").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // The single-row-per-person guarantee (this story's Boundaries) -- the
+    // actual upsert-conflict target `createInvestmentAdjustmentPort` targets,
+    // not merely an application-layer check.
+    unique("investment_adjustments_party_share_project_unique").on(
+      table.partyType,
+      table.shareId,
+      table.projectId,
+    ),
+  ],
+);
+
+export type InvestmentAdjustmentRow = typeof investmentAdjustments.$inferSelect;
 
 /**
  * Story 3.3 (Epic 3): a single generic audit-trail table, reused unchanged

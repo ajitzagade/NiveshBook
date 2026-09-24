@@ -30,7 +30,8 @@ export type Action =
   | "investment_requirements:list"
   | "should_pay:view"
   | "investment_transactions:create"
-  | "investment_transactions:list";
+  | "investment_transactions:list"
+  | "investment_adjustments:view";
 
 /**
  * Role -> allowed-actions permission table. All actions here are
@@ -118,6 +119,16 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // precedent); a person's own transaction history view is Epic 5's job.
   "investment_transactions:create": new Set(["owner_admin"]),
   "investment_transactions:list": new Set(["owner_admin"]),
+  // Story 3.4: Investment Adjustment (Should Pay - Actual Paid) is
+  // Owner/Admin-only in this story, mirroring `should_pay:view`'s identical
+  // precedent (spec-3-4's Decisions) -- the AC's "As a Partner or Sub-partner"
+  // persona describes whose money is being tracked, not who calls the API
+  // today; no self-service UI exists yet (Epic 5's planned job). No
+  // `SELF_ACCESS_ACTIONS`/`SCOPE_SELF_ACCESS_ACTIONS` entry, unlike Story
+  // 3.3's `investment_transactions:create` (which got self-access because
+  // its AC explicitly named a self-service persona) -- 3.4's AC has no such
+  // framing.
+  "investment_adjustments:view": new Set(["owner_admin"]),
 };
 
 /**

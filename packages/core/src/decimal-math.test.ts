@@ -13,6 +13,9 @@ import {
   NegativePercentResultError,
   splitMoneyByPercents,
   SplitPercentTotalError,
+  subtractMoney,
+  compareMoney,
+  NegativeMoneyResultError,
 } from "./decimal-math";
 
 describe("toPercent", () => {
@@ -215,6 +218,44 @@ describe("subtractPercents", () => {
     expect(() => subtractPercents(toPercent("50"), toPercent("60"))).toThrow(
       NegativePercentResultError,
     );
+  });
+});
+
+describe("subtractMoney", () => {
+  it("subtracts exactly, no float drift", () => {
+    expect(subtractMoney(toMoney("700000"), toMoney("500000"))).toBe("200000");
+  });
+
+  it("subtracts decimal (paise) amounts exactly", () => {
+    expect(subtractMoney(toMoney("1000.50"), toMoney("0.25"))).toBe("1000.25");
+  });
+
+  it("returns exactly 0 when the subtrahend equals the minuend", () => {
+    expect(subtractMoney(toMoney("300000"), toMoney("300000"))).toBe("0");
+  });
+
+  it("throws NegativeMoneyResultError when the result would be negative", () => {
+    expect(() => subtractMoney(toMoney("200000"), toMoney("700000"))).toThrow(
+      NegativeMoneyResultError,
+    );
+  });
+});
+
+describe("compareMoney", () => {
+  it("returns -1 when a < b", () => {
+    expect(compareMoney(toMoney("200000"), toMoney("500000"))).toBe(-1);
+  });
+
+  it("returns 1 when a > b", () => {
+    expect(compareMoney(toMoney("700000"), toMoney("500000"))).toBe(1);
+  });
+
+  it("returns 0 when a and b are numerically equal, even with different formatting ('300000' vs '300000.00')", () => {
+    expect(compareMoney(toMoney("300000"), "300000.00" as Money)).toBe(0);
+  });
+
+  it("returns 0 for two zero amounts written differently ('0' vs '0.00')", () => {
+    expect(compareMoney(toMoney("0"), toMoney("0.00"))).toBe(0);
   });
 });
 

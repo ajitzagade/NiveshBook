@@ -214,6 +214,58 @@ export function sumMoney(values: readonly Money[]): Money {
 }
 
 /**
+ * Thrown by `subtractMoney` when `minuend - subtrahend` would be negative --
+ * mirrors `NegativePercentResultError` one type down (Story 3.4's Decisions:
+ * no new arithmetic shape, just `Money`'s own version of `subtractPercents`'s
+ * existing throw-on-negative pattern).
+ */
+export class NegativeMoneyResultError extends Error {
+  constructor(minuend: Money, subtrahend: Money) {
+    super(`Cannot subtract ${subtrahend} from ${minuend} -- the result would be negative.`);
+    this.name = "NegativeMoneyResultError";
+  }
+}
+
+/**
+ * Decimal-safe subtraction of `Money` values via fixed-point integer math
+ * (scaled by 100) -- never `parseFloat`/`Number()` on the values themselves.
+ * Throws `NegativeMoneyResultError` if the result would be negative, rather
+ * than silently returning a negative `Money` (a value type that's
+ * non-negative by construction everywhere else in this codebase). Mirrors
+ * `subtractPercents` one type down (Story 3.4's Decisions) --
+ * `investment-adjustment.ts`'s `computeInvestmentAdjustment` always calls
+ * this in the direction `compareMoney` has already determined is
+ * non-negative, so this never actually throws at that call site in normal
+ * operation; it exists as the same defense-in-depth guarantee
+ * `subtractPercents` provides one type up.
+ */
+export function subtractMoney(minuend: Money, subtrahend: Money): Money {
+  const minuendScaled = parseMoneyScaled(minuend);
+  const subtrahendScaled = parseMoneyScaled(subtrahend);
+  const resultScaled = minuendScaled - subtrahendScaled;
+  if (resultScaled < 0) {
+    throw new NegativeMoneyResultError(minuend, subtrahend);
+  }
+  return formatMoneyScaled(resultScaled) as Money;
+}
+
+/**
+ * Three-way decimal-safe comparison of `Money` values: `-1` if `a < b`, `1`
+ * if `a > b`, `0` if numerically equal -- never `parseFloat`/`Number()`, and
+ * never a raw `<`/`>`/`===` on the strings themselves (mirrors
+ * `moneyEquals`'s own decimal-safe-comparison precedent). Story 3.4's
+ * `computeInvestmentAdjustment` uses this to determine an adjustment's sign
+ * without exceptions-as-control-flow.
+ */
+export function compareMoney(a: Money, b: Money): -1 | 0 | 1 {
+  const aScaled = parseMoneyScaled(a);
+  const bScaled = parseMoneyScaled(b);
+  if (aScaled < bScaled) return -1;
+  if (aScaled > bScaled) return 1;
+  return 0;
+}
+
+/**
  * Thrown by `subtractPercents` when `minuend - subtrahend` would be
  * negative -- e.g. a Partner's Sub-partner Shares exceeding the Partner's
  * own `sharePercent`. `should-pay.ts` catches this and rethrows it as its
