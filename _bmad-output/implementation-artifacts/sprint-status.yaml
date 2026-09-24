@@ -56,8 +56,8 @@ development_status:
   2-7-partner-specific-permissions-view: done
   epic-2-retrospective: optional
 
-  epic-3: backlog
-  3-1-create-investment-requirement: backlog
+  epic-3: in-progress
+  3-1-create-investment-requirement: done
   3-2-auto-calculate-should-pay: backlog
   3-3-record-add-money-transaction-audited: backlog
   3-4-compute-investment-adjustment: backlog

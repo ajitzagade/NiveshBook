@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { users, projects, partnerShares, subpartnerShares } from "./schema";
+import { users, projects, partnerShares, subpartnerShares, investmentRequirements } from "./schema";
 
 describe("users table schema (FR6)", () => {
   it("marks role NOT NULL — the DB itself rejects a null/missing role", () => {
@@ -110,5 +110,32 @@ describe("subpartner_shares table schema (Story 2.3)", () => {
 
   it("gives userId no implicit default", () => {
     expect(subpartnerShares.userId.hasDefault).toBe(false);
+  });
+});
+
+describe("investment_requirements table schema (Story 3.1)", () => {
+  it("marks projectId/amount/requirementDate NOT NULL", () => {
+    expect(investmentRequirements.projectId.notNull).toBe(true);
+    expect(investmentRequirements.amount.notNull).toBe(true);
+    expect(investmentRequirements.requirementDate.notNull).toBe(true);
+  });
+
+  it("gives id no implicit default -- application code (uuidv7) always supplies one", () => {
+    expect(investmentRequirements.id.hasDefault).toBe(false);
+  });
+
+  it("stores amount as numeric(14,2) -- up to 2 decimal places, no float storage (AD-2)", () => {
+    expect(investmentRequirements.amount.columnType).toBe("PgNumeric");
+    expect(investmentRequirements.amount.getSQLType()).toBe("numeric(14, 2)");
+  });
+
+  it("stores requirementDate as a plain date column (no time component)", () => {
+    expect(investmentRequirements.requirementDate.columnType).toBe("PgDateString");
+    expect(investmentRequirements.requirementDate.getSQLType()).toBe("date");
+  });
+
+  it("marks createdAt NOT NULL with a DB-side default", () => {
+    expect(investmentRequirements.createdAt.notNull).toBe(true);
+    expect(investmentRequirements.createdAt.hasDefault).toBe(true);
   });
 });

@@ -25,7 +25,9 @@ export type Action =
   | "subpartner_shares:create"
   | "subpartner_shares:update"
   | "subpartner_shares:list"
-  | "subpartner_shares:view";
+  | "subpartner_shares:view"
+  | "investment_requirements:create"
+  | "investment_requirements:list";
 
 /**
  * Role -> allowed-actions permission table. All actions here are
@@ -83,6 +85,15 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // Sub-partner self-access is granted below via `SELF_ACCESS_ACTIONS`, not
   // by adding `sub_partner` to this Set.
   "subpartner_shares:view": new Set(["owner_admin"]),
+  // Story 3.1 (Epic 3): a funding requirement is created/listed Owner/
+  // Admin-only in this story -- no `SELF_ACCESS_ACTIONS`/
+  // `SCOPE_SELF_ACCESS_ACTIONS` entry (see spec-3-1's Decisions). How a
+  // Partner/Sub-partner eventually sees their own Should Pay (which reads
+  // this data) is Story 3.2's job, not this gate's, mirroring Epic 2's
+  // incremental-opening pattern (`partner_shares:list` started Owner/
+  // Admin-only in 2.2, only opened to a linked Partner in 2.4).
+  "investment_requirements:create": new Set(["owner_admin"]),
+  "investment_requirements:list": new Set(["owner_admin"]),
 };
 
 /**

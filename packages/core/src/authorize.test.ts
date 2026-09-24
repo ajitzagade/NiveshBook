@@ -427,6 +427,44 @@ describe("authorize — subpartner_shares:view (Story 2.5, self-access override)
   });
 });
 
+describe("authorizeScope — investment_requirements:create/list (Story 3.1)", () => {
+  it.each(["investment_requirements:create", "investment_requirements:list"] as const)(
+    "allows an owner_admin to %s",
+    async (action) => {
+      const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+      const deps: AuthorizeDeps = { users };
+
+      const result = await authorizeScope("owner-1", action, deps);
+
+      expect(result).toEqual({ allowed: true });
+    },
+  );
+
+  it.each(["investment_requirements:create", "investment_requirements:list"] as const)(
+    "denies a non-owner_admin from %s — Owner/Admin-only in this story, no self/scope override",
+    async (action) => {
+      const users = createFakeUserPort([makeUser({ id: "actor-1", role: "partner" })]);
+      const deps: AuthorizeDeps = { users };
+
+      const result = await authorizeScope("actor-1", action, deps);
+
+      expect(result).toEqual({ allowed: false });
+    },
+  );
+
+  it.each(["investment_requirements:create", "investment_requirements:list"] as const)(
+    "denies a partner even when their own userId is passed as scopeOwnerIds — not a SCOPE_SELF_ACCESS_ACTIONS entry",
+    async (action) => {
+      const users = createFakeUserPort([makeUser({ id: "partner-user-1", role: "partner" })]);
+      const deps: AuthorizeDeps = { users };
+
+      const result = await authorizeScope("partner-user-1", action, deps, ["partner-user-1"]);
+
+      expect(result).toEqual({ allowed: false });
+    },
+  );
+});
+
 describe("authorize", () => {
   it("allows an owner_admin to view any single user", async () => {
     const users = createFakeUserPort([

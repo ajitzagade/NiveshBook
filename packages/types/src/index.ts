@@ -129,3 +129,35 @@ export interface SubPartnerShare {
   /** ISO 8601 timestamp */
   createdAt: string;
 }
+
+/**
+ * A validated, decimal-safe monetary value (AD-2), branded so a raw
+ * `string` can never be assigned where a `Money` is expected without going
+ * through `packages/core/src/decimal-math.ts`'s `toMoney()` first. Mirrors
+ * `Percent`'s exact branding shape -- always non-negative, stored with up
+ * to 2 decimal places, never a native float. Unlike `Percent`, there is no
+ * upper bound and no `> 0` constraint baked into the type itself: `Money`'s
+ * valid range differs by context (e.g. a funding requirement must be
+ * positive, Story 3.3's Paid Now amount may legitimately be zero), so
+ * callers enforce their own stricter rule on top of this type's universal
+ * non-negative/2-decimal-place constraint.
+ */
+export type Money = string & { readonly __brand: "Money" };
+
+/**
+ * A funding round requested for a Project (Epic 3, Story 3.1) -- one row
+ * per round, never versioned/edited like `PartnerShare` (a new funding
+ * requirement is always a genuinely new row, not an edit of a prior one).
+ * `requirementDate` is a single plain date (`YYYY-MM-DD`), not a separate
+ * cycle-numbering entity. There is no update/delete endpoint for this
+ * resource in this story.
+ */
+export interface InvestmentRequirement {
+  id: string;
+  projectId: string;
+  amount: Money;
+  /** Plain date, `YYYY-MM-DD` -- no time component. */
+  requirementDate: string;
+  /** ISO 8601 timestamp */
+  createdAt: string;
+}

@@ -7,6 +7,7 @@ import type {
   ProjectPort,
   PartnerSharePort,
   SubPartnerSharePort,
+  InvestmentRequirementPort,
 } from "@niveshbook/core";
 import type {
   User,
@@ -16,6 +17,8 @@ import type {
   PartnerShare,
   SubPartnerShare,
   Percent,
+  InvestmentRequirement,
+  Money,
 } from "@niveshbook/types";
 import type { Database } from "./client";
 import { getDb } from "./client";
@@ -25,11 +28,13 @@ import {
   projects,
   partnerShares,
   subpartnerShares,
+  investmentRequirements,
   type SessionRow,
   type UserRow,
   type ProjectRow,
   type PartnerShareRow,
   type SubPartnerShareRow,
+  type InvestmentRequirementRow,
 } from "./schema";
 
 function toUser(row: UserRow): User {
@@ -89,6 +94,22 @@ function toPartnerShare(row: PartnerShareRow): PartnerShare {
  * no `parseFloat`/`Number()` round-trip. Mirrors `toPartnerShare` one level
  * down.
  */
+/**
+ * Converts the numeric `amount` column (Drizzle returns `numeric` as a
+ * `string`, never a native float -- AD-2) directly into a `Money`, with no
+ * `parseFloat`/`Number()` round-trip. `requirementDate` is already a plain
+ * `YYYY-MM-DD` string -- the `date` column's default Drizzle mode.
+ */
+function toInvestmentRequirement(row: InvestmentRequirementRow): InvestmentRequirement {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    amount: row.amount as Money,
+    requirementDate: row.requirementDate,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
 function toSubPartnerShare(row: SubPartnerShareRow): SubPartnerShare {
   return {
     id: row.id,
@@ -338,6 +359,47 @@ export function createSubPartnerSharePort(database: Database = getDb()): SubPart
         .from(subpartnerShares)
         .where(eq(subpartnerShares.partnerId, partnerId));
       return rows.map(toSubPartnerShare);
+    },
+  };
+}
+
+/**
+ * Drizzle-backed implementation of `packages/core`'s `InvestmentRequirementPort`
+ * (Story 3.1). Unlike `createPartnerSharePort`, there is no `findLatest*`
+ * method -- a funding requirement is never versioned, so every row is
+ * already "current".
+ */
+export function createInvestmentRequirementPort(
+  database: Database = getDb(),
+): InvestmentRequirementPort {
+  return {
+    async createInvestmentRequirement(input) {
+      const [row] = await database
+        .insert(investmentRequirements)
+        .values({
+          id: uuidv7(),
+          projectId: input.projectId,
+          amount: input.amount,
+          requirementDate: input.requirementDate,
+        })
+        .returning();
+      if (!row) {
+        throw new Error("Failed to create investment requirement");
+      }
+      return toInvestmentRequirement(row);
+    },
+    async listByProjectId(projectId) {
+      const rows = await database
+        .select()
+        .from(investmentRequirements)
+        .where(eq(investmentRequirements.projectId, projectId))
+        // Most recent funding round first -- the Add Money screen's whole
+        // purpose is showing funding rounds over time, so DB order (which
+        // has no guaranteed meaning) isn't acceptable here, unlike a
+        // not-yet-consumed list. `createdAt` breaks ties between rows that
+        // happen to share the same `requirementDate`.
+        .orderBy(desc(investmentRequirements.requirementDate), desc(investmentRequirements.createdAt));
+      return rows.map(toInvestmentRequirement);
     },
   };
 }

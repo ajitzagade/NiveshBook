@@ -81,9 +81,17 @@ export default function ProjectsPage() {
                   <Td className="font-semibold">{project.name}</Td>
                   <Td className="!text-left text-ink-soft">{project.description ?? "—"}</Td>
                   <Td className="!text-left">
-                    <Button asChild variant="ghost">
-                      <Link href={`/projects/${project.id}/edit`}>Edit</Link>
-                    </Button>
+                    <div className="flex gap-1.5">
+                      <Button asChild variant="ghost">
+                        <Link href={`/projects/${project.id}/edit`}>Edit</Link>
+                      </Button>
+                      <Button asChild variant="ghost">
+                        <Link href={`/projects/${project.id}/shares`}>Shares</Link>
+                      </Button>
+                      <Button asChild variant="ghost">
+                        <Link href={`/projects/${project.id}/add-money`}>Add Money</Link>
+                      </Button>
+                    </div>
                   </Td>
                 </TableRow>
               ))}

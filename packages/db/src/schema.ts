@@ -1,4 +1,4 @@
-import { boolean, index, numeric, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, date, index, numeric, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 /**
  * `users` and `sessions` are the only tables this epic creates (further
@@ -148,3 +148,33 @@ export const subpartnerShares = pgTable(
 );
 
 export type SubPartnerShareRow = typeof subpartnerShares.$inferSelect;
+
+/**
+ * Story 3.1 (Epic 3): one row per funding requirement -- never versioned
+ * like `partner_shares`/`subpartner_shares` (AD-3 doesn't apply here); each
+ * new funding round is a genuinely new row, never an edit of a prior one.
+ * `numeric(14,2)` stores up to 12 whole-number digits and 2 decimal places,
+ * matching `decimal-math.ts`'s `toMoney` precision -- no upper-bound
+ * constraint is enforced at this layer either (mirrors `Money`'s own
+ * decision not to cap the range, unlike `Percent`'s 100 cap). `date` (no
+ * time component, string mode -- Drizzle's default) stores the plain
+ * `YYYY-MM-DD` requirement date.
+ */
+export const investmentRequirements = pgTable(
+  "investment_requirements",
+  {
+    id: uuid("id").primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    amount: numeric("amount", { precision: 14, scale: 2 }).notNull(),
+    requirementDate: date("requirement_date").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // `listByProjectId` filters on project_id -- this resource's only read pattern (no findLatest*, unlike the versioned share tables).
+    index("investment_requirements_project_id_idx").on(table.projectId),
+  ],
+);
+
+export type InvestmentRequirementRow = typeof investmentRequirements.$inferSelect;
