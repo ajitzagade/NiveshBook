@@ -24,7 +24,14 @@
   --color-ink-soft: #64748b;
   --color-ink-faint: #94a3b8;
   --color-ground: #f3f5f9;
-  --color-surface: #ffffff;
+  /*
+   * Softened 2026-09-24 from a pure #ffffff -- against the page's grey-blue
+   * ground, a fully-saturated white card read as glare/eye strain (user
+   * report). #fbfcfd is a barely-perceptible cool-toned step down (same
+   * blue-grey family as ground/surface-alt), not a visible "off-white" --
+   * still reads as a white card, just without the harsh contrast.
+   */
+  --color-surface: #fbfcfd;
   --color-surface-alt: #f7f9fc;
   --color-border: #e7ebf1;
 

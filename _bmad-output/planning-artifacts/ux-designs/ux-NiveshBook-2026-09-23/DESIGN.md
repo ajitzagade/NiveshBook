@@ -10,7 +10,7 @@ colors:
   ink-soft: '#64748B'
   ink-faint: '#94A3B8'
   ground: '#F3F5F9'
-  surface: '#FFFFFF'
+  surface: '#FBFCFD' # corrected 2026-09-24 from #FFFFFF -- see Colors
   surface-alt: '#F7F9FC'
   border: '#E7EBF1'
   accent: '#2F6FED'
@@ -182,7 +182,7 @@ The component set is dashboard/table-heavy (Partner Shares, Add Money, Money His
 ## Colors
 
 - **Canvas (`ground` `#F3F5F9`)** — page background, everywhere.
-- **Card (`surface` `#FFFFFF`)** — every data surface. Depth comes from the shadow token (`0 1px 2px rgba(30,41,59,.04), 0 8px 20px rgba(30,41,59,.05)`) plus a 1px `border` (`#E7EBF1`), not color contrast alone.
+- **Card (`surface` `#FBFCFD`, corrected 2026-09-24 from `#FFFFFF`)** — every data surface. A pure white card against the grey-blue `ground` read as glare (user report); this is a barely-perceptible cool-toned step down, same family as `ground`/`surface-alt`, not a visible "off-white." Depth comes from the shadow token (`0 1px 2px rgba(30,41,59,.04), 0 8px 20px rgba(30,41,59,.05)`) plus a 1px `border` (`#E7EBF1`), not color contrast alone.
 - **`surface-alt` (`#F7F9FC`)** — secondary surfaces nested inside a card (the role-switcher block in the mockup's sidebar, neutral-chip background).
 - **Accent (`accent` `#2F6FED`, hover/active `accent-strong` `#1E54C7`, tint `accent-soft` `#E7EFFE`)** — primary buttons, active nav state + its badge, the worked-example hint's background, the Projects nav badge.
 - **Five semantic colors, each tied to a transaction/adjustment meaning, not a generic "state":**
