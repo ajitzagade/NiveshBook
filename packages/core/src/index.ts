@@ -19,3 +19,4 @@ export * from "./investment-adjustment";
 export * from "./investment-adjustment-port";
 export * from "./recommended-amount";
 export * from "./recommended-amount-port";
+export * from "./investment-status";

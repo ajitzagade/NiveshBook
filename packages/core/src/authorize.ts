@@ -31,7 +31,8 @@ export type Action =
   | "should_pay:view"
   | "investment_transactions:create"
   | "investment_transactions:list"
-  | "investment_adjustments:view";
+  | "investment_adjustments:view"
+  | "investment_status:view";
 
 /**
  * Role -> allowed-actions permission table. All actions here are
@@ -129,6 +130,13 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // its AC explicitly named a self-service persona) -- 3.4's AC has no such
   // framing.
   "investment_adjustments:view": new Set(["owner_admin"]),
+  // Story 3.6: the narrow, self-access-gated single-party view --
+  // `GET .../my-investment-status` -- sits alongside `investment_adjustments:view`
+  // (which stays Owner/Admin-only, unmodified) rather than reopening it. The
+  // role-table entry here still gates the Owner/Admin-acting-for-anyone path;
+  // self-access itself is admitted via `SELF_ACCESS_ACTIONS` below, mirroring
+  // `investment_transactions:create`'s exact Story 3.3 shape one endpoint over.
+  "investment_status:view": new Set(["owner_admin"]),
 };
 
 /**
@@ -160,12 +168,24 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
  * -- mirrors `partner_shares:list`/`partner_shares:view_grant`'s Story
  * 2.4/2.6 precedent of resolving `scopeOwnerIds` from a shares fetch first,
  * one level down at single-resource granularity instead of a scoped list).
+ *
+ * Story 3.6 adds `investment_status:view`: identical shape to
+ * `investment_transactions:create` -- a Partner or Sub-partner may view their
+ * own Investment Adjustment status (`resourceRef.ownerId` is the target
+ * share's own `userId`, resolved by the route the same way beforehand). A
+ * Partner's own entry additionally carries their nested current Sub-partners
+ * (the route's job, not this gate's), so this single self-access check is
+ * enough to admit both "my own status" and "my own Sub-partners, as part of
+ * my own view" -- never a separate grant for viewing someone *else's*
+ * Sub-partner directly (that party's own self-access, or Owner/Admin, is
+ * required instead).
  */
 const SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set([
   "users:view",
   "subpartner_shares:list",
   "subpartner_shares:view",
   "investment_transactions:create",
+  "investment_status:view",
 ]);
 
 /**

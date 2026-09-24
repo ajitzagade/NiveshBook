@@ -680,6 +680,93 @@ describe("authorize — investment_transactions:create (Story 3.3, self-access o
   });
 });
 
+describe("authorize — investment_status:view (Story 3.6, self-access override, identical shape to investment_transactions:create)", () => {
+  it("allows an owner_admin to view anyone's status", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize("owner-1", "investment_status:view", { ownerId: "partner-user-1" }, deps);
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("allows a Partner to view their own status (resourceRef.ownerId matches their own userId)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "partner-user-1",
+      "investment_status:view",
+      { ownerId: "partner-user-1" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("allows a Sub-partner to view their own status (resourceRef.ownerId matches their own userId)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "sub-partner-1", role: "sub_partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "sub-partner-1",
+      "investment_status:view",
+      { ownerId: "sub-partner-1" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("matches self-access case-insensitively (UUIDs are case-insensitive)", async () => {
+    const users = createFakeUserPort([
+      makeUser({ id: "0192f5a0-1111-7000-8000-000000000001", role: "partner" }),
+    ]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "0192f5a0-1111-7000-8000-000000000001",
+      "investment_status:view",
+      { ownerId: "0192F5A0-1111-7000-8000-000000000001" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("denies a co-Partner attempting to view another Partner's status", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-a", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "partner-user-a",
+      "investment_status:view",
+      { ownerId: "partner-user-b" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies when the target share has no linked user (ownerId is empty)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-a", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize("partner-user-a", "investment_status:view", { ownerId: "" }, deps);
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies an actor that no longer exists, even targeting their own (former) id", async () => {
+    const users = createFakeUserPort([]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize("ghost", "investment_status:view", { ownerId: "someone-else" }, deps);
+
+    expect(result).toEqual({ allowed: false });
+  });
+});
+
 describe("authorize", () => {
   it("allows an owner_admin to view any single user", async () => {
     const users = createFakeUserPort([
