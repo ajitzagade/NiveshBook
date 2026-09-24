@@ -8,6 +8,7 @@ const findSessionByTokenHash = vi.fn();
 const touchSession = vi.fn();
 const findUserById = vi.fn();
 const listAllUsers = vi.fn();
+const listAllPartnerShares = vi.fn();
 
 vi.mock("@niveshbook/db", () => ({
   createSessionPort: () => ({
@@ -25,6 +26,12 @@ vi.mock("@niveshbook/db", () => ({
     listAllUsers,
     setUserActive: vi.fn(),
     setApprovalAuthority: vi.fn(),
+  }),
+  createPartnerSharePort: () => ({
+    createPartnerShare: vi.fn(),
+    findLatestByPartnerId: vi.fn(),
+    listByProjectId: vi.fn(),
+    listAll: listAllPartnerShares,
   }),
 }));
 
@@ -99,6 +106,8 @@ describe("GET /api/permissions", () => {
     touchSession.mockResolvedValue(1);
     findUserById.mockReset();
     listAllUsers.mockReset();
+    listAllPartnerShares.mockReset();
+    listAllPartnerShares.mockResolvedValue([]);
     delete process.env.CLIENT_ENABLE_PROJECT_ADMIN;
   });
 
@@ -115,6 +124,7 @@ describe("GET /api/permissions", () => {
 
     expect(response.status).toBe(401);
     expect(listAllUsers).not.toHaveBeenCalled();
+    expect(listAllPartnerShares).not.toHaveBeenCalled();
   });
 
   it("returns 401 when the session cookie doesn't resolve", async () => {
@@ -124,6 +134,7 @@ describe("GET /api/permissions", () => {
 
     expect(response.status).toBe(401);
     expect(listAllUsers).not.toHaveBeenCalled();
+    expect(listAllPartnerShares).not.toHaveBeenCalled();
   });
 
   it.each(["partner", "sub_partner", "project_admin"] as const)(
@@ -137,6 +148,7 @@ describe("GET /api/permissions", () => {
 
       expect(response.status).toBe(403);
       expect(listAllUsers).not.toHaveBeenCalled();
+      expect(listAllPartnerShares).not.toHaveBeenCalled();
     },
   );
 
@@ -150,6 +162,7 @@ describe("GET /api/permissions", () => {
       PARTNER_USER,
       PROJECT_ADMIN_USER,
     ]);
+    listAllPartnerShares.mockResolvedValue([]);
 
     const response = await GET(makeRequest(`${SESSION_COOKIE_NAME}=some-token`));
 
@@ -161,7 +174,51 @@ describe("GET /api/permissions", () => {
         { id: OWNER_ID, email: OWNER_USER.email, canApproveExtraWithdrawal: true },
         { id: OTHER_OWNER_ID, email: OTHER_OWNER_USER.email, canApproveExtraWithdrawal: false },
       ],
+      partners: [],
     });
+  });
+
+  it("returns 200 with the partners list -- every current Partner across every Project, minimal projection only (Story 2.7)", async () => {
+    findSessionByTokenHash.mockResolvedValue(makeLiveSession(OWNER_ID));
+    findUserById.mockResolvedValue(OWNER_USER);
+    listAllUsers.mockResolvedValue([OWNER_USER]);
+    const now = new Date().toISOString();
+    listAllPartnerShares.mockResolvedValue([
+      {
+        id: "row-1",
+        partnerId: "partner-1",
+        projectId: "project-1",
+        name: "Partner A",
+        sharePercent: "50",
+        userId: null,
+        subPartnerVisibilityGrant: true,
+        effectiveFrom: now,
+        createdAt: now,
+      },
+      {
+        id: "row-2",
+        partnerId: "partner-2",
+        projectId: "project-2",
+        name: "Partner B",
+        sharePercent: "100",
+        userId: null,
+        subPartnerVisibilityGrant: false,
+        effectiveFrom: now,
+        createdAt: now,
+      },
+    ]);
+
+    const response = await GET(makeRequest(`${SESSION_COOKIE_NAME}=some-token`));
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.partners).toEqual(
+      expect.arrayContaining([
+        { partnerId: "partner-1", projectId: "project-1", name: "Partner A", subPartnerVisibilityGrant: true },
+        { partnerId: "partner-2", projectId: "project-2", name: "Partner B", subPartnerVisibilityGrant: false },
+      ]),
+    );
+    expect(body.partners).toHaveLength(2);
   });
 
   it("returns enabledRoles.project_admin: false when CLIENT_ENABLE_PROJECT_ADMIN is unset, even with an active project_admin user", async () => {

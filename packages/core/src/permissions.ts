@@ -1,5 +1,7 @@
 import type { User } from "@niveshbook/types";
 import type { UserPort } from "./user-port";
+import type { PartnerSharePort } from "./partner-share-port";
+import { listAllCurrentPartnerShares } from "./partner-share";
 
 export interface PermissionsDeps {
   users: UserPort;
@@ -13,6 +15,8 @@ export interface PermissionsOverviewDeps extends PermissionsDeps {
    * this is supplied the same way any other dependency is.
    */
   projectAdminEnabled: boolean;
+  /** Story 2.7: source of every current Partner Share, across every Project, for the `partners` visibility-grant list. */
+  partnerShares: PartnerSharePort;
 }
 
 /** The shape of one Owner/Admin's approval-authority grant, as surfaced by the Permissions area. */
@@ -20,6 +24,21 @@ export interface ApproverSummary {
   id: string;
   email: string;
   canApproveExtraWithdrawal: boolean;
+}
+
+/**
+ * The shape of one Partner's Sub-partner Visibility Grant (Story 2.6)
+ * state, as surfaced by the Permissions area (Story 2.7). A minimal
+ * projection, not the full `PartnerShare` row -- never `sharePercent`,
+ * `userId`, `id`, `effectiveFrom`, or `createdAt`. `projectId` is included
+ * for traceability/uniqueness only (two Projects can have same-named
+ * Partners) -- no Project `name` join.
+ */
+export interface PartnerVisibilitySummary {
+  partnerId: string;
+  projectId: string;
+  name: string;
+  subPartnerVisibilityGrant: boolean;
 }
 
 export interface PermissionsOverview {
@@ -32,6 +51,8 @@ export interface PermissionsOverview {
   enabledRoles: { project_admin: boolean };
   /** Every `owner_admin` user and their current Extra Withdrawal approval-authority grant. */
   approvers: ApproverSummary[];
+  /** Every current Partner Share, across every Project, with its Sub-partner Visibility Grant state (Story 2.7). Global, not per-Project. */
+  partners: PartnerVisibilitySummary[];
 }
 
 function toApproverSummary(user: User): ApproverSummary {
@@ -42,14 +63,31 @@ function toApproverSummary(user: User): ApproverSummary {
   };
 }
 
+function toPartnerVisibilitySummary(share: {
+  partnerId: string;
+  projectId: string;
+  name: string;
+  subPartnerVisibilityGrant: boolean;
+}): PartnerVisibilitySummary {
+  return {
+    partnerId: share.partnerId,
+    projectId: share.projectId,
+    name: share.name,
+    subPartnerVisibilityGrant: share.subPartnerVisibilityGrant,
+  };
+}
+
 /**
  * Builds the Owner/Admin Permissions overview (FR45): which roles are
- * enabled for this deployment, and who currently holds Extra Withdrawal
- * approval authority. `enabledRoles.project_admin` is taken directly from
+ * enabled for this deployment, who currently holds Extra Withdrawal
+ * approval authority, and (Story 2.7) which Partners currently have their
+ * Sub-partner Visibility Grant on, across every Project.
+ * `enabledRoles.project_admin` is taken directly from
  * `deps.projectAdminEnabled` (Story 1.8's per-client config) — approvers
- * always re-read live data via `listAllUsers()` — never cached (AD-1) — so
- * a grant toggled by `setApprovalAuthority` is visible on the very next
- * call.
+ * and partners always re-read live data via `listAllUsers()` /
+ * `listAllCurrentPartnerShares()` — never cached (AD-1) — so a grant
+ * toggled by `setApprovalAuthority` or a Partner's edit is visible on the
+ * very next call.
  */
 export async function getPermissionsOverview(
   deps: PermissionsOverviewDeps,
@@ -60,9 +98,15 @@ export async function getPermissionsOverview(
     .filter((user) => user.role === "owner_admin" && user.active)
     .map(toApproverSummary);
 
+  const currentPartnerShares = await listAllCurrentPartnerShares({
+    partnerShares: deps.partnerShares,
+  });
+  const partners = currentPartnerShares.map(toPartnerVisibilitySummary);
+
   return {
     enabledRoles: { project_admin: deps.projectAdminEnabled },
     approvers,
+    partners,
   };
 }
 

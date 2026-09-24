@@ -148,6 +148,19 @@ function isNewerVersion(candidate: PartnerShare, current: PartnerShare): boolean
   return candidate.id > current.id;
 }
 
+/** Reduces every version row down to the latest `effectiveFrom` per `partnerId`. Shared by `listCurrentPartnerShares` (Project-scoped) and `listAllCurrentPartnerShares` (Story 2.7, global) -- the reduction shape is identical, only the source of `allVersions` differs. */
+function reduceToLatestPerPartnerId(allVersions: readonly PartnerShare[]): PartnerShare[] {
+  const latestByPartnerId = new Map<string, PartnerShare>();
+  for (const version of allVersions) {
+    const current = latestByPartnerId.get(version.partnerId);
+    if (!current || isNewerVersion(version, current)) {
+      latestByPartnerId.set(version.partnerId, version);
+    }
+  }
+
+  return [...latestByPartnerId.values()];
+}
+
 /**
  * Reduces every version row for a Project down to the latest `effectiveFrom`
  * per `partnerId` -- the *current* Partner Shares. Order of the returned
@@ -159,16 +172,22 @@ export async function listCurrentPartnerShares(
   deps: PartnerShareDeps,
 ): Promise<PartnerShare[]> {
   const allVersions = await deps.partnerShares.listByProjectId(projectId);
+  return reduceToLatestPerPartnerId(allVersions);
+}
 
-  const latestByPartnerId = new Map<string, PartnerShare>();
-  for (const version of allVersions) {
-    const current = latestByPartnerId.get(version.partnerId);
-    if (!current || isNewerVersion(version, current)) {
-      latestByPartnerId.set(version.partnerId, version);
-    }
-  }
-
-  return [...latestByPartnerId.values()];
+/**
+ * Reduces every version row *across every Project* down to the latest
+ * `effectiveFrom` per `partnerId` -- the *current* Partner Shares, globally
+ * (Story 2.7). Reuses the identical reduction shape as
+ * `listCurrentPartnerShares`, sourced from `deps.partnerShares.listAll()`
+ * instead of `listByProjectId(projectId)`. Order of the returned array is
+ * not guaranteed to match `deps.partnerShares.listAll()`'s order.
+ */
+export async function listAllCurrentPartnerShares(
+  deps: PartnerShareDeps,
+): Promise<PartnerShare[]> {
+  const allVersions = await deps.partnerShares.listAll();
+  return reduceToLatestPerPartnerId(allVersions);
 }
 
 /**

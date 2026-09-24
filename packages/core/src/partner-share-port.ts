@@ -27,4 +27,6 @@ export interface PartnerSharePort {
   findLatestByPartnerId(partnerId: string): Promise<PartnerShare | null>;
   /** Every version row for a Project (all Partners, all versions) -- callers reduce to latest-per-`partnerId` themselves. */
   listByProjectId(projectId: string): Promise<PartnerShare[]>;
+  /** Every version row across every Project (all Partners, all versions) -- mirrors `listByProjectId` minus its `WHERE` clause. Callers reduce to latest-per-`partnerId` themselves (Story 2.7). */
+  listAll(): Promise<PartnerShare[]>;
 }

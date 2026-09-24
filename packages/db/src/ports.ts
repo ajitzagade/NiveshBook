@@ -287,6 +287,10 @@ export function createPartnerSharePort(database: Database = getDb()): PartnerSha
         .where(eq(partnerShares.projectId, projectId));
       return rows.map(toPartnerShare);
     },
+    async listAll() {
+      const rows = await database.select().from(partnerShares);
+      return rows.map(toPartnerShare);
+    },
   };
 }
 

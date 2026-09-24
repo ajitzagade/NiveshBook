@@ -4,6 +4,7 @@ import {
   addPartnerShare,
   updatePartnerShare,
   listCurrentPartnerShares,
+  listAllCurrentPartnerShares,
   computeShareTotal,
   InvalidPartnerNameError,
   InvalidSharePercentError,
@@ -57,6 +58,9 @@ function createFakePartnerSharePort(seed: PartnerShare[] = []): PartnerSharePort
     },
     async listByProjectId(projectId: string) {
       return rows.filter((r) => r.projectId === projectId);
+    },
+    async listAll() {
+      return [...rows];
     },
   };
 }
@@ -318,6 +322,92 @@ describe("listCurrentPartnerShares", () => {
     const deps: PartnerShareDeps = { partnerShares };
 
     expect(await listCurrentPartnerShares("project-1", deps)).toEqual([]);
+  });
+});
+
+describe("listAllCurrentPartnerShares", () => {
+  it("reduces multiple version rows down to the latest per partnerId, within a single Project", async () => {
+    const v1 = makeShare({
+      id: "row-1",
+      partnerId: "partner-1",
+      sharePercent: "50" as Percent,
+      effectiveFrom: new Date(1000).toISOString(),
+    });
+    const v2 = makeShare({
+      id: "row-2",
+      partnerId: "partner-1",
+      sharePercent: "60" as Percent,
+      effectiveFrom: new Date(2000).toISOString(),
+    });
+    const other = makeShare({
+      id: "row-3",
+      partnerId: "partner-2",
+      name: "Partner B",
+      sharePercent: "30" as Percent,
+      effectiveFrom: new Date(1500).toISOString(),
+    });
+    const partnerShares = createFakePartnerSharePort([v1, v2, other]);
+    const deps: PartnerShareDeps = { partnerShares };
+
+    const current = await listAllCurrentPartnerShares(deps);
+
+    expect(current).toHaveLength(2);
+    const partnerOne = current.find((s) => s.partnerId === "partner-1");
+    expect(partnerOne?.sharePercent).toBe("60");
+    expect(partnerOne?.id).toBe("row-2");
+  });
+
+  it("returns an empty list when no Partners exist anywhere", async () => {
+    const partnerShares = createFakePartnerSharePort();
+    const deps: PartnerShareDeps = { partnerShares };
+
+    expect(await listAllCurrentPartnerShares(deps)).toEqual([]);
+  });
+
+  it("aggregates current Partners across every Project, not just one", async () => {
+    const projectOnePartner = makeShare({
+      id: "row-1",
+      partnerId: "partner-1",
+      projectId: "project-1",
+      name: "Partner A",
+      effectiveFrom: new Date(1000).toISOString(),
+    });
+    const projectTwoPartner = makeShare({
+      id: "row-2",
+      partnerId: "partner-2",
+      projectId: "project-2",
+      name: "Partner B",
+      effectiveFrom: new Date(1000).toISOString(),
+    });
+    const partnerShares = createFakePartnerSharePort([projectOnePartner, projectTwoPartner]);
+    const deps: PartnerShareDeps = { partnerShares };
+
+    const current = await listAllCurrentPartnerShares(deps);
+
+    expect(current).toHaveLength(2);
+    expect(current.map((s) => s.projectId).sort()).toEqual(["project-1", "project-2"]);
+  });
+
+  it("reflects only the latest version's grant state when a Partner was edited after their grant was toggled", async () => {
+    const v1 = makeShare({
+      id: "row-1",
+      partnerId: "partner-1",
+      subPartnerVisibilityGrant: false,
+      effectiveFrom: new Date(1000).toISOString(),
+    });
+    const v2 = makeShare({
+      id: "row-2",
+      partnerId: "partner-1",
+      subPartnerVisibilityGrant: true,
+      effectiveFrom: new Date(2000).toISOString(),
+    });
+    const partnerShares = createFakePartnerSharePort([v1, v2]);
+    const deps: PartnerShareDeps = { partnerShares };
+
+    const current = await listAllCurrentPartnerShares(deps);
+
+    expect(current).toHaveLength(1);
+    expect(current[0]?.subPartnerVisibilityGrant).toBe(true);
   });
 });
 

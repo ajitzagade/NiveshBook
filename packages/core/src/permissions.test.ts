@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { User } from "@niveshbook/types";
+import type { PartnerShare, Percent, User } from "@niveshbook/types";
 import {
   getPermissionsOverview,
   setApprovalAuthority,
@@ -8,6 +8,7 @@ import {
   type PermissionsOverviewDeps,
 } from "./permissions";
 import type { UserPort } from "./user-port";
+import type { PartnerSharePort, CreatePartnerShareInput } from "./partner-share-port";
 
 function makeUser(overrides: Partial<User> = {}): User {
   return {
@@ -56,10 +57,44 @@ function createFakeUserPort(users: User[]): UserPort {
   };
 }
 
+function makePartnerShare(overrides: Partial<PartnerShare> = {}): PartnerShare {
+  const now = new Date().toISOString();
+  return {
+    id: "row-1",
+    partnerId: "partner-1",
+    projectId: "project-1",
+    name: "Partner A",
+    sharePercent: "50" as Percent,
+    userId: null,
+    subPartnerVisibilityGrant: false,
+    effectiveFrom: now,
+    createdAt: now,
+    ...overrides,
+  };
+}
+
+/** A PartnerSharePort backed by a fixed, read-only list of version rows -- sufficient for `getPermissionsOverview`'s read-only `listAll()` call. */
+function createFakePartnerSharePort(rows: PartnerShare[] = []): PartnerSharePort {
+  return {
+    async createPartnerShare(input: CreatePartnerShareInput) {
+      throw new Error(`not implemented in this fake: ${input.partnerId}`);
+    },
+    async findLatestByPartnerId() {
+      throw new Error("not implemented in this fake");
+    },
+    async listByProjectId(projectId: string) {
+      return rows.filter((r) => r.projectId === projectId);
+    },
+    async listAll() {
+      return [...rows];
+    },
+  };
+}
+
 describe("getPermissionsOverview", () => {
   it("reports enabledRoles.project_admin: true from projectAdminEnabled, even with no project_admin user at all", async () => {
     const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
-    const deps: PermissionsOverviewDeps = { users, projectAdminEnabled: true };
+    const deps: PermissionsOverviewDeps = { users, projectAdminEnabled: true, partnerShares: createFakePartnerSharePort() };
 
     const overview = await getPermissionsOverview(deps);
 
@@ -71,7 +106,7 @@ describe("getPermissionsOverview", () => {
       makeUser({ id: "owner-1", role: "owner_admin" }),
       makeUser({ id: "pa-1", role: "project_admin", active: true }),
     ]);
-    const deps: PermissionsOverviewDeps = { users, projectAdminEnabled: false };
+    const deps: PermissionsOverviewDeps = { users, projectAdminEnabled: false, partnerShares: createFakePartnerSharePort() };
 
     const overview = await getPermissionsOverview(deps);
 
@@ -83,7 +118,7 @@ describe("getPermissionsOverview", () => {
       makeUser({ id: "owner-1", role: "owner_admin" }),
       makeUser({ id: "pa-1", role: "project_admin", active: true }),
     ]);
-    const deps: PermissionsOverviewDeps = { users, projectAdminEnabled: false };
+    const deps: PermissionsOverviewDeps = { users, projectAdminEnabled: false, partnerShares: createFakePartnerSharePort() };
 
     const before = await getPermissionsOverview(deps);
     expect(before.enabledRoles.project_admin).toBe(false);
@@ -110,7 +145,7 @@ describe("getPermissionsOverview", () => {
       }),
       makeUser({ id: "partner-1", role: "partner" }),
     ]);
-    const deps: PermissionsOverviewDeps = { users, projectAdminEnabled: false };
+    const deps: PermissionsOverviewDeps = { users, projectAdminEnabled: false, partnerShares: createFakePartnerSharePort() };
 
     const overview = await getPermissionsOverview(deps);
 
@@ -137,7 +172,7 @@ describe("getPermissionsOverview", () => {
         canApproveExtraWithdrawal: false,
       }),
     ]);
-    const deps: PermissionsOverviewDeps = { users, projectAdminEnabled: false };
+    const deps: PermissionsOverviewDeps = { users, projectAdminEnabled: false, partnerShares: createFakePartnerSharePort() };
 
     const overview = await getPermissionsOverview(deps);
 
@@ -150,7 +185,7 @@ describe("getPermissionsOverview", () => {
     const users = createFakeUserPort([
       makeUser({ id: "owner-1", role: "owner_admin", canApproveExtraWithdrawal: true }),
     ]);
-    const deps: PermissionsOverviewDeps = { users, projectAdminEnabled: false };
+    const deps: PermissionsOverviewDeps = { users, projectAdminEnabled: false, partnerShares: createFakePartnerSharePort() };
 
     const before = await getPermissionsOverview(deps);
     expect(before.approvers[0]?.canApproveExtraWithdrawal).toBe(true);
@@ -159,6 +194,90 @@ describe("getPermissionsOverview", () => {
 
     const after = await getPermissionsOverview(deps);
     expect(after.approvers[0]?.canApproveExtraWithdrawal).toBe(false);
+  });
+
+  it("lists every current Partner across every Project with the minimal projection (Story 2.7)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const partnerShares = createFakePartnerSharePort([
+      makePartnerShare({
+        id: "row-1",
+        partnerId: "partner-1",
+        projectId: "project-1",
+        name: "Partner A",
+        sharePercent: "50" as Percent,
+        userId: "user-1",
+        subPartnerVisibilityGrant: true,
+      }),
+      makePartnerShare({
+        id: "row-2",
+        partnerId: "partner-2",
+        projectId: "project-1",
+        name: "Partner B",
+        sharePercent: "50" as Percent,
+        subPartnerVisibilityGrant: false,
+      }),
+      makePartnerShare({
+        id: "row-3",
+        partnerId: "partner-3",
+        projectId: "project-2",
+        name: "Partner C",
+        sharePercent: "100" as Percent,
+        subPartnerVisibilityGrant: false,
+      }),
+    ]);
+    const deps: PermissionsOverviewDeps = { users, projectAdminEnabled: false, partnerShares };
+
+    const overview = await getPermissionsOverview(deps);
+
+    expect(overview.partners).toEqual(
+      expect.arrayContaining([
+        { partnerId: "partner-1", projectId: "project-1", name: "Partner A", subPartnerVisibilityGrant: true },
+        { partnerId: "partner-2", projectId: "project-1", name: "Partner B", subPartnerVisibilityGrant: false },
+        { partnerId: "partner-3", projectId: "project-2", name: "Partner C", subPartnerVisibilityGrant: false },
+      ]),
+    );
+    expect(overview.partners).toHaveLength(3);
+    // Minimal projection -- never sharePercent/userId/id/effectiveFrom/createdAt.
+    expect(Object.keys(overview.partners[0] ?? {}).sort()).toEqual(
+      ["name", "partnerId", "projectId", "subPartnerVisibilityGrant"].sort(),
+    );
+  });
+
+  it("returns partners: [] when no Partners exist anywhere yet", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: PermissionsOverviewDeps = {
+      users,
+      projectAdminEnabled: false,
+      partnerShares: createFakePartnerSharePort([]),
+    };
+
+    const overview = await getPermissionsOverview(deps);
+
+    expect(overview.partners).toEqual([]);
+  });
+
+  it("reflects only the latest version's grant state when a Partner was edited after their grant was toggled", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const partnerShares = createFakePartnerSharePort([
+      makePartnerShare({
+        id: "row-1",
+        partnerId: "partner-1",
+        subPartnerVisibilityGrant: false,
+        effectiveFrom: new Date(1000).toISOString(),
+      }),
+      makePartnerShare({
+        id: "row-2",
+        partnerId: "partner-1",
+        subPartnerVisibilityGrant: true,
+        effectiveFrom: new Date(2000).toISOString(),
+      }),
+    ]);
+    const deps: PermissionsOverviewDeps = { users, projectAdminEnabled: false, partnerShares };
+
+    const overview = await getPermissionsOverview(deps);
+
+    expect(overview.partners).toHaveLength(1);
+    expect(overview.partners[0]?.subPartnerVisibilityGrant).toBe(true);
   });
 });
 
