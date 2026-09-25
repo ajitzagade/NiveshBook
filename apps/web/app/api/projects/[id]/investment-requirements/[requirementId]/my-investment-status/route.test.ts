@@ -565,18 +565,13 @@ describe("GET .../investment-requirements/[requirementId]/my-investment-status",
       makeSubPartnerShareRow({ subPartnerId: "sub-2", partnerId: "a", name: "Sub2", sharePercent: "25" }),
     ]);
     // Own 2,50,000 / Sub1 1,25,000 / Sub2 1,25,000 Should Pay, matching the
-    // AC exactly. `computeInvestmentAdjustment` (Story 3.4, frozen/unchanged
-    // -- see `investment-adjustment.ts`'s own doc comment) compares a
-    // Partner's own row against the AGGREGATE Should Pay (Own + all current
-    // Sub-partners = 5,00,000 here), not Own alone -- so the Partner-row
-    // payment recorded here is 6,25,000 (5,00,000 + the AC's stated 1,25,000
-    // Extra Paid), rather than the AC's illustrative "Partner A pays
-    // 3,75,000" (3,75,000 against the 5,00,000 aggregate would actually be
-    // Pending, not Extra Paid). The AC's *outputs* -- Extra Paid 1,25,000 for
-    // A, Pending 1,25,000 for Sub1, No Adjustment for Sub2 -- are reproduced
-    // exactly below.
+    // AC exactly. Partner A's own adjustment is computed against her own
+    // 2,50,000 (per-person, not the 5,00,000 aggregate -- see
+    // `investment-adjustment.ts`'s `PartnerInvestmentAdjustment.ownShouldPay`
+    // doc comment), so paying the AC's own stated 3,75,000 produces the AC's
+    // own stated Extra Paid 1,25,000 directly (3,75,000 - 2,50,000).
     listTransactionsByRequirementId.mockResolvedValue([
-      makeTransactionRow({ id: "tx-a", partyType: "partner", shareId: "a", amount: "625000" }),
+      makeTransactionRow({ id: "tx-a", partyType: "partner", shareId: "a", amount: "375000" }),
       makeTransactionRow({ id: "tx-sub2", partyType: "sub_partner", shareId: "sub-2", amount: "125000" }),
     ]);
 
@@ -646,7 +641,13 @@ describe("GET .../investment-requirements/[requirementId]/my-investment-status",
 
   it("Story 3.8: excludes a cancelled transaction and its reversal row from actualPaid -- only the still-active amount counts", async () => {
     ownerSession();
-    // Partner A: 50% of 1,000,000 Should Pay -- 500,000.
+    // Partner A: 50% of 1,000,000 Should Pay -- 500,000. No Sub-partners
+    // here (overriding the shared default's sub-1 under "a") so ownShouldPay
+    // equals the pooled 500,000 exactly -- this test is only about the
+    // cancelled/reversal exclusion, not the own-vs-pooled distinction.
+    listSubPartnerSharesByProjectId.mockResolvedValue([
+      makeSubPartnerShareRow({ subPartnerId: "sub-under-b", partnerId: "b", name: "SubB", userId: "sub-partner-user-under-b" }),
+    ]);
     listTransactionsByRequirementId.mockResolvedValue([
       makeTransactionRow({ id: "tx-active", partyType: "partner", shareId: "a", amount: "500000" }),
       makeTransactionRow({

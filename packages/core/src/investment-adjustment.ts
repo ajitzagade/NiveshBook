@@ -42,8 +42,9 @@ export interface PartnerInvestmentAdjustment {
   partnerId: string;
   name: string;
   sharePercent: Percent;
-  /** `ownShouldPay + sum(subPartners[*].shouldPay)` -- mirrors `PartnerShouldPay.shouldPay` exactly; this Partner's own adjustment row is computed against this total, not `ownShouldPay` (matching Story 3.3's `buildTransactionSnapshot`, which snapshots the same total as a Partner-row transaction's `shouldPaySnapshot`). */
+  /** `ownShouldPay + sum(subPartners[*].shouldPay)` -- mirrors `PartnerShouldPay.shouldPay` exactly, returned here for display only (e.g. the Should Pay headline amount). This Partner's own *adjustment* row (`adjustmentType`/`adjustmentAmount` below) is computed against `ownShouldPay`, not this pooled total -- see that field's own doc comment. */
   shouldPay: Money;
+  /** `adjustmentType`/`adjustmentAmount` below are computed against *this* (own-retained) amount, not the pooled `shouldPay` above -- per-person, matching `epic-3-context.md`'s "Adjustments are per-person, not pooled" rule and this record's own Sub-partner rows (each of which is already own-vs-own by construction). A Sub-partner's payment never masks -- or falsely flags -- their parent Partner's own shortfall or surplus. */
   ownShouldPay: Money;
   /** Sum of every transaction recorded against *this specific funding requirement* for this Partner's own row -- `"0"` whether nothing was recorded yet or an explicit `"0"` transaction was. */
   actualPaid: Money;
@@ -143,7 +144,7 @@ export async function computeInvestmentAdjustment(
       requirement,
       "partner",
       partner.partnerId,
-      partner.shouldPay,
+      partner.ownShouldPay,
       transactionsByShareKey,
       deps,
     );

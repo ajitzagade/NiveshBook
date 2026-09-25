@@ -183,14 +183,15 @@ describe("computeInvestmentAdjustment", () => {
     ];
     const subsByPartnerId = {
       // Partner A's own retained share is now 0% (fully suballocated) --
-      // A's *own* row's shouldPay is still the aggregate total (ownShouldPay
-      // + Sub 1's shouldPay = 0 + 500000 = 500000), matching Story 3.3's
-      // `buildTransactionSnapshot` precedent (a Partner-row transaction's
-      // `shouldPaySnapshot` is the same aggregate, never `ownShouldPay` alone).
+      // A's own row's `shouldPay` (the pooled/display total, ownShouldPay +
+      // Sub 1's shouldPay = 0 + 500000 = 500000) still matches Story 3.3's
+      // `buildTransactionSnapshot` precedent, but A's *adjustment* is computed
+      // against `ownShouldPay` (0), per-person -- see this field's own doc
+      // comment on `PartnerInvestmentAdjustment`.
       a: [makeSub({ subPartnerId: "sub-1", partnerId: "a", name: "Sub 1", sharePercent: "50" as Percent })],
     };
     const transactionsByShareKey = {
-      [shareKey("partner", "a")]: ["500000"].map(toMoney), // matches A's own row's shouldPay (500000) exactly -> none
+      [shareKey("partner", "a")]: ["500000"].map(toMoney), // A's own retained share is 0 -> this is a pure surplus, extra_paid 500000
       [shareKey("sub_partner", "sub-1")]: ["400000"].map(toMoney), // Sub 1's shouldPay is 500000 -> pending 100000
     };
 
@@ -206,13 +207,58 @@ describe("computeInvestmentAdjustment", () => {
     expect(a?.ownShouldPay).toBe("0");
     expect(a?.shouldPay).toBe("500000");
     expect(a?.actualPaid).toBe("500000");
-    expect(a?.adjustmentType).toBe("none");
+    expect(a?.adjustmentType).toBe("extra_paid");
+    expect(a?.adjustmentAmount).toBe("500000");
 
     const sub = a?.subPartners.find((s) => s.subPartnerId === "sub-1");
     expect(sub?.shouldPay).toBe("500000");
     expect(sub?.actualPaid).toBe("400000");
     expect(sub?.adjustmentType).toBe("pending");
     expect(sub?.adjustmentAmount).toBe("100000");
+  });
+
+  it("a Partner's own adjustment is per-person -- Sub-partners fully covering the pooled total never masks the Partner's own shortfall, nor do they falsely trigger extra_paid on the Partner's own row", async () => {
+    // Regression test for a live-production bug (2026-09-25): Partner "Rajesh"
+    // has a 40% share (15% own-retained, Sub A 15%, Sub B 10%). Should Pay is
+    // 5000000: own=750000, Sub A=750000, Sub B=500000, pooled=2000000. Rajesh
+    // paid only 500000 of his own 750000 (still short 250000), while Sub A and
+    // Sub B both paid their shares in full. The pooled family total
+    // (500000 + 750000 + 500000 = 1750000) is coincidentally less than the
+    // pooled shouldPay (2000000) too, so a pooled-vs-pooled comparison would
+    // have also (wrongly, for different reasons) hidden Rajesh's own real
+    // shortfall behind the aggregate. His own row must reflect exactly his
+    // own 250000 shortfall, regardless of what his Sub-partners did.
+    const requirement = makeRequirement({ amount: "5000000" as Money });
+    const partners = [
+      makePartner({ partnerId: "rajesh", name: "Rajesh", sharePercent: "40" as Percent }),
+      makePartner({ partnerId: "other", name: "Other", sharePercent: "60" as Percent }),
+    ];
+    const subsByPartnerId = {
+      rajesh: [
+        makeSub({ subPartnerId: "sub-a", partnerId: "rajesh", name: "Sub A", sharePercent: "15" as Percent }),
+        makeSub({ subPartnerId: "sub-b", partnerId: "rajesh", name: "Sub B", sharePercent: "10" as Percent }),
+      ],
+    };
+    const transactionsByShareKey = {
+      [shareKey("partner", "rajesh")]: ["500000"].map(toMoney),
+      [shareKey("sub_partner", "sub-a")]: ["750000"].map(toMoney),
+      [shareKey("sub_partner", "sub-b")]: ["500000"].map(toMoney),
+    };
+
+    const result = await computeInvestmentAdjustment(
+      requirement,
+      partners,
+      subsByPartnerId,
+      transactionsByShareKey,
+      { investmentAdjustments: { upsert, listByProjectId: vi.fn() } },
+    );
+
+    const rajesh = result.find((p) => p.partnerId === "rajesh");
+    expect(rajesh?.ownShouldPay).toBe("750000");
+    expect(rajesh?.shouldPay).toBe("2000000"); // pooled, display-only -- unaffected by this fix
+    expect(rajesh?.actualPaid).toBe("500000");
+    expect(rajesh?.adjustmentType).toBe("pending");
+    expect(rajesh?.adjustmentAmount).toBe("250000"); // his own 750000 - 500000, never the pooled 2000000 - 500000 = 1500000
   });
 
   it("upserts exactly one row per Partner and per Sub-partner, keyed by (partyType, shareId, projectId)", async () => {

@@ -14,6 +14,7 @@ const listSubPartnerSharesByProjectId = vi.fn();
 const listAdjustmentsByProjectId = vi.fn();
 const upsertAdjustment = vi.fn();
 const snapshotAllRecommendedAmounts = vi.fn();
+const listTransactionsByRequirementId = vi.fn();
 
 vi.mock("@niveshbook/db", () => ({
   createSessionPort: () => ({
@@ -58,6 +59,14 @@ vi.mock("@niveshbook/db", () => ({
   createRecommendedAmountPort: () => ({
     snapshotAll: snapshotAllRecommendedAmounts,
     findByRequirementId: vi.fn(),
+  }),
+  createInvestmentTransactionPort: () => ({
+    recordTransaction: vi.fn(),
+    editTransaction: vi.fn(),
+    cancelTransaction: vi.fn(),
+    findReversalRow: vi.fn(),
+    listByRequirementId: listTransactionsByRequirementId,
+    listAuditLogEntries: vi.fn(),
   }),
 }));
 
@@ -190,6 +199,14 @@ function resetMocks() {
   listAdjustmentsByProjectId.mockReset();
   listAdjustmentsByProjectId.mockResolvedValue([]);
   upsertAdjustment.mockReset();
+  upsertAdjustment.mockImplementation(async (input: Record<string, unknown>) => ({
+    id: "adj-upserted",
+    updatedAt: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+    ...input,
+  }));
+  listTransactionsByRequirementId.mockReset();
+  listTransactionsByRequirementId.mockResolvedValue([]);
   snapshotAllRecommendedAmounts.mockReset();
   snapshotAllRecommendedAmounts.mockImplementation(async (inputs: Record<string, unknown>[]) =>
     inputs.map((input, index) => ({
@@ -354,6 +371,71 @@ describe("POST /api/projects/[id]/investment-requirements", () => {
     );
     const [batch] = snapshotAllRecommendedAmounts.mock.calls[0] as [unknown[]];
     expect(batch).toHaveLength(2);
+  });
+
+  it("Bug fix (2026-09-25): forces a fresh recompute of the immediately-prior requirement's ledger before reading it for carry-forward, rather than trusting a possibly-stale row", async () => {
+    // Simulates the exact live-reproduced bug: the persisted adjustment row
+    // for the prior requirement is stale ("pending 500000", as if nothing
+    // was ever paid), but the prior requirement's own transactions show the
+    // share was in fact paid in full. Before this fix, `listAdjustmentsByProjectId`'s
+    // stale value would have been trusted as-is; after this fix, the route
+    // must recompute against the prior requirement's real transactions first,
+    // so the stale row is corrected before the new requirement's snapshot
+    // ever reads it.
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    createInvestmentRequirement.mockResolvedValue(makeRequirement({ id: "req-2", requirementDate: "2026-11-01" }));
+    listByProjectId.mockResolvedValue([
+      makeRequirement({ id: "req-1", requirementDate: "2026-10-01", amount: "500000" }),
+      makeRequirement({ id: "req-2", requirementDate: "2026-11-01" }),
+    ]);
+    listPartnerSharesByProjectId.mockResolvedValue([
+      makePartnerShareRow({ partnerId: "a", name: "A", sharePercent: "100" }),
+    ]);
+    // The prior requirement's own transactions show Partner A fully paid
+    // their 500000 Should Pay -- but the persisted `investment_adjustments`
+    // row (returned by the FINAL read below) is deliberately left stale at
+    // "pending 500000", as if that payment had never been reflected. If the
+    // fix works, the recompute step corrects this via `upsertAdjustment`
+    // before the stale row would otherwise have been trusted.
+    listTransactionsByRequirementId.mockResolvedValue([
+      { id: "tx-1", requirementId: "req-1", projectId: PROJECT_ID, partyType: "partner", shareId: "a", sharePercentSnapshot: "100", shouldPaySnapshot: "500000", amount: "500000", transactionDate: "2026-10-05", paymentMode: "cash", referenceNumber: null, notes: null, status: "active", reversalOfTransactionId: null, createdAt: new Date().toISOString() },
+    ]);
+    listAdjustmentsByProjectId.mockResolvedValue([
+      makeAdjustmentRow({ partyType: "partner", shareId: "a", requirementId: "req-1", adjustmentType: "pending", adjustmentAmount: "500000" }),
+    ]);
+
+    const response = await POST(
+      makePostRequest({
+        cookie: `${SESSION_COOKIE_NAME}=some-token`,
+        body: { amount: "500000", requirementDate: "2026-11-01" },
+      }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(201);
+
+    // The recompute step ran against the correct prior requirement...
+    expect(listTransactionsByRequirementId).toHaveBeenCalledWith("req-1");
+    // ...and corrected the stale row: A's real actualPaid (500000) matches
+    // their real shouldPay (500000) -- "none", not the stale "pending 500000".
+    expect(upsertAdjustment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requirementId: "req-1",
+        partyType: "partner",
+        shareId: "a",
+        shouldPay: "500000",
+        actualPaid: "500000",
+        adjustmentType: "none",
+        adjustmentAmount: "0",
+      }),
+    );
+    // The recompute (line above) must happen BEFORE the final read that
+    // feeds the new requirement's carry-forward snapshot -- otherwise the
+    // fix has no effect on what gets snapshotted.
+    const upsertOrder = upsertAdjustment.mock.invocationCallOrder[0] as number;
+    const finalReadOrder = listAdjustmentsByProjectId.mock.invocationCallOrder.at(-1) as number;
+    expect(upsertOrder).toBeLessThan(finalReadOrder);
   });
 
   it("Story 3.5: still returns 201 (snapshot skipped) when Partner Shares aren't fully allocated yet -- never blocks requirement creation", async () => {

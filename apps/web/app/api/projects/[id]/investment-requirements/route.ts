@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import type { InvestmentAdjustment, SubPartnerShare } from "@niveshbook/types";
+import type { InvestmentAdjustment, InvestmentTransaction, Money, SubPartnerShare } from "@niveshbook/types";
 import {
   getSession,
   authorizeScope,
@@ -7,6 +7,9 @@ import {
   listInvestmentRequirements,
   listCurrentPartnerShares,
   listCurrentSubPartnerSharesForProject,
+  listInvestmentTransactions,
+  computeInvestmentAdjustment,
+  filterActiveTransactions,
   snapshotRecommendedAmounts,
   shareKey,
   InvalidRequirementAmountError,
@@ -19,6 +22,7 @@ import {
   createInvestmentRequirementPort,
   createPartnerSharePort,
   createSubPartnerSharePort,
+  createInvestmentTransactionPort,
   createInvestmentAdjustmentPort,
   createRecommendedAmountPort,
 } from "@niveshbook/db";
@@ -52,13 +56,35 @@ function groupByPartnerId(shares: readonly SubPartnerShare[]): Record<string, Su
 }
 
 /**
+ * Groups one funding requirement's transactions by `(partyType, shareId)` --
+ * the shape `computeInvestmentAdjustment` expects, via `shareKey`. Mirrors
+ * `adjustments/route.ts`'s identical local helper (kept local to each route
+ * rather than shared, matching that established precedent).
+ */
+function groupTransactionsByShareKey(
+  transactions: readonly InvestmentTransaction[],
+): Record<string, Money[]> {
+  const byShareKey: Record<string, Money[]> = {};
+  for (const transaction of transactions) {
+    const key = shareKey(transaction.partyType, transaction.shareId);
+    const bucket = byShareKey[key];
+    if (bucket) {
+      bucket.push(transaction.amount);
+    } else {
+      byShareKey[key] = [transaction.amount];
+    }
+  }
+  return byShareKey;
+}
+
+/**
  * Groups a Project's current `investment_adjustments` rows (fetched exactly
  * once, via `investmentAdjustmentPort.listByProjectId`) by `(partyType,
  * shareId)` -- the shape `snapshotRecommendedAmounts` expects, via
  * `shareKey`. Each key holds at most one row, since `investment_adjustments`
  * is already single-current-row-per-share by design (unlike
- * `adjustments/route.ts`'s `groupTransactionsByShareKey`, which buckets
- * multiple transactions per share).
+ * `groupTransactionsByShareKey` above, which buckets multiple transactions
+ * per share).
  */
 function groupAdjustmentsByShareKey(
   adjustments: readonly InvestmentAdjustment[],
@@ -228,11 +254,42 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     const partnerSharePort = createPartnerSharePort();
     const subPartnerSharePort = createSubPartnerSharePort();
     const investmentAdjustmentPort = createInvestmentAdjustmentPort();
-    const [partnerShares, subPartnerShares, previousAdjustments] = await Promise.all([
+    const [partnerShares, subPartnerShares, allRequirements] = await Promise.all([
       listCurrentPartnerShares(projectId, { partnerShares: partnerSharePort }),
       listCurrentSubPartnerSharesForProject(projectId, { subPartnerShares: subPartnerSharePort }),
-      investmentAdjustmentPort.listByProjectId(projectId),
+      listInvestmentRequirements(projectId, { investmentRequirements: investmentRequirementPort }),
     ]);
+
+    // Bug fix (2026-09-25, found during a live production scenario-validation
+    // exercise): the immediately-prior requirement's `investment_adjustments`
+    // row is otherwise only kept current lazily, as a side effect of a human
+    // viewing `GET .../adjustments` (or `.../my-investment-status`) for that
+    // round. If a payment there was recorded, edited, or cancelled-and-
+    // replaced after the last such view, `listByProjectId` below would read a
+    // stale row and this new requirement's carry-forward snapshot would
+    // freeze that staleness in permanently -- there is no way to revise a
+    // `RecommendedAmount` snapshot after the fact. Force a fresh recompute of
+    // the single most recent OTHER requirement (`allRequirements` is already
+    // ordered `desc(requirementDate, createdAt)`, so the first entry left
+    // after excluding the one just created above is exactly that round)
+    // before reading the ledger, so the snapshot below always reflects
+    // reality rather than whatever was last viewed.
+    const priorRequirement = allRequirements.find((candidate) => candidate.id !== requirement.id);
+    if (priorRequirement) {
+      const investmentTransactionPort = createInvestmentTransactionPort();
+      const priorTransactions = await listInvestmentTransactions(priorRequirement.id, {
+        investmentTransactions: investmentTransactionPort,
+      });
+      await computeInvestmentAdjustment(
+        priorRequirement,
+        partnerShares,
+        groupByPartnerId(subPartnerShares),
+        groupTransactionsByShareKey(filterActiveTransactions(priorTransactions)),
+        { investmentAdjustments: investmentAdjustmentPort },
+      );
+    }
+
+    const previousAdjustments = await investmentAdjustmentPort.listByProjectId(projectId);
 
     const recommendedAmountPort = createRecommendedAmountPort();
     await snapshotRecommendedAmounts(
