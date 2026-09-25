@@ -104,11 +104,9 @@ export function SidebarShell({ items }: { items: readonly SidebarNavItem[] }) {
     return { ...item, href: `/projects/${activeProjectId}/${segment}` };
   });
 
-  const activeProject = projects.find((project) => project.id === activeProjectId) ?? null;
-
   return (
     <div className="flex flex-col gap-3">
-      <ProjectSwitcher projects={projects} selected={activeProject} onSelect={selectProject} />
+      <ProjectSwitcher projects={projects} activeProjectId={activeProjectId} onSelect={selectProject} />
       <SidebarNav items={resolvedItems} />
     </div>
   );
