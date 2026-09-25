@@ -29,3 +29,5 @@ export * from "./withdrawal-status";
 export * from "./extra-withdrawal";
 export * from "./withdrawal-destination-allocation";
 export * from "./withdrawal-destination-allocation-port";
+export * from "./money-movement-port";
+export * from "./move-withdrawal-to-project";

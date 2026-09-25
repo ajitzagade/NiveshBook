@@ -584,6 +584,24 @@ export type WithdrawalAdjustmentRow = typeof withdrawalAdjustments.$inferSelect;
  * editable/re-enterable (this story's Decisions); Story 4.11's cancel/
  * reverse of the whole withdrawal (cascading via `withdrawalTransactionId`'s
  * `onDelete: "cascade"` FK below) is the only undo path.
+ *
+ * Story 4.8 (FR28) adds `destinationRequirementId`/`destinationShareId`/
+ * `destinationPartyType` -- non-breaking, nullable columns (existing rows
+ * unaffected, spec-4-8's Decisions), populated only for a `"project"` leg:
+ * the destination Project's funding requirement and Partner/Sub-partner
+ * Share Owner/Admin picks at allocation time, mirroring how a manual Add
+ * Money entry already works. `destinationRequirementId` deliberately has
+ * **no** `onDelete: "cascade"` on its `investment_requirements` FK, mirroring
+ * `destinationProjectId`'s own identical precedent immediately above (a
+ * requirement at a *different, still-existing* destination Project being
+ * deleted should never silently delete this allocation record of money that
+ * already left this leg's own source Project). `destinationShareId` mirrors
+ * `investment_transactions.shareId`'s precedent exactly: the *stable*
+ * `partner_shares.partnerId`/`subpartner_shares.subPartnerId` (disambiguated
+ * by `destinationPartyType`), never this row's own `id` and never
+ * `users.id` (AD-4) -- deliberately **not** a foreign key, for the identical
+ * reason neither share table has a uniqueness constraint on that stable id
+ * to reference.
  */
 export const withdrawalDestinationAllocations = pgTable(
   "withdrawal_destination_allocations",
@@ -598,6 +616,11 @@ export const withdrawalDestinationAllocations = pgTable(
     personName: text("person_name"),
     notes: text("notes"),
     idempotencyKey: text("idempotency_key").notNull(),
+    destinationRequirementId: uuid("destination_requirement_id").references(
+      () => investmentRequirements.id,
+    ),
+    destinationShareId: uuid("destination_share_id"),
+    destinationPartyType: text("destination_party_type"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -614,3 +637,65 @@ export const withdrawalDestinationAllocations = pgTable(
 );
 
 export type WithdrawalDestinationAllocationRow = typeof withdrawalDestinationAllocations.$inferSelect;
+
+/**
+ * Story 4.8 (Epic 4, FR28, AD-6): one row per `"project"` destination-
+ * allocation leg's auto-created linked movement -- the middle link in the
+ * `withdrawal_destination_allocations` leg -> `money_movements` ->
+ * `investment_transactions` chain, written by `packages/core`'s
+ * `moveWithdrawalToProject()` inside the exact same atomic write as its
+ * parent allocation leg (`createWithdrawalDestinationAllocationPort.recordAllocation`,
+ * Story 4.7's existing `database.transaction()`, extended). Linked to the
+ * specific `withdrawal_destination_allocations` row (not directly to the
+ * withdrawal transaction) -- one withdrawal can have multiple `"project"`
+ * legs to different destinations, and the FK chain here is what makes the
+ * source side of each one individually reconstructable (spec-4-8's
+ * Decisions). `onDelete: "cascade"` on `withdrawalDestinationAllocationId`
+ * mirrors `withdrawalDestinationAllocations.withdrawalTransactionId`'s own
+ * precedent -- this row lives and dies with its parent leg. `sourceProjectId`/
+ * `destinationProjectId` intentionally have **no** `onDelete: "cascade"` on
+ * their `projects` FKs, mirroring `withdrawalDestinationAllocations.destinationProjectId`'s
+ * identical rationale one table over (a Project being deleted should never
+ * silently delete a movement record naming a *different, still-existing*
+ * Project). `destinationInvestmentTransactionId` has no `onDelete: "cascade"`
+ * either, for the same reason -- `investment_transactions` rows are never
+ * hard-deleted anyway (Story 3.8's status-flip-plus-reversal convention).
+ * No paired `audit_log` row of its own -- the audit trail already lives on
+ * the auto-created `investment_transactions` row's own paired "create"
+ * `audit_log` entry (`InvestmentTransactionPort.recordTransaction`'s
+ * existing atomicity contract, unchanged) and on the parent
+ * `withdrawal_destination_allocation`'s own "create" `audit_log` entry
+ * (Story 4.7, unchanged) -- a third would be redundant.
+ */
+export const moneyMovements = pgTable(
+  "money_movements",
+  {
+    id: uuid("id").primaryKey(),
+    withdrawalDestinationAllocationId: uuid("withdrawal_destination_allocation_id")
+      .notNull()
+      .references(() => withdrawalDestinationAllocations.id, { onDelete: "cascade" }),
+    sourceProjectId: uuid("source_project_id")
+      .notNull()
+      .references(() => projects.id),
+    destinationProjectId: uuid("destination_project_id")
+      .notNull()
+      .references(() => projects.id),
+    destinationInvestmentTransactionId: uuid("destination_investment_transaction_id")
+      .notNull()
+      .references(() => investmentTransactions.id),
+    amount: numeric("amount", { precision: 14, scale: 2 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // `recordAllocation`'s replay path looks up an existing set of legs' own
+    // linked movements by this column -- this table's primary lookup pattern.
+    index("money_movements_withdrawal_destination_allocation_id_idx").on(
+      table.withdrawalDestinationAllocationId,
+    ),
+    // The Add Money page's "Moved from Project A" indicator (Story 4.8's Code
+    // Map) looks up every movement landing at one destination Project.
+    index("money_movements_destination_project_id_idx").on(table.destinationProjectId),
+  ],
+);
+
+export type MoneyMovementRow = typeof moneyMovements.$inferSelect;

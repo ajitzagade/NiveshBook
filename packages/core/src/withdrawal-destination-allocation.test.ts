@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import type { Money, WithdrawalTransaction } from "@niveshbook/types";
+import type { InvestmentRequirement, Money, WithdrawalTransaction } from "@niveshbook/types";
 import type {
   CreateWithdrawalDestinationAllocationLegInput,
+  DestinationSnapshotInput,
   RecordWithdrawalDestinationAllocationResult,
   WithdrawalDestinationAllocationPort,
 } from "./withdrawal-destination-allocation-port";
@@ -9,12 +10,26 @@ import {
   AllocationMismatchError,
   AlreadyAllocatedError,
   InvalidDestinationProjectError,
+  MissingDestinationRequirementError,
   WithdrawalDestinationAllocationIdempotencyKeyConflictError,
+  ZeroAmountProjectLegError,
   recordDestinationAllocation,
   listWithdrawalDestinationAllocations,
   type RawDestinationAllocationLeg,
 } from "./withdrawal-destination-allocation";
 import { InvalidMoneyError } from "./decimal-math";
+
+/** A minimal, valid `DestinationSnapshotInput` (Story 4.8) for a "project" leg -- the route layer's own pre-fetched data, faked here since this domain-layer test never actually calls `buildTransactionSnapshot` itself (that's `move-withdrawal-to-project.test.ts`'s job). */
+function fakeDestinationSnapshot(): DestinationSnapshotInput {
+  const requirement: InvestmentRequirement = {
+    id: "requirement-2",
+    projectId: "project-2",
+    amount: "500000" as Money,
+    requirementDate: "2026-10-01",
+    createdAt: new Date().toISOString(),
+  };
+  return { requirement, partnerShares: [], subPartnerSharesByPartnerId: {} };
+}
 
 function makeWithdrawal(overrides: Partial<WithdrawalTransaction> = {}): WithdrawalTransaction {
   return {
@@ -41,6 +56,26 @@ function makeLeg(overrides: Partial<RawDestinationAllocationLeg> = {}): RawDesti
     destinationProjectId: null,
     personName: null,
     notes: "Kept as cash",
+    destinationRequirementId: null,
+    destinationShareId: null,
+    destinationPartyType: null,
+    destinationSnapshot: null,
+    ...overrides,
+  };
+}
+
+/** A well-formed "project" leg's overrides (Story 4.8) -- every field `normalizeLeg` requires beyond `destinationProjectId`. */
+function projectLegOverrides(
+  destinationProjectId: string,
+  overrides: Partial<RawDestinationAllocationLeg> = {},
+): Partial<RawDestinationAllocationLeg> {
+  return {
+    destinationType: "project",
+    destinationProjectId,
+    destinationRequirementId: "requirement-2",
+    destinationShareId: "partner-2",
+    destinationPartyType: "partner",
+    destinationSnapshot: fakeDestinationSnapshot(),
     ...overrides,
   };
 }
@@ -79,8 +114,12 @@ function createFakePort(): WithdrawalDestinationAllocationPort & {
           destinationProjectId: leg.destinationProjectId,
           personName: leg.personName,
           notes: leg.notes,
+          destinationRequirementId: leg.destinationRequirementId,
+          destinationShareId: leg.destinationShareId,
+          destinationPartyType: leg.destinationPartyType,
           createdAt: new Date().toISOString(),
         })),
+        moneyMovements: [],
         created: true,
       };
       return result;
@@ -102,7 +141,7 @@ describe("recordDestinationAllocation", () => {
     const result = await recordDestinationAllocation(
       withdrawal,
       [
-        makeLeg({ destinationType: "project", amount: "150000", destinationProjectId: "project-2" }),
+        makeLeg({ amount: "150000", ...projectLegOverrides("project-2") }),
         makeLeg({ destinationType: "person", amount: "50000", personName: "Person X", notes: null }),
         makeLeg({ destinationType: "available_balance", amount: "50000", notes: null }),
       ],
@@ -140,6 +179,10 @@ describe("recordDestinationAllocation", () => {
         destinationProjectId: null,
         personName: null,
         notes: "Held as cash",
+        destinationRequirementId: null,
+        destinationShareId: null,
+        destinationPartyType: null,
+        destinationSnapshotInput: null,
       },
     ]);
   });
@@ -185,7 +228,7 @@ describe("recordDestinationAllocation", () => {
     await expect(
       recordDestinationAllocation(
         withdrawal,
-        [makeLeg({ destinationType: "project", amount: "250000", destinationProjectId: "project-1" })],
+        [makeLeg({ amount: "250000", ...projectLegOverrides("project-1") })],
         "project-1",
         "actor-1",
         "idem-5",
@@ -201,10 +244,65 @@ describe("recordDestinationAllocation", () => {
 
     const result = await recordDestinationAllocation(
       withdrawal,
-      [makeLeg({ destinationType: "project", amount: "250000", destinationProjectId: "project-2" })],
+      [makeLeg({ amount: "250000", ...projectLegOverrides("project-2") })],
       "project-1",
       "actor-1",
       "idem-6",
+      { withdrawalDestinationAllocations: port },
+    );
+
+    expect(result.created).toBe(true);
+    expect(port.calls[0]?.legs[0]).toMatchObject({
+      destinationRequirementId: "requirement-2",
+      destinationShareId: "partner-2",
+      destinationPartyType: "partner",
+    });
+  });
+
+  it("rejects a 'project' leg missing destinationRequirementId/destinationShareId/destinationPartyType (Story 4.8 -- defense in depth, shared.ts's shape guard already prevents this in practice)", async () => {
+    const port = createFakePort();
+    const withdrawal = makeWithdrawal({ projectId: "project-1", amount: "250000" as Money });
+
+    await expect(
+      recordDestinationAllocation(
+        withdrawal,
+        [makeLeg({ destinationType: "project", amount: "250000", destinationProjectId: "project-2" })],
+        "project-1",
+        "actor-1",
+        "idem-6b",
+        { withdrawalDestinationAllocations: port },
+      ),
+    ).rejects.toBeInstanceOf(MissingDestinationRequirementError);
+    expect(port.calls).toHaveLength(0);
+  });
+
+  it("rejects a 'project' leg with a zero amount -- it would write a real, permanent investment record with nothing backing it (review finding, Story 4.8)", async () => {
+    const port = createFakePort();
+    const withdrawal = makeWithdrawal({ projectId: "project-1", amount: "250000" as Money });
+
+    await expect(
+      recordDestinationAllocation(
+        withdrawal,
+        [makeLeg({ amount: "0", ...projectLegOverrides("project-2") })],
+        "project-1",
+        "actor-1",
+        "idem-6c",
+        { withdrawalDestinationAllocations: port },
+      ),
+    ).rejects.toBeInstanceOf(ZeroAmountProjectLegError);
+    expect(port.calls).toHaveLength(0);
+  });
+
+  it("accepts a zero amount for every non-'project' leg -- only a 'project' leg's real investment record makes a zero-amount entry consequential", async () => {
+    const port = createFakePort();
+    const withdrawal = makeWithdrawal({ amount: "0" as Money });
+
+    const result = await recordDestinationAllocation(
+      withdrawal,
+      [makeLeg({ destinationType: "other", amount: "0", notes: "Nothing withdrawn yet" })],
+      "project-1",
+      "actor-1",
+      "idem-6d",
       { withdrawalDestinationAllocations: port },
     );
 

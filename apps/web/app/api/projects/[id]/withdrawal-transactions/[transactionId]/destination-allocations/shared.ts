@@ -18,8 +18,10 @@ const DESTINATION_TYPES: ReadonlySet<string> = new Set([
   "other",
 ]);
 
+const PARTY_TYPES: ReadonlySet<string> = new Set(["partner", "sub_partner"]);
+
 export const INVALID_REQUEST_MESSAGE =
-  'Request body must be valid JSON with a non-empty `legs` array and an `idempotencyKey` string. Each leg needs a `destinationType` ("project" | "person" | "available_balance" | "other") and an `amount` string; a "project" leg also needs a non-empty `destinationProjectId`, a "person" leg a non-empty `personName`, and an "other" leg non-empty `notes`. `notes` is otherwise optional on any leg.';
+  'Request body must be valid JSON with a non-empty `legs` array and an `idempotencyKey` string. Each leg needs a `destinationType` ("project" | "person" | "available_balance" | "other") and an `amount` string; a "project" leg also needs a non-empty `destinationProjectId`, a non-empty `destinationRequirementId`, a non-empty `destinationShareId`, and a `destinationPartyType` ("partner" | "sub_partner") (Story 4.8, FR28); a "person" leg a non-empty `personName`, and an "other" leg non-empty `notes`. `notes` is otherwise optional on any leg.';
 
 export interface ValidDestinationAllocationLeg {
   destinationType: DestinationType;
@@ -27,6 +29,12 @@ export interface ValidDestinationAllocationLeg {
   destinationProjectId: string | null;
   personName: string | null;
   notes: string | null;
+  /** Story 4.8 (FR28): required (non-empty) only when `destinationType === "project"`. */
+  destinationRequirementId: string | null;
+  /** Story 4.8 (FR28): required (non-empty) only when `destinationType === "project"`. */
+  destinationShareId: string | null;
+  /** Story 4.8 (FR28): required (one of `"partner"`/`"sub_partner"`) only when `destinationType === "project"`. */
+  destinationPartyType: "partner" | "sub_partner" | null;
 }
 
 export interface ValidDestinationAllocationBody {
@@ -44,6 +52,9 @@ function isValidLeg(candidate: unknown): candidate is ValidDestinationAllocation
     destinationProjectId?: unknown;
     personName?: unknown;
     notes?: unknown;
+    destinationRequirementId?: unknown;
+    destinationShareId?: unknown;
+    destinationPartyType?: unknown;
   };
 
   if (typeof leg.destinationType !== "string" || !DESTINATION_TYPES.has(leg.destinationType)) {
@@ -65,6 +76,27 @@ function isValidLeg(candidate: unknown): candidate is ValidDestinationAllocation
   if (leg.notes !== undefined && leg.notes !== null && typeof leg.notes !== "string") {
     return false;
   }
+  if (
+    leg.destinationRequirementId !== undefined &&
+    leg.destinationRequirementId !== null &&
+    typeof leg.destinationRequirementId !== "string"
+  ) {
+    return false;
+  }
+  if (
+    leg.destinationShareId !== undefined &&
+    leg.destinationShareId !== null &&
+    typeof leg.destinationShareId !== "string"
+  ) {
+    return false;
+  }
+  if (
+    leg.destinationPartyType !== undefined &&
+    leg.destinationPartyType !== null &&
+    (typeof leg.destinationPartyType !== "string" || !PARTY_TYPES.has(leg.destinationPartyType))
+  ) {
+    return false;
+  }
 
   // Type-specific required field -- each destinationType needs its own
   // identifying content to be a well-formed leg at all (this story's I/O
@@ -72,6 +104,18 @@ function isValidLeg(candidate: unknown): candidate is ValidDestinationAllocation
   // rejected as 400 `validation_error`).
   if (leg.destinationType === "project") {
     if (typeof leg.destinationProjectId !== "string" || leg.destinationProjectId.trim().length === 0) {
+      return false;
+    }
+    // Story 4.8 (FR28): a "project" leg also requires a chosen destination
+    // funding requirement + Partner/Sub-partner Share -- mirrors
+    // `destinationProjectId`'s identical required-for-this-type shape.
+    if (typeof leg.destinationRequirementId !== "string" || leg.destinationRequirementId.trim().length === 0) {
+      return false;
+    }
+    if (typeof leg.destinationShareId !== "string" || leg.destinationShareId.trim().length === 0) {
+      return false;
+    }
+    if (typeof leg.destinationPartyType !== "string" || !PARTY_TYPES.has(leg.destinationPartyType)) {
       return false;
     }
   }
@@ -125,3 +169,14 @@ export function isValidWithdrawalTransactionId(id: string): boolean {
 
 export const DESTINATION_PROJECT_NOT_FOUND_MESSAGE =
   'A "project" destination\'s `destinationProjectId` must be an existing Project.';
+
+/**
+ * Story 4.8 (FR28): the 404 shown when a "project" leg's
+ * `destinationRequirementId`/`destinationShareId` don't resolve against the
+ * destination Project's *current* data at save time -- covers both the
+ * "requirement no longer exists" and "share no longer current" I/O-matrix
+ * rows under one message, mirroring `DESTINATION_PROJECT_NOT_FOUND_MESSAGE`'s
+ * identical role one check earlier.
+ */
+export const DESTINATION_REQUIREMENT_OR_SHARE_NOT_FOUND_MESSAGE =
+  'A "project" destination\'s `destinationRequirementId` must be an existing funding requirement at the destination Project, and `destinationShareId` must be a current Partner/Sub-partner Share there.';

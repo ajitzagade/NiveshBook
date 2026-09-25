@@ -434,6 +434,15 @@ export type DestinationType = "project" | "person" | "available_balance" | "othe
  * `"project"`'s actual linked money-movement/investment record is Story
  * 4.8's job (`moveWithdrawalToProject()`), and `"available_balance"`'s
  * actual ledger credit is Story 4.9's job; neither exists yet.
+ *
+ * Story 4.8 (FR28) adds `destinationRequirementId`/`destinationShareId`/
+ * `destinationPartyType`: populated only for a `"project"` leg -- the
+ * destination Project's funding requirement and Partner/Sub-partner Share
+ * chosen (mirroring how a manual Add Money entry already works) at
+ * allocation time, driving the auto-created `investment_transactions` row's
+ * snapshot. `null` for every other `destinationType`, and nullable/additive
+ * on every pre-Story-4.8 row (existing rows are unaffected -- spec-4-8's
+ * Decisions: a non-breaking migration).
  */
 export interface WithdrawalDestinationAllocation {
   id: string;
@@ -446,6 +455,36 @@ export interface WithdrawalDestinationAllocation {
   /** Populated only when `destinationType === "person"` -- free-text, no Person/contact entity exists yet. */
   personName: string | null;
   notes: string | null;
+  /** Story 4.8: populated only for a `"project"` leg -- the destination Project's funding requirement chosen at allocation time. */
+  destinationRequirementId: string | null;
+  /** Story 4.8: populated only for a `"project"` leg -- the stable `partnerId`/`subPartnerId` (disambiguated by `destinationPartyType`) of the Partner/Sub-partner Share chosen at the destination Project, never `User.id` (AD-4). */
+  destinationShareId: string | null;
+  /** Story 4.8: populated only for a `"project"` leg. */
+  destinationPartyType: "partner" | "sub_partner" | null;
+  /** ISO 8601 timestamp */
+  createdAt: string;
+}
+
+/**
+ * One linking record created by `moveWithdrawalToProject()` for a `"project"`
+ * destination-allocation leg (Story 4.8, FR28, AD-6) -- the middle link in
+ * the `withdrawal_destination_allocations` leg -> `money_movements` ->
+ * `investment_transactions` chain that makes the source side of a
+ * cross-project movement reconstructable (spec-4-8's Decisions: linked to
+ * the specific allocation *leg*, not directly to the withdrawal transaction,
+ * since one withdrawal can have multiple `"project"` legs to different
+ * destinations). Never edited/cancelled directly -- it lives and dies with
+ * its parent allocation leg (`onDelete: "cascade"`, schema.ts).
+ */
+export interface MoneyMovement {
+  id: string;
+  /** The `WithdrawalDestinationAllocation.id` (a single `"project"` leg) this movement links. */
+  withdrawalDestinationAllocationId: string;
+  sourceProjectId: string;
+  destinationProjectId: string;
+  /** The auto-created `investment_transactions` row at the destination Project -- the same snapshot `buildTransactionSnapshot` would produce for a manual Add Money entry. */
+  destinationInvestmentTransactionId: string;
+  amount: Money;
   /** ISO 8601 timestamp */
   createdAt: string;
 }

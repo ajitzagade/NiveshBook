@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useParams } from "next/navigation";
 import {
   ArrowLeft,
@@ -16,7 +16,14 @@ import {
   X,
 } from "lucide-react";
 import type { PartnerCanTake, PartnerWithdrawalAdjustment } from "@niveshbook/core";
-import type { DestinationType, Money, PaymentMode, Project, WithdrawalTransaction } from "@niveshbook/types";
+import type {
+  DestinationType,
+  InvestmentRequirement,
+  Money,
+  PaymentMode,
+  Project,
+  WithdrawalTransaction,
+} from "@niveshbook/types";
 import {
   Amount,
   Button,
@@ -48,6 +55,9 @@ import {
   recordWithdrawalTransaction,
 } from "@/lib/withdrawal-transactions";
 import { recordDestinationAllocation } from "@/lib/withdrawal-destination-allocations";
+import { listInvestmentRequirements } from "@/lib/investment-requirements";
+import { listPartnerShares } from "@/lib/partner-shares";
+import { listSubPartnerShares } from "@/lib/subpartner-shares";
 
 type CanTakeState =
   | { status: "loading" }
@@ -210,6 +220,12 @@ interface AllocationLegForm {
   destinationProjectId: string;
   personName: string;
   notes: string;
+  /** Story 4.8 (FR28): the destination Project's chosen funding requirement -- only meaningful once `destinationType === "project"` and `destinationProjectId` is set. */
+  destinationRequirementId: string;
+  /** Story 4.8 (FR28): the destination Project's chosen Partner/Sub-partner Share (paired with `destinationPartyType` below). */
+  destinationShareId: string;
+  /** Story 4.8 (FR28): `""` means "not yet chosen" -- mirrors every other not-yet-chosen field's empty-string convention in this form. */
+  destinationPartyType: "partner" | "sub_partner" | "";
 }
 
 function newAllocationLeg(amount = ""): AllocationLegForm {
@@ -220,6 +236,9 @@ function newAllocationLeg(amount = ""): AllocationLegForm {
     destinationProjectId: "",
     personName: "",
     notes: "",
+    destinationRequirementId: "",
+    destinationShareId: "",
+    destinationPartyType: "",
   };
 }
 
@@ -236,9 +255,33 @@ function newAllocationLeg(amount = ""): AllocationLegForm {
  * fields. Exported so `page.test.tsx` can exercise it directly, mirroring
  * this file's other pure-helper-export convention (`scaleMoneyForCompare`,
  * `exceedsCanTake`, etc.).
+ *
+ * Story 4.8 (FR28): a `"project"` leg is additionally complete only once
+ * `destinationRequirementId`/`destinationShareId`/`destinationPartyType` are
+ * all chosen too -- these fields can only ever hold a non-empty value once a
+ * real `<option>` was selected from `destinationProjectData`'s fetched
+ * requirements/shares (never typed free-text), so a destination Project with
+ * zero funding requirements naturally blocks completion here too, with no
+ * separate empty-requirements check needed. Also requires a non-zero amount
+ * (review finding, Story 4.8) -- unlike every other leg type, a `"project"`
+ * leg now writes a REAL, permanent `investment_transactions` row at the
+ * destination Project, so `"0"` isn't a legitimate "nothing went here" entry
+ * here the way it is for `"other"`/`"person"`/`"available_balance"`; the
+ * server's own `ZeroAmountProjectLegError` is the authoritative check either
+ * way, this is purely a client-side UX nicety avoiding a pointless
+ * round-trip, mirroring `scaleMoneyForCompare`'s existing decimal-safe,
+ * never-`parseFloat` convention (AD-2).
  */
 export function isAllocationLegComplete(leg: AllocationLegForm): boolean {
-  if (leg.destinationType === "project") return leg.destinationProjectId.trim().length > 0;
+  if (leg.destinationType === "project") {
+    return (
+      leg.destinationProjectId.trim().length > 0 &&
+      leg.destinationRequirementId.trim().length > 0 &&
+      leg.destinationShareId.trim().length > 0 &&
+      leg.destinationPartyType.trim().length > 0 &&
+      scaleMoneyForCompare(leg.amount) > 0
+    );
+  }
   if (leg.destinationType === "person") return leg.personName.trim().length > 0;
   if (leg.destinationType === "other") return leg.notes.trim().length > 0;
   return true;
@@ -287,6 +330,28 @@ type ProjectsState =
   | { status: "loading" }
   | { status: "error"; message: string }
   | { status: "loaded"; projects: Project[] };
+
+/** One selectable Partner/Sub-partner in a "project" leg's Share picker (Story 4.8, FR28) -- flattens the destination Project's current Partner Shares plus each Partner's current Sub-partner Shares into one list, mirroring how `withdraw-money`'s own Can Take panel already renders Sub-partners nested one level under their Partner (here, as a label prefix instead, since a `<select>` has no nesting). */
+interface DestinationShareOption {
+  partyType: "partner" | "sub_partner";
+  shareId: string;
+  label: string;
+}
+
+/**
+ * A destination Project's current funding requirements + Partner/Sub-partner
+ * Share options (Story 4.8, FR28) -- fetched lazily, once per distinct
+ * `destinationProjectId`, the first time a "project" leg's Project selector
+ * names it (mirrors `projectsState`'s own lazy-fetch-on-first-need
+ * rationale). `"loaded"` with an empty `requirements` array is this story's
+ * "Project B has no funding requirements yet" blocking case -- rendered
+ * inline next to the Project selector, Save staying disabled via
+ * `isAllocationLegComplete`'s own gate (no separate flag needed here).
+ */
+type DestinationProjectDataState =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "loaded"; requirements: InvestmentRequirement[]; shareOptions: DestinationShareOption[] };
 
 /**
  * Withdraw Money page (Story 4.1, extended by Story 4.2): one page per
@@ -359,6 +424,81 @@ export default function WithdrawMoneyPage() {
   // page view would 403 for a Partner/Sub-partner who never opens this
   // dialog at all.
   const [projectsState, setProjectsState] = useState<ProjectsState>({ status: "loading" });
+  // Story 4.8 (FR28): keyed by destination Project id -- fetched lazily the
+  // first time a "project" leg's Project selector names it (never eagerly,
+  // mirroring `projectsState`'s own rationale one level up).
+  const [destinationProjectData, setDestinationProjectData] = useState<
+    Record<string, DestinationProjectDataState>
+  >({});
+  // Tracks which destination Project ids have already had a fetch kicked off
+  // -- a `ref` (not derived from `destinationProjectData` itself) so a fetch
+  // started this render is never accidentally started a second time by a
+  // same-render re-check before the first `setDestinationProjectData` call
+  // has been applied.
+  const requestedDestinationProjectIdsRef = useRef<Set<string>>(new Set());
+
+  /**
+   * Fetches one destination Project's current funding requirements +
+   * Partner/Sub-partner Shares (Story 4.8, FR28) -- Sub-partner Shares are
+   * fetched per-Partner (`listSubPartnerShares`, the only endpoint that
+   * exists for that resource -- there is no project-wide Sub-partner Shares
+   * listing), fanned out in parallel once the Partner Shares list resolves.
+   */
+  async function loadDestinationProjectData(destinationProjectId: string) {
+    try {
+      const [requirementsResult, partnerSharesResult] = await Promise.all([
+        listInvestmentRequirements(destinationProjectId),
+        listPartnerShares(destinationProjectId),
+      ]);
+      const subPartnerResults = await Promise.all(
+        partnerSharesResult.shares.map((partner) =>
+          listSubPartnerShares(destinationProjectId, partner.partnerId).then((result) => ({
+            partner,
+            shares: result.shares,
+          })),
+        ),
+      );
+      const shareOptions: DestinationShareOption[] = [];
+      for (const partner of partnerSharesResult.shares) {
+        shareOptions.push({ partyType: "partner", shareId: partner.partnerId, label: partner.name });
+      }
+      for (const { partner, shares } of subPartnerResults) {
+        for (const sub of shares) {
+          shareOptions.push({
+            partyType: "sub_partner",
+            shareId: sub.subPartnerId,
+            label: `↳ ${sub.name} (under ${partner.name})`,
+          });
+        }
+      }
+      setDestinationProjectData((prev) => ({
+        ...prev,
+        [destinationProjectId]: {
+          status: "loaded",
+          requirements: requirementsResult.requirements,
+          shareOptions,
+        },
+      }));
+    } catch (error) {
+      setDestinationProjectData((prev) => ({
+        ...prev,
+        [destinationProjectId]: {
+          status: "error",
+          message: error instanceof Error ? error.message : "Something went wrong.",
+        },
+      }));
+    }
+  }
+
+  /** Kicks off `loadDestinationProjectData` at most once per destination Project id -- called whenever a "project" leg's Project selector changes. */
+  function ensureDestinationProjectData(destinationProjectId: string) {
+    if (!destinationProjectId || requestedDestinationProjectIdsRef.current.has(destinationProjectId)) {
+      return;
+    }
+    requestedDestinationProjectIdsRef.current.add(destinationProjectId);
+    setDestinationProjectData((prev) => ({ ...prev, [destinationProjectId]: { status: "loading" } }));
+    void loadDestinationProjectData(destinationProjectId);
+  }
 
   async function refreshCanTake() {
     const result = await getCanTake(projectId);
@@ -604,6 +744,10 @@ export default function WithdrawMoneyPage() {
           destinationProjectId: leg.destinationType === "project" ? leg.destinationProjectId : null,
           personName: leg.destinationType === "person" ? leg.personName.trim() || null : null,
           notes: leg.notes.trim().length > 0 ? leg.notes.trim() : null,
+          destinationRequirementId: leg.destinationType === "project" ? leg.destinationRequirementId : null,
+          destinationShareId: leg.destinationType === "project" ? leg.destinationShareId : null,
+          destinationPartyType:
+            leg.destinationType === "project" && leg.destinationPartyType ? leg.destinationPartyType : null,
         })),
         allocationIdempotencyKey,
       );
@@ -1078,8 +1222,12 @@ export default function WithdrawMoneyPage() {
                 removable={allocationLegs.length > 1}
                 projectOptions={allocationProjectOptions}
                 projectsError={allocationProjectsError}
+                destinationProjectData={
+                  leg.destinationProjectId ? destinationProjectData[leg.destinationProjectId] : undefined
+                }
                 onChange={(patch) => updateAllocationLeg(leg.key, patch)}
                 onRemove={() => removeAllocationLeg(leg.key)}
+                onDestinationProjectSelected={ensureDestinationProjectData}
               />
             ))}
           </div>
@@ -1136,16 +1284,18 @@ export default function WithdrawMoneyPage() {
 
 /**
  * One editable destination-split row in the "Where did this money go?"
- * dialog (Story 4.7) -- a `destinationType` selector, `SplitRow`'s colored
- * dest-icon + label + amount input (DESIGN.md's "Split row" component,
- * reused verbatim per epic-4-context.md), plus whichever type-specific
- * field(s) apply (`destinationProjectId`'s Project selector for
- * `"project"`, `personName`'s free-text input for `"person"`), and an
- * always-present optional `notes` field (this story's Decisions: usable on
- * any leg, required in practice for `"other"` -- enforced server-side, not
- * specially marked here). `onRemove` is only ever rendered when `removable`
- * (at least one leg must always remain -- `removeAllocationLeg`'s own
- * guard).
+ * dialog (Story 4.7, extended by Story 4.8/FR28) -- a `destinationType`
+ * selector, `SplitRow`'s colored dest-icon + label + amount input
+ * (DESIGN.md's "Split row" component, reused verbatim per
+ * epic-4-context.md), plus whichever type-specific field(s) apply
+ * (`destinationProjectId`'s Project selector for `"project"`, plus (Story
+ * 4.8) that destination Project's funding-requirement and Partner/
+ * Sub-partner Share selectors once chosen; `personName`'s free-text input
+ * for `"person"`), and an always-present optional `notes` field (this
+ * story's Decisions: usable on any leg, required in practice for `"other"`
+ * -- enforced server-side, not specially marked here). `onRemove` is only
+ * ever rendered when `removable` (at least one leg must always remain --
+ * `removeAllocationLeg`'s own guard).
  */
 function AllocationLegRow({
   leg,
@@ -1153,8 +1303,10 @@ function AllocationLegRow({
   removable,
   projectOptions,
   projectsError,
+  destinationProjectData,
   onChange,
   onRemove,
+  onDestinationProjectSelected,
 }: {
   leg: AllocationLegForm;
   index: number;
@@ -1162,8 +1314,12 @@ function AllocationLegRow({
   projectOptions: Project[];
   /** Set when `GET /api/projects` failed -- rendered as a visible `role="alert"` next to the Project selector below, instead of that selector silently showing zero options. */
   projectsError: string | null;
+  /** Story 4.8: `leg.destinationProjectId`'s already-fetched (or in-flight/errored) requirement/Share data -- `undefined` until a Project is chosen and its fetch has been kicked off. */
+  destinationProjectData: DestinationProjectDataState | undefined;
   onChange: (patch: Partial<AllocationLegForm>) => void;
   onRemove: () => void;
+  /** Story 4.8: kicks off (or no-ops if already started) the fetch for a newly-chosen destination Project id. */
+  onDestinationProjectSelected: (destinationProjectId: string) => void;
 }) {
   // Disambiguates every field's `aria-label` across multiple rows (e.g.
   // "Amount (Destination 1)" vs "Amount (Destination 2)") -- without this,
@@ -1215,7 +1371,20 @@ function AllocationLegRow({
             aria-label={`Destination Project (${rowLabel})`}
             className="w-full rounded-el border border-border bg-surface px-3 py-2.5 text-[14px] text-ink focus:border-accent focus:outline focus:outline-2 focus:outline-accent-soft"
             value={leg.destinationProjectId}
-            onChange={(event) => onChange({ destinationProjectId: event.target.value })}
+            onChange={(event) => {
+              const destinationProjectId = event.target.value;
+              // A different Project's requirement/Share ids are meaningless
+              // once the Project itself changes -- reset both (Story 4.8),
+              // mirroring how choosing a fresh destinationType elsewhere in
+              // this form always starts that leg's type-specific fields over.
+              onChange({
+                destinationProjectId,
+                destinationRequirementId: "",
+                destinationShareId: "",
+                destinationPartyType: "",
+              });
+              if (destinationProjectId) onDestinationProjectSelected(destinationProjectId);
+            }}
           >
             <option value="">Select a Project…</option>
             {projectOptions.map((project) => (
@@ -1228,6 +1397,19 @@ function AllocationLegRow({
             <p role="alert" className="mt-1 text-[12.6px] text-danger">
               Couldn&apos;t load Projects: {projectsError}
             </p>
+          ) : null}
+
+          {leg.destinationProjectId ? (
+            <DestinationRequirementAndSharePickers
+              rowLabel={rowLabel}
+              leg={leg}
+              projectName={
+                projectOptions.find((project) => project.id === leg.destinationProjectId)?.name ??
+                "This Project"
+              }
+              data={destinationProjectData}
+              onChange={onChange}
+            />
           ) : null}
         </div>
       ) : null}
@@ -1252,6 +1434,114 @@ function AllocationLegRow({
         />
       </div>
     </div>
+  );
+}
+
+/**
+ * A `"project"` leg's funding-requirement + Partner/Sub-partner Share
+ * pickers (Story 4.8, FR28) -- rendered only once a destination Project is
+ * chosen (`AllocationLegRow`'s own guard). Three states mirror
+ * `DestinationProjectDataState`: `"loading"` (fetch in flight), `"error"`
+ * (surfaced inline, `role="alert"`), `"loaded"` -- which itself splits into
+ * the zero-requirements blocking case (this story's Decisions: "Project B
+ * has no funding requirements yet", Save stays disabled via
+ * `isAllocationLegComplete`'s own gate) and the normal two-`<select>` case.
+ * The Share `<select>`'s `value`/`onChange` encode `partyType`+`shareId`
+ * together as one `"partner:<id>"`/`"sub_partner:<id>"` string -- the
+ * simplest way to drive two form fields from one native `<select>` without
+ * a second, redundant control.
+ */
+function DestinationRequirementAndSharePickers({
+  rowLabel,
+  leg,
+  projectName,
+  data,
+  onChange,
+}: {
+  rowLabel: string;
+  leg: AllocationLegForm;
+  projectName: string;
+  data: DestinationProjectDataState | undefined;
+  onChange: (patch: Partial<AllocationLegForm>) => void;
+}) {
+  if (!data || data.status === "loading") {
+    return <p className="mt-2 text-[12.6px] text-ink-soft">Loading funding requirements…</p>;
+  }
+  if (data.status === "error") {
+    return (
+      <p role="alert" className="mt-2 text-[12.6px] text-danger">
+        Couldn&apos;t load {projectName}&apos;s funding requirements: {data.message}
+      </p>
+    );
+  }
+  if (data.requirements.length === 0) {
+    return (
+      <p role="alert" className="mt-2 text-[12.6px] text-danger">
+        {projectName} has no funding requirements yet -- choose a different destination.
+      </p>
+    );
+  }
+  // Review finding, Story 4.8: mirrors the zero-requirements block above --
+  // a destination Project can have a funding requirement but no current
+  // Partner/Sub-partner Shares to attribute the moved money to (e.g. Shares
+  // never set up yet). Save stays disabled either way (`isAllocationLegComplete`'s
+  // existing `destinationShareId`-must-be-non-empty gate, unchanged) -- this
+  // only adds the explanatory message, matching the empty-requirements case's
+  // pattern instead of silently showing a Share `<select>` with zero options.
+  if (data.shareOptions.length === 0) {
+    return (
+      <p role="alert" className="mt-2 text-[12.6px] text-danger">
+        {projectName} has no Partner/Sub-partner Shares yet -- choose a different destination.
+      </p>
+    );
+  }
+
+  const shareValue =
+    leg.destinationPartyType && leg.destinationShareId
+      ? `${leg.destinationPartyType}:${leg.destinationShareId}`
+      : "";
+
+  return (
+    <>
+      <div className="mt-2">
+        <select
+          aria-label={`Destination funding requirement (${rowLabel})`}
+          className="w-full rounded-el border border-border bg-surface px-3 py-2.5 text-[14px] text-ink focus:border-accent focus:outline focus:outline-2 focus:outline-accent-soft"
+          value={leg.destinationRequirementId}
+          onChange={(event) => onChange({ destinationRequirementId: event.target.value })}
+        >
+          <option value="">Select a funding requirement…</option>
+          {data.requirements.map((requirement) => (
+            <option key={requirement.id} value={requirement.id}>
+              {requirement.requirementDate} — {formatAmount(requirement.amount)}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="mt-2">
+        <select
+          aria-label={`Destination Partner/Sub-partner Share (${rowLabel})`}
+          className="w-full rounded-el border border-border bg-surface px-3 py-2.5 text-[14px] text-ink focus:border-accent focus:outline focus:outline-2 focus:outline-accent-soft"
+          value={shareValue}
+          onChange={(event) => {
+            const [partyType, shareId] = event.target.value.split(":") as
+              | ["partner" | "sub_partner", string]
+              | [""];
+            onChange({
+              destinationPartyType: partyType || "",
+              destinationShareId: shareId ?? "",
+            });
+          }}
+        >
+          <option value="">Select a Partner/Sub-partner…</option>
+          {data.shareOptions.map((option) => (
+            <option key={`${option.partyType}:${option.shareId}`} value={`${option.partyType}:${option.shareId}`}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </div>
+    </>
   );
 }
 

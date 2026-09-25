@@ -1,7 +1,8 @@
 import type { DestinationType, WithdrawalTransaction } from "@niveshbook/types";
-import { toMoney, sumMoney, moneyEquals } from "./decimal-math";
+import { toMoney, sumMoney, moneyEquals, isZeroMoney } from "./decimal-math";
 import type {
   CreateWithdrawalDestinationAllocationLegInput,
+  DestinationSnapshotInput,
   RecordWithdrawalDestinationAllocationResult,
   WithdrawalDestinationAllocationPort,
 } from "./withdrawal-destination-allocation-port";
@@ -24,6 +25,19 @@ export interface WithdrawalDestinationAllocationDeps {
  * apply (e.g. a `"person"` leg's `destinationProjectId` is dropped even if
  * the caller sent one), mirroring `WithdrawalDestinationAllocation`'s own
  * "only the matching field is ever non-null" contract.
+ *
+ * Story 4.8 (FR28) adds `destinationRequirementId`/`destinationShareId`/
+ * `destinationPartyType` -- raw, caller-supplied, required only for a
+ * `"project"` leg (`shared.ts`'s own shape guard already enforces
+ * presence/enum-validity before this module ever sees them; this module's
+ * `normalizeLeg` re-checks presence as defense in depth, mirroring
+ * `InvalidDestinationProjectError`'s identical belt-and-suspenders
+ * precedent). `destinationSnapshot` is NOT caller-supplied -- it is the
+ * destination Project's *current* funding requirement/Partner/Sub-partner
+ * Shares, fetched fresh by the route layer immediately before this module is
+ * called (never client-trusted, mirroring `destinationProjectId`'s own
+ * existence-check precedent) -- required (non-null) for a `"project"` leg,
+ * `null` for every other `destinationType`.
  */
 export interface RawDestinationAllocationLeg {
   destinationType: DestinationType;
@@ -31,6 +45,10 @@ export interface RawDestinationAllocationLeg {
   destinationProjectId: string | null;
   personName: string | null;
   notes: string | null;
+  destinationRequirementId: string | null;
+  destinationShareId: string | null;
+  destinationPartyType: "partner" | "sub_partner" | null;
+  destinationSnapshot: DestinationSnapshotInput | null;
 }
 
 /**
@@ -60,6 +78,44 @@ export class InvalidDestinationProjectError extends Error {
   constructor() {
     super("A \"project\" destination must be a different Project than the one the withdrawal came from.");
     this.name = "InvalidDestinationProjectError";
+  }
+}
+
+/**
+ * Thrown when a `"project"` leg is missing `destinationRequirementId`/
+ * `destinationShareId`/`destinationPartyType`, or the route layer's
+ * pre-fetched `destinationSnapshot` (Story 4.8, FR28) -- defense in depth
+ * only, mirroring `InvalidDestinationProjectError`'s identical role: in
+ * normal operation `shared.ts`'s own request-body shape guard already
+ * requires all three raw fields for a `"project"` leg (400
+ * `invalid_request`), and the route always resolves `destinationSnapshot`
+ * (or returns 404) before ever calling this module. The route layer maps
+ * this to 400 `validation_error`.
+ */
+export class MissingDestinationRequirementError extends Error {
+  constructor() {
+    super(
+      'A "project" destination leg requires destinationRequirementId, destinationShareId, and destinationPartyType, all resolved against the destination Project\'s current data.',
+    );
+    this.name = "MissingDestinationRequirementError";
+  }
+}
+
+/**
+ * Thrown when a `"project"` leg's `amount` is exactly zero (review finding,
+ * Story 4.8: `toMoney` itself only rejects a *negative* amount, not a zero
+ * one -- every other leg type tolerates `"0"` as a legitimate "nothing went
+ * here" entry, but a `"project"` leg is no longer metadata-only as of this
+ * story: it writes a REAL, permanent `investment_transactions` row plus a
+ * `money_movements` row at the destination Project. A zero-amount one would
+ * create a phantom investment record with nothing backing it -- checked via
+ * `isZeroMoney` (AD-2's decimal-safe helper), never a raw `=== "0"`/numeric
+ * comparison. The route layer maps this to 400 `validation_error`.
+ */
+export class ZeroAmountProjectLegError extends Error {
+  constructor() {
+    super('A "project" destination leg\'s amount must be greater than zero -- it creates a real, permanent investment record at the destination Project.');
+    this.name = "ZeroAmountProjectLegError";
   }
 }
 
@@ -138,12 +194,22 @@ function normalizeLeg(
     if (leg.destinationProjectId === sourceProjectId) {
       throw new InvalidDestinationProjectError();
     }
+    if (isZeroMoney(amount)) {
+      throw new ZeroAmountProjectLegError();
+    }
+    if (!leg.destinationRequirementId || !leg.destinationShareId || !leg.destinationPartyType || !leg.destinationSnapshot) {
+      throw new MissingDestinationRequirementError();
+    }
     return {
       destinationType: "project",
       amount,
       destinationProjectId: leg.destinationProjectId,
       personName: null,
       notes: normalizeOptionalText(leg.notes),
+      destinationRequirementId: leg.destinationRequirementId,
+      destinationShareId: leg.destinationShareId,
+      destinationPartyType: leg.destinationPartyType,
+      destinationSnapshotInput: leg.destinationSnapshot,
     };
   }
 
@@ -154,6 +220,10 @@ function normalizeLeg(
       destinationProjectId: null,
       personName: normalizeOptionalText(leg.personName),
       notes: normalizeOptionalText(leg.notes),
+      destinationRequirementId: null,
+      destinationShareId: null,
+      destinationPartyType: null,
+      destinationSnapshotInput: null,
     };
   }
 
@@ -163,6 +233,10 @@ function normalizeLeg(
     destinationProjectId: null,
     personName: null,
     notes: normalizeOptionalText(leg.notes),
+    destinationRequirementId: null,
+    destinationShareId: null,
+    destinationPartyType: null,
+    destinationSnapshotInput: null,
   };
 }
 

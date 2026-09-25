@@ -469,6 +469,9 @@ function makeAllocationRow(
     personName: null,
     notes: "Kept as cash",
     idempotencyKey: "idem-1",
+    destinationRequirementId: null,
+    destinationShareId: null,
+    destinationPartyType: null,
     createdAt: new Date(),
     ...overrides,
   } as WithdrawalDestinationAllocationRow;
@@ -483,6 +486,10 @@ function makeLegInput(
     destinationProjectId: null,
     personName: null,
     notes: "Kept as cash",
+    destinationRequirementId: null,
+    destinationShareId: null,
+    destinationPartyType: null,
+    destinationSnapshotInput: null,
     ...overrides,
   };
 }
@@ -553,5 +560,67 @@ describe("matchesAllocationRequest", () => {
   it("rejects a mismatched notes", () => {
     const existing = makeAllocationRow({ notes: "Kept as cash" });
     expect(matchesAllocationRequest([existing], [makeLegInput({ notes: "Something else" })])).toBe(false);
+  });
+
+  it("matches a 'project' leg whose destinationRequirementId/destinationShareId/destinationPartyType are byte-identical (Story 4.8)", () => {
+    const existing = makeAllocationRow({
+      destinationType: "project",
+      destinationProjectId: "project-2",
+      destinationRequirementId: "req-2",
+      destinationShareId: "partner-2",
+      destinationPartyType: "partner",
+    });
+    expect(
+      matchesAllocationRequest(
+        [existing],
+        [
+          makeLegInput({
+            destinationType: "project",
+            destinationProjectId: "project-2",
+            destinationRequirementId: "req-2",
+            destinationShareId: "partner-2",
+            destinationPartyType: "partner",
+          }),
+        ],
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects a mismatched destinationRequirementId/destinationShareId/destinationPartyType (Story 4.8)", () => {
+    const existing = makeAllocationRow({
+      destinationType: "project",
+      destinationProjectId: "project-2",
+      destinationRequirementId: "req-2",
+      destinationShareId: "partner-2",
+      destinationPartyType: "partner",
+    });
+    expect(
+      matchesAllocationRequest(
+        [existing],
+        [
+          makeLegInput({
+            destinationType: "project",
+            destinationProjectId: "project-2",
+            destinationRequirementId: "req-3",
+            destinationShareId: "partner-2",
+            destinationPartyType: "partner",
+          }),
+        ],
+      ),
+    ).toBe(false);
+    expect(
+      matchesAllocationRequest(
+        [existing],
+        [
+          makeLegInput({
+            destinationType: "project",
+            destinationProjectId: "project-2",
+            destinationRequirementId: "req-2",
+            destinationShareId: "sub-9",
+            destinationPartyType: "sub_partner",
+          }),
+        ],
+      ),
+    ).toBe(false);
   });
 });

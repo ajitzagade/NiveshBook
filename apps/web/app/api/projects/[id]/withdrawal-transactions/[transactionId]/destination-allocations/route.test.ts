@@ -3,7 +3,11 @@ import { NextRequest } from "next/server";
 import {
   AllocationMismatchError,
   AlreadyAllocatedError,
+  ShareNotFoundError,
+  SharesNotFullyAllocatedError,
+  SubPartnerSharesOverAllocatedError,
   WithdrawalDestinationAllocationIdempotencyKeyConflictError,
+  ZeroAmountProjectLegError,
 } from "@niveshbook/core";
 import { POST } from "./route";
 import { SESSION_COOKIE_NAME } from "@/lib/session";
@@ -15,6 +19,9 @@ const findProjectById = vi.fn();
 const listByProjectId = vi.fn();
 const recordAllocation = vi.fn();
 const hasConflictingAllocation = vi.fn();
+const findRequirementById = vi.fn();
+const listPartnerSharesByProjectId = vi.fn();
+const listSubPartnerSharesByProjectId = vi.fn();
 
 vi.mock("@niveshbook/db", () => ({
   createSessionPort: () => ({
@@ -45,11 +52,32 @@ vi.mock("@niveshbook/db", () => ({
     listByWithdrawalTransactionId: vi.fn(),
     hasConflictingAllocation,
   }),
+  // Story 4.8 (FR28): resolving a "project" leg's destinationRequirementId/
+  // destinationShareId against the destination Project's current data.
+  createInvestmentRequirementPort: () => ({
+    createInvestmentRequirement: vi.fn(),
+    listByProjectId: vi.fn(),
+    findById: findRequirementById,
+  }),
+  createPartnerSharePort: () => ({
+    createPartnerShare: vi.fn(),
+    findLatestByPartnerId: vi.fn(),
+    listByProjectId: listPartnerSharesByProjectId,
+    listAll: vi.fn(),
+  }),
+  createSubPartnerSharePort: () => ({
+    createSubPartnerShare: vi.fn(),
+    findLatestBySubPartnerId: vi.fn(),
+    listByPartnerId: vi.fn(),
+    listByProjectId: listSubPartnerSharesByProjectId,
+  }),
 }));
 
 const PROJECT_ID = "0192f5a0-4444-7000-8000-000000000004";
 const OTHER_PROJECT_ID = "0192f5a0-5555-7000-8000-000000000005";
 const TRANSACTION_ID = "0192f5a0-6666-7000-8000-000000000006";
+const DESTINATION_REQUIREMENT_ID = "0192f5a0-7777-7000-8000-000000000007";
+const DESTINATION_PARTNER_ID = "0192f5a0-8888-7000-8000-000000000008";
 
 function makeRequest(options: { cookie?: string; method?: string; body?: unknown } = {}): NextRequest {
   const { cookie, method = "POST", body } = options;
@@ -138,7 +166,43 @@ function makeAllocation(overrides: Record<string, unknown> = {}) {
     destinationProjectId: null,
     personName: null,
     notes: "Kept as cash",
+    destinationRequirementId: null,
+    destinationShareId: null,
+    destinationPartyType: null,
     createdAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+const DESTINATION_REQUIREMENT = {
+  id: DESTINATION_REQUIREMENT_ID,
+  projectId: OTHER_PROJECT_ID,
+  amount: "1000000",
+  requirementDate: "2026-10-01",
+  createdAt: new Date().toISOString(),
+};
+
+const DESTINATION_PARTNER_SHARE_ROW = {
+  id: "row-1",
+  partnerId: DESTINATION_PARTNER_ID,
+  projectId: OTHER_PROJECT_ID,
+  name: "Destination Partner",
+  sharePercent: "100",
+  userId: null,
+  subPartnerVisibilityGrant: false,
+  effectiveFrom: new Date().toISOString(),
+  createdAt: new Date().toISOString(),
+};
+
+/** A well-formed "project" leg (Story 4.8) -- every field a "project" leg now requires beyond `destinationProjectId`. */
+function projectLeg(overrides: Record<string, unknown> = {}) {
+  return {
+    destinationType: "project",
+    amount: "150000",
+    destinationProjectId: OTHER_PROJECT_ID,
+    destinationRequirementId: DESTINATION_REQUIREMENT_ID,
+    destinationShareId: DESTINATION_PARTNER_ID,
+    destinationPartyType: "partner",
     ...overrides,
   };
 }
@@ -146,7 +210,7 @@ function makeAllocation(overrides: Record<string, unknown> = {}) {
 function fullSplitBody(overrides: Record<string, unknown> = {}) {
   return {
     legs: [
-      { destinationType: "project", amount: "150000", destinationProjectId: OTHER_PROJECT_ID },
+      projectLeg(),
       { destinationType: "person", amount: "50000", personName: "Person X" },
       { destinationType: "available_balance", amount: "50000" },
     ],
@@ -168,12 +232,40 @@ function resetMocks() {
   });
   listByProjectId.mockReset();
   listByProjectId.mockResolvedValue([SAVED_WITHDRAWAL]);
+  findRequirementById.mockReset();
+  findRequirementById.mockImplementation(async (id: string) => {
+    if (id === DESTINATION_REQUIREMENT_ID) return DESTINATION_REQUIREMENT;
+    return null;
+  });
+  listPartnerSharesByProjectId.mockReset();
+  listPartnerSharesByProjectId.mockResolvedValue([DESTINATION_PARTNER_SHARE_ROW]);
+  listSubPartnerSharesByProjectId.mockReset();
+  listSubPartnerSharesByProjectId.mockResolvedValue([]);
   recordAllocation.mockReset();
   recordAllocation.mockResolvedValue({
     allocations: [
-      makeAllocation({ id: "alloc-1", destinationType: "project", amount: "150000", destinationProjectId: OTHER_PROJECT_ID }),
+      makeAllocation({
+        id: "alloc-1",
+        destinationType: "project",
+        amount: "150000",
+        destinationProjectId: OTHER_PROJECT_ID,
+        destinationRequirementId: DESTINATION_REQUIREMENT_ID,
+        destinationShareId: DESTINATION_PARTNER_ID,
+        destinationPartyType: "partner",
+      }),
       makeAllocation({ id: "alloc-2", destinationType: "person", amount: "50000", personName: "Person X", notes: null }),
       makeAllocation({ id: "alloc-3", destinationType: "available_balance", amount: "50000", notes: null }),
+    ],
+    moneyMovements: [
+      {
+        id: "movement-1",
+        withdrawalDestinationAllocationId: "alloc-1",
+        sourceProjectId: PROJECT_ID,
+        destinationProjectId: OTHER_PROJECT_ID,
+        destinationInvestmentTransactionId: "tx-1",
+        amount: "150000",
+        createdAt: new Date().toISOString(),
+      },
     ],
     created: true,
   });
@@ -325,7 +417,12 @@ describe("POST .../withdrawal-transactions/[transactionId]/destination-allocatio
       makeRequest({
         cookie: `${SESSION_COOKIE_NAME}=t`,
         body: fullSplitBody({
-          legs: [{ destinationType: "project", amount: "250000", destinationProjectId: "0192f5a0-9999-7000-8000-000000000009" }],
+          legs: [
+            projectLeg({
+              amount: "250000",
+              destinationProjectId: "0192f5a0-9999-7000-8000-000000000009",
+            }),
+          ],
         }),
       }),
       makeContext(),
@@ -344,7 +441,7 @@ describe("POST .../withdrawal-transactions/[transactionId]/destination-allocatio
       makeRequest({
         cookie: `${SESSION_COOKIE_NAME}=t`,
         body: fullSplitBody({
-          legs: [{ destinationType: "project", amount: "250000", destinationProjectId: "not-a-uuid" }],
+          legs: [projectLeg({ amount: "250000", destinationProjectId: "not-a-uuid" })],
         }),
       }),
       makeContext(),
@@ -356,6 +453,101 @@ describe("POST .../withdrawal-transactions/[transactionId]/destination-allocatio
     // Only ever called for the source Project (project 404 check) -- never
     // with the malformed destinationProjectId itself.
     expect(findProjectById).not.toHaveBeenCalledWith("not-a-uuid");
+  });
+
+  it("returns 400 invalid_request for a 'project' leg missing destinationRequirementId/destinationShareId/destinationPartyType (Story 4.8)", async () => {
+    ownerSession();
+
+    const response = await POST(
+      makeRequest({
+        cookie: `${SESSION_COOKIE_NAME}=t`,
+        body: fullSplitBody({
+          legs: [{ destinationType: "project", amount: "250000", destinationProjectId: OTHER_PROJECT_ID }],
+        }),
+      }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).code).toBe("invalid_request");
+    expect(recordAllocation).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 not_found when a 'project' leg's destinationRequirementId doesn't resolve at the destination Project (Story 4.8, FR28)", async () => {
+    ownerSession();
+    findRequirementById.mockResolvedValue(null);
+
+    const response = await POST(
+      makeRequest({ cookie: `${SESSION_COOKIE_NAME}=t`, body: fullSplitBody() }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(404);
+    expect((await response.json()).code).toBe("not_found");
+    expect(recordAllocation).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 not_found when the resolved requirement belongs to a different Project than destinationProjectId (Story 4.8, FR28)", async () => {
+    ownerSession();
+    findRequirementById.mockResolvedValue({ ...DESTINATION_REQUIREMENT, projectId: PROJECT_ID });
+
+    const response = await POST(
+      makeRequest({ cookie: `${SESSION_COOKIE_NAME}=t`, body: fullSplitBody() }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(404);
+    expect((await response.json()).code).toBe("not_found");
+    expect(recordAllocation).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 not_found when a 'project' leg's destinationShareId doesn't match any current Partner/Sub-partner Share at the destination Project (Story 4.8, FR28)", async () => {
+    ownerSession();
+    listPartnerSharesByProjectId.mockResolvedValue([]);
+
+    const response = await POST(
+      makeRequest({ cookie: `${SESSION_COOKIE_NAME}=t`, body: fullSplitBody() }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(404);
+    expect((await response.json()).code).toBe("not_found");
+    expect(recordAllocation).not.toHaveBeenCalled();
+  });
+
+  it("resolves a sub_partner destinationShareId against the destination Project's current Sub-partner Shares (Story 4.8, FR28)", async () => {
+    ownerSession();
+    listPartnerSharesByProjectId.mockResolvedValue([DESTINATION_PARTNER_SHARE_ROW]);
+    listSubPartnerSharesByProjectId.mockResolvedValue([
+      {
+        id: "sub-row-1",
+        subPartnerId: "sub-partner-9",
+        partnerId: DESTINATION_PARTNER_ID,
+        projectId: OTHER_PROJECT_ID,
+        name: "Destination Sub-partner",
+        sharePercent: "25",
+        userId: null,
+        effectiveFrom: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+
+    const response = await POST(
+      makeRequest({
+        cookie: `${SESSION_COOKIE_NAME}=t`,
+        body: fullSplitBody({
+          legs: [
+            projectLeg({ destinationShareId: "sub-partner-9", destinationPartyType: "sub_partner" }),
+            { destinationType: "person", amount: "50000", personName: "Person X" },
+            { destinationType: "available_balance", amount: "50000" },
+          ],
+        }),
+      }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(201);
+    expect(recordAllocation).toHaveBeenCalledTimes(1);
   });
 
   it("returns 400 invalid_request for an 'other' leg with empty/null notes", async () => {
@@ -405,12 +597,20 @@ describe("POST .../withdrawal-transactions/[transactionId]/destination-allocatio
     expect(response.status).toBe(201);
     const body = await response.json();
     expect(body.allocations).toHaveLength(3);
+    expect(body.moneyMovements).toHaveLength(1);
     expect(recordAllocation).toHaveBeenCalledTimes(1);
     const [withdrawalTransactionId, legs, idempotencyKey, actorUserId] = recordAllocation.mock.calls[0];
     expect(withdrawalTransactionId).toBe(TRANSACTION_ID);
     expect(legs).toHaveLength(3);
     expect(idempotencyKey).toBe("idem-1");
     expect(actorUserId).toBe("owner-1");
+    // Story 4.8: the "project" leg's destinationSnapshotInput was resolved
+    // and threaded through -- everything else got null.
+    const projectLegInput = legs.find((leg: { destinationType: string }) => leg.destinationType === "project");
+    expect(projectLegInput.destinationSnapshotInput).not.toBeNull();
+    expect(projectLegInput.destinationSnapshotInput.requirement.id).toBe(DESTINATION_REQUIREMENT_ID);
+    const personLegInput = legs.find((leg: { destinationType: string }) => leg.destinationType === "person");
+    expect(personLegInput.destinationSnapshotInput).toBeNull();
   });
 
   it("saves a single 'other' leg for the full amount -- 201", async () => {
@@ -506,5 +706,62 @@ describe("POST .../withdrawal-transactions/[transactionId]/destination-allocatio
 
     expect(response.status).toBe(409);
     expect((await response.json()).code).toBe("idempotency_key_conflict");
+  });
+
+  // Review finding (Story 4.8): these four error-mapping branches --
+  // thrown deep inside `moveWithdrawalToProject()`/`buildTransactionSnapshot`
+  // (or, for ZeroAmountProjectLegError, `normalizeLeg`) and propagated
+  // uncaught through `recordAllocation` -- had zero route-level coverage.
+
+  it("maps SharesNotFullyAllocatedError to 409 shares_not_fully_allocated", async () => {
+    ownerSession();
+    recordAllocation.mockRejectedValue(new SharesNotFullyAllocatedError());
+
+    const response = await POST(
+      makeRequest({ cookie: `${SESSION_COOKIE_NAME}=t`, body: fullSplitBody() }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe("shares_not_fully_allocated");
+  });
+
+  it("maps SubPartnerSharesOverAllocatedError to 409 sub_partner_shares_over_allocated", async () => {
+    ownerSession();
+    recordAllocation.mockRejectedValue(new SubPartnerSharesOverAllocatedError("Destination Partner"));
+
+    const response = await POST(
+      makeRequest({ cookie: `${SESSION_COOKIE_NAME}=t`, body: fullSplitBody() }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe("sub_partner_shares_over_allocated");
+  });
+
+  it("maps ShareNotFoundError to 404 not_found (defense-in-depth for the race between this route's own destination-share check and the atomic write)", async () => {
+    ownerSession();
+    recordAllocation.mockRejectedValue(new ShareNotFoundError());
+
+    const response = await POST(
+      makeRequest({ cookie: `${SESSION_COOKIE_NAME}=t`, body: fullSplitBody() }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(404);
+    expect((await response.json()).code).toBe("not_found");
+  });
+
+  it("maps ZeroAmountProjectLegError to 400 validation_error", async () => {
+    ownerSession();
+    recordAllocation.mockRejectedValue(new ZeroAmountProjectLegError());
+
+    const response = await POST(
+      makeRequest({ cookie: `${SESSION_COOKIE_NAME}=t`, body: fullSplitBody() }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).code).toBe("validation_error");
   });
 });

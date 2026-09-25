@@ -1,4 +1,27 @@
-import type { DestinationType, Money, WithdrawalDestinationAllocation } from "@niveshbook/types";
+import type {
+  DestinationType,
+  InvestmentRequirement,
+  Money,
+  MoneyMovement,
+  PartnerShare,
+  SubPartnerShare,
+  WithdrawalDestinationAllocation,
+} from "@niveshbook/types";
+
+/**
+ * Story 4.8 (FR28): the pre-fetched, already-validated destination Project
+ * data a `"project"` leg's `moveWithdrawalToProject()` call needs to build
+ * its investment snapshot -- fetched fresh by the route layer (never
+ * client-trusted) immediately before `recordDestinationAllocation` is
+ * called, mirroring `destinationProjectId`'s own existence-check precedent
+ * (Story 4.7). Carried on `CreateWithdrawalDestinationAllocationLegInput`
+ * below only for a `"project"` leg; `null` for every other `destinationType`.
+ */
+export interface DestinationSnapshotInput {
+  requirement: InvestmentRequirement;
+  partnerShares: readonly PartnerShare[];
+  subPartnerSharesByPartnerId: Readonly<Record<string, readonly SubPartnerShare[]>>;
+}
 
 /**
  * One destination leg's *validated* content, ready to write -- built by
@@ -9,6 +32,13 @@ import type { DestinationType, Money, WithdrawalDestinationAllocation } from "@n
  * `destinationType` is `"project"`/`"person"` respectively (the domain
  * layer's job to enforce, not this port's) -- `notes` is independent of
  * `destinationType` (this story's Decisions: usable on any leg).
+ *
+ * Story 4.8 adds `destinationRequirementId`/`destinationShareId`/
+ * `destinationPartyType` (persisted columns, populated only for a
+ * `"project"` leg) plus `destinationSnapshotInput` (NOT persisted -- pure
+ * orchestration data `createWithdrawalDestinationAllocationPort.recordAllocation`
+ * needs to call `moveWithdrawalToProject()` for this leg, `null` for every
+ * other leg).
  */
 export interface CreateWithdrawalDestinationAllocationLegInput {
   destinationType: DestinationType;
@@ -16,10 +46,22 @@ export interface CreateWithdrawalDestinationAllocationLegInput {
   destinationProjectId: string | null;
   personName: string | null;
   notes: string | null;
+  destinationRequirementId: string | null;
+  destinationShareId: string | null;
+  destinationPartyType: "partner" | "sub_partner" | null;
+  destinationSnapshotInput: DestinationSnapshotInput | null;
 }
 
 export interface RecordWithdrawalDestinationAllocationResult {
   allocations: WithdrawalDestinationAllocation[];
+  /**
+   * Story 4.8: one entry per `"project"` leg in this allocation (in the same
+   * order they resolve, not necessarily `legs`' own order) -- `[]` when the
+   * batch had no `"project"` legs. On a legitimate idempotent replay, these
+   * are the *original* movements (never re-created), mirroring `allocations`'
+   * own replay behavior.
+   */
+  moneyMovements: MoneyMovement[];
   /**
    * `true` only when this call genuinely inserted new rows. `false` when it
    * resolved to an idempotent replay of an existing save -- either the
@@ -67,6 +109,21 @@ export interface WithdrawalDestinationAllocationPort {
    * since one save legitimately inserts several sibling leg rows) so two
    * concurrent calls for the same withdrawal -- same key or different --
    * are fully serialized rather than racing.
+   *
+   * Story 4.8 (FR28, AD-6) extension: for every `"project"` leg genuinely
+   * written this call, also calls `moveWithdrawalToProject()` (with
+   * transaction-bound `InvestmentTransactionPort`/`MoneyMovementPort`
+   * implementations constructed inside this same `database.transaction()`)
+   * to create the destination `investment_transactions` row and its linking
+   * `money_movements` row -- all inside the identical atomic write, so the
+   * whole batch (every leg row, plus every `"project"` leg's linked
+   * investment/movement rows) commits or rolls back together (AC3). A
+   * `ShareNotFoundError`/`SharesNotFullyAllocatedError`/
+   * `SubPartnerSharesOverAllocatedError` thrown by that call propagates
+   * unchanged, rolling back the entire transaction -- no partial allocation
+   * rows, no partial investment/movement rows either. On the legitimate
+   * replay path above, the already-linked `money_movements` rows are read
+   * back (never re-created) and returned alongside the replayed allocations.
    */
   recordAllocation(
     withdrawalTransactionId: string,

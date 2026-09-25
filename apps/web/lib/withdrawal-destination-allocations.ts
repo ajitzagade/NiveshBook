@@ -1,4 +1,4 @@
-import type { DestinationType, WithdrawalDestinationAllocation } from "@niveshbook/types";
+import type { DestinationType, MoneyMovement, WithdrawalDestinationAllocation } from "@niveshbook/types";
 
 /**
  * Thin client-side fetch helper for the Withdraw Money screen's "Where did
@@ -18,10 +18,18 @@ export interface DestinationAllocationLegInput {
   personName: string | null;
   /** Required (non-empty) only when `destinationType === "other"` -- optional on any other leg. */
   notes: string | null;
+  /** Story 4.8 (FR28): required (non-empty) only when `destinationType === "project"` -- the destination Project's chosen funding requirement. */
+  destinationRequirementId: string | null;
+  /** Story 4.8 (FR28): required (non-empty) only when `destinationType === "project"` -- the destination Project's chosen Partner/Sub-partner Share. */
+  destinationShareId: string | null;
+  /** Story 4.8 (FR28): required only when `destinationType === "project"`. */
+  destinationPartyType: "partner" | "sub_partner" | null;
 }
 
 export interface RecordDestinationAllocationResponse {
   allocations: WithdrawalDestinationAllocation[];
+  /** Story 4.8 (FR28): one entry per "project" leg's auto-created linked movement -- `[]` when the batch had no "project" legs. */
+  moneyMovements: MoneyMovement[];
 }
 
 async function readErrorMessage(response: Response): Promise<string> {

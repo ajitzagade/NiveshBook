@@ -2,8 +2,8 @@
 
 import { Fragment, useEffect, useRef, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
-import { Wallet, Plus, ChevronUp, Calculator, Save, X, Ban, ArrowLeft, Pencil } from "lucide-react";
-import type { InvestmentRequirement, InvestmentTransaction, PaymentMode } from "@niveshbook/types";
+import { Wallet, Plus, ChevronUp, Calculator, Save, X, Ban, ArrowLeft, Pencil, ArrowLeftRight } from "lucide-react";
+import type { InvestmentRequirement, InvestmentTransaction, MoneyMovement, PaymentMode } from "@niveshbook/types";
 import type { PartnerInvestmentAdjustment, PartnerShouldPayWithRecommended } from "@niveshbook/core";
 import {
   Amount,
@@ -42,6 +42,8 @@ import {
   recordInvestmentTransaction,
 } from "@/lib/investment-transactions";
 import { getInvestmentAdjustments } from "@/lib/investment-adjustments";
+import { listMoneyMovements } from "@/lib/money-movements";
+import { listProjects } from "@/lib/projects";
 
 type ListState =
   | { status: "loading" }
@@ -223,6 +225,47 @@ export default function AddMoneyPage() {
   const [cancelFormError, setCancelFormError] = useState<string | null>(null);
   const [cancelSubmitting, setCancelSubmitting] = useState(false);
   const [cancelIdempotencyKey, setCancelIdempotencyKey] = useState("");
+
+  // Story 4.8 (FR28): every money movement that landed at THIS Project,
+  // keyed by its `destinationInvestmentTransactionId` -- drives the
+  // "Moved from Project A" indicator (`RecordedPayments` below) on a
+  // recorded-payment row that's actually a Story 4.8 auto-created movement,
+  // not a manually recorded payment. Best-effort, secondary enrichment
+  // (mirrors `adjustmentsByRequirement`'s identical "never blocks the rest
+  // of the page" convention) -- fetched once on mount, alongside every
+  // other Owner/Admin-only read this page already makes.
+  const [moneyMovementsByTransactionId, setMoneyMovementsByTransactionId] = useState<
+    Record<string, MoneyMovement>
+  >({});
+  // The source Project's *name* for that same indicator ("Moved from
+  // <name>") -- `listProjects` is already Owner/Admin-only
+  // (`"projects:list"`), matching every other fetch this already-Owner/
+  // Admin-only page makes, so no new privacy surface.
+  const [projectNamesById, setProjectNamesById] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+
+    Promise.all([listMoneyMovements(projectId), listProjects()])
+      .then(([movementsResult, projects]) => {
+        if (cancelled) return;
+        const byTransactionId: Record<string, MoneyMovement> = {};
+        for (const movement of movementsResult.moneyMovements) {
+          byTransactionId[movement.destinationInvestmentTransactionId] = movement;
+        }
+        setMoneyMovementsByTransactionId(byTransactionId);
+        setProjectNamesById(Object.fromEntries(projects.map((project) => [project.id, project.name])));
+      })
+      .catch(() => {
+        // Best-effort only -- a failed fetch here just means no "Moved from"
+        // indicators show, never a blocking page error (mirrors this page's
+        // own `refreshAdjustments` convention above).
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
 
   async function refresh() {
     const result = await listInvestmentRequirements(projectId);
@@ -846,6 +889,8 @@ export default function AddMoneyPage() {
                                           "partner",
                                           partner.partnerId,
                                         )}
+                                        movementsByTransactionId={moneyMovementsByTransactionId}
+                                        projectNamesById={projectNamesById}
                                         onEdit={(transaction) =>
                                           openEditPaymentDialog(requirement.id, transaction)
                                         }
@@ -903,6 +948,8 @@ export default function AddMoneyPage() {
                                                   "sub_partner",
                                                   sub.subPartnerId,
                                                 )}
+                                                movementsByTransactionId={moneyMovementsByTransactionId}
+                                                projectNamesById={projectNamesById}
                                                 onEdit={(transaction) =>
                                                   openEditPaymentDialog(requirement.id, transaction)
                                                 }
@@ -1467,13 +1514,32 @@ function AdjustmentChip({ adjustment }: { adjustment: AdjustmentChipInfo | null 
  * already-cancelled/reversal row and only discover the 409 on save; it now
  * mirrors "Cancel"'s gate exactly) -- and, like every affordance on this
  * page, is Owner/Admin-facing only (the API itself gates the rest).
+ *
+ * Story 4.8 (FR28) adds a "Moved from Project A" `StatusChip` for any row
+ * whose `id` matches a fetched `money_movements` entry's
+ * `destinationInvestmentTransactionId` -- an auto-created linked investment
+ * record from a cross-project withdrawal allocation, not a manually recorded
+ * payment (AC2's "data-level reachable/navigable" requirement; a full
+ * clickable trail is Epic 5's job). `info`/teal, per epic-4-context.md's UX
+ * convention ("info/teal marks a cross-project money movement"). Falls back
+ * to "Moved from another Project" if `listProjects()` resolved without that
+ * specific source Project's own entry. If the mount-time fetch fails
+ * entirely (either `listMoneyMovements`/`listProjects` rejects --
+ * `Promise.all(...)` requires both to succeed before either indicator-state
+ * setter runs), this indicator shows nothing at all for every row rather
+ * than a partial/fallback state -- best-effort, never blocks the rest of
+ * the page.
  */
 function RecordedPayments({
   transactions,
+  movementsByTransactionId,
+  projectNamesById,
   onEdit,
   onCancel,
 }: {
   transactions: InvestmentTransaction[];
+  movementsByTransactionId: Record<string, MoneyMovement>;
+  projectNamesById: Record<string, string>;
   onEdit: (transaction: InvestmentTransaction) => void;
   onCancel: (transaction: InvestmentTransaction) => void;
 }) {
@@ -1482,11 +1548,19 @@ function RecordedPayments({
   }
   return (
     <div className="ml-1 mt-1.5 flex flex-col gap-1">
-      {transactions.map((transaction) => (
+      {transactions.map((transaction) => {
+        const movement = movementsByTransactionId[transaction.id];
+        return (
         <div key={transaction.id} className="flex items-center gap-2 text-[11.6px] text-ink-soft">
           <span>{transaction.transactionDate}</span>
           <Amount value={transaction.amount} size="sm" />
           <span>{PAYMENT_MODE_LABELS[transaction.paymentMode]}</span>
+          {movement ? (
+            <StatusChip variant="info">
+              <ArrowLeftRight size={11} /> Moved from{" "}
+              {projectNamesById[movement.sourceProjectId] ?? "another Project"}
+            </StatusChip>
+          ) : null}
           {transaction.status === "cancelled" ? (
             <StatusChip variant="danger">
               Cancelled{transaction.reversalOfTransactionId ? " (reversal)" : ""}
@@ -1503,7 +1577,8 @@ function RecordedPayments({
             </Button>
           ) : null}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

@@ -12,6 +12,7 @@ import {
   withdrawalTransactions,
   withdrawalAdjustments,
   withdrawalDestinationAllocations,
+  moneyMovements,
   auditLog,
 } from "./schema";
 
@@ -568,5 +569,81 @@ describe("withdrawal_destination_allocations table schema (Story 4.7, FR27)", ()
 
   it("has no status column -- allocation is write-once, not editable/re-enterable (this story's Decisions)", () => {
     expect(Object.keys(withdrawalDestinationAllocations)).not.toContain("status");
+  });
+
+  it("Story 4.8 (FR28): leaves destinationRequirementId/destinationShareId/destinationPartyType nullable -- non-breaking, populated only for a 'project' leg", () => {
+    expect(withdrawalDestinationAllocations.destinationRequirementId.notNull).toBe(false);
+    expect(withdrawalDestinationAllocations.destinationShareId.notNull).toBe(false);
+    expect(withdrawalDestinationAllocations.destinationPartyType.notNull).toBe(false);
+  });
+
+  it("Story 4.8: destinationRequirementId references investment_requirements but does not cascade-delete -- mirrors destinationProjectId's identical precedent", () => {
+    const { foreignKeys } = getTableConfig(withdrawalDestinationAllocations);
+    const requirementFk = foreignKeys.find(
+      (fk) => fk.reference().columns[0]?.name === "destination_requirement_id",
+    );
+    expect(requirementFk).toBeDefined();
+    expect(requirementFk?.onDelete).not.toBe("cascade");
+  });
+
+  it("Story 4.8: destinationShareId is a plain uuid with no FK reference -- mirrors investment_transactions.shareId's precedent", () => {
+    const { foreignKeys } = getTableConfig(withdrawalDestinationAllocations);
+    expect(
+      foreignKeys.some((fk) => fk.reference().columns[0]?.name === "destination_share_id"),
+    ).toBe(false);
+  });
+});
+
+describe("money_movements table schema (Story 4.8, FR28, AD-6)", () => {
+  it("marks withdrawalDestinationAllocationId/sourceProjectId/destinationProjectId/destinationInvestmentTransactionId/amount NOT NULL", () => {
+    expect(moneyMovements.withdrawalDestinationAllocationId.notNull).toBe(true);
+    expect(moneyMovements.sourceProjectId.notNull).toBe(true);
+    expect(moneyMovements.destinationProjectId.notNull).toBe(true);
+    expect(moneyMovements.destinationInvestmentTransactionId.notNull).toBe(true);
+    expect(moneyMovements.amount.notNull).toBe(true);
+  });
+
+  it("gives id no implicit default -- application code (uuidv7) always supplies one", () => {
+    expect(moneyMovements.id.hasDefault).toBe(false);
+  });
+
+  it("stores amount as numeric(14,2), mirroring withdrawal_destination_allocations.amount's exact precision", () => {
+    expect(moneyMovements.amount.columnType).toBe("PgNumeric");
+    expect(moneyMovements.amount.getSQLType()).toBe("numeric(14, 2)");
+  });
+
+  it("cascade-deletes with its parent withdrawal_destination_allocations row, but not with sourceProjectId/destinationProjectId/destinationInvestmentTransactionId's own rows", () => {
+    const { foreignKeys } = getTableConfig(moneyMovements);
+    const parentFk = foreignKeys.find(
+      (fk) => fk.reference().columns[0]?.name === "withdrawal_destination_allocation_id",
+    );
+    expect(parentFk?.onDelete).toBe("cascade");
+    const sourceProjectFk = foreignKeys.find((fk) => fk.reference().columns[0]?.name === "source_project_id");
+    expect(sourceProjectFk?.onDelete).not.toBe("cascade");
+    const destinationProjectFk = foreignKeys.find(
+      (fk) => fk.reference().columns[0]?.name === "destination_project_id",
+    );
+    expect(destinationProjectFk?.onDelete).not.toBe("cascade");
+    const investmentTransactionFk = foreignKeys.find(
+      (fk) => fk.reference().columns[0]?.name === "destination_investment_transaction_id",
+    );
+    expect(investmentTransactionFk?.onDelete).not.toBe("cascade");
+  });
+
+  it("indexes withdrawalDestinationAllocationId and destinationProjectId -- this table's primary lookup patterns", () => {
+    const { indexes } = getTableConfig(moneyMovements);
+    expect(
+      indexes.some((idx) => idx.config.name === "money_movements_withdrawal_destination_allocation_id_idx"),
+    ).toBe(true);
+    expect(indexes.some((idx) => idx.config.name === "money_movements_destination_project_id_idx")).toBe(true);
+  });
+
+  it("marks createdAt NOT NULL with a DB-side default", () => {
+    expect(moneyMovements.createdAt.notNull).toBe(true);
+    expect(moneyMovements.createdAt.hasDefault).toBe(true);
+  });
+
+  it("has no status/cancel column -- never edited/cancelled directly, it lives and dies with its parent allocation leg", () => {
+    expect(Object.keys(moneyMovements)).not.toContain("status");
   });
 });

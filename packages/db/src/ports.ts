@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
 import {
   AlreadyCancelledError,
@@ -7,6 +7,7 @@ import {
   WithdrawalIdempotencyKeyConflictError,
   AlreadyAllocatedError,
   WithdrawalDestinationAllocationIdempotencyKeyConflictError,
+  moveWithdrawalToProject,
   type UserPort,
   type SessionPort,
   type CreateSessionInput,
@@ -25,6 +26,7 @@ import {
   type WithdrawalAdjustmentPort,
   type WithdrawalDestinationAllocationPort,
   type CreateWithdrawalDestinationAllocationLegInput,
+  type MoneyMovementPort,
 } from "@niveshbook/core";
 import type {
   User,
@@ -41,6 +43,7 @@ import type {
   WithdrawalTransaction,
   WithdrawalAdjustment,
   WithdrawalDestinationAllocation,
+  MoneyMovement,
   DestinationType,
   PaymentMode,
   Money,
@@ -61,6 +64,7 @@ import {
   withdrawalTransactions,
   withdrawalAdjustments,
   withdrawalDestinationAllocations,
+  moneyMovements,
   auditLog,
   type SessionRow,
   type UserRow,
@@ -74,6 +78,7 @@ import {
   type WithdrawalTransactionRow,
   type WithdrawalAdjustmentRow,
   type WithdrawalDestinationAllocationRow,
+  type MoneyMovementRow,
   type AuditLogRow,
 } from "./schema";
 
@@ -293,6 +298,27 @@ function toWithdrawalDestinationAllocation(
     destinationProjectId: row.destinationProjectId,
     personName: row.personName,
     notes: row.notes,
+    destinationRequirementId: row.destinationRequirementId,
+    destinationShareId: row.destinationShareId,
+    destinationPartyType: row.destinationPartyType as WithdrawalDestinationAllocation["destinationPartyType"],
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+/**
+ * Converts the numeric `amount` column (Drizzle returns `numeric` as a
+ * `string`, never a native float -- AD-2) directly into a `Money`, with no
+ * `parseFloat`/`Number()` round-trip. Mirrors `toWithdrawalDestinationAllocation`
+ * one table over (Story 4.8).
+ */
+function toMoneyMovement(row: MoneyMovementRow): MoneyMovement {
+  return {
+    id: row.id,
+    withdrawalDestinationAllocationId: row.withdrawalDestinationAllocationId,
+    sourceProjectId: row.sourceProjectId,
+    destinationProjectId: row.destinationProjectId,
+    destinationInvestmentTransactionId: row.destinationInvestmentTransactionId,
+    amount: row.amount as Money,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -776,7 +802,11 @@ export function matchesWithdrawalRequest(
  * from Postgres's `numeric(14,2)` column. `destinationProjectId`/
  * `personName`/`notes` are compared with `?? null` on both sides so a
  * `undefined` (can't actually occur here, both sides are already `| null`)
- * never spuriously mismatches a stored `null`.
+ * never spuriously mismatches a stored `null`. Story 4.8 adds
+ * `destinationRequirementId`/`destinationShareId`/`destinationPartyType` to
+ * this same comparison, mirroring the identical `?? null` rationale -- a
+ * replay whose "project" leg now names a *different* requirement/share is a
+ * genuine content mismatch, not a legitimate replay of the original request.
  */
 export function matchesAllocationRequest(
   existingRows: readonly WithdrawalDestinationAllocationRow[],
@@ -793,7 +823,10 @@ export function matchesAllocationRequest(
         moneyEquals(row.amount as Money, leg.amount) &&
         (row.destinationProjectId ?? null) === (leg.destinationProjectId ?? null) &&
         (row.personName ?? null) === (leg.personName ?? null) &&
-        (row.notes ?? null) === (leg.notes ?? null),
+        (row.notes ?? null) === (leg.notes ?? null) &&
+        (row.destinationRequirementId ?? null) === (leg.destinationRequirementId ?? null) &&
+        (row.destinationShareId ?? null) === (leg.destinationShareId ?? null) &&
+        (row.destinationPartyType ?? null) === (leg.destinationPartyType ?? null),
     );
     if (matchIndex === -1) {
       return false;
@@ -1613,6 +1646,31 @@ export function createRecommendedAmountPort(database: Database = getDb()): Recom
  *    (`entityType: "withdrawal_destination_allocation"`, `entityId` =
  *    `withdrawalTransactionId`, `newValue` = the full inserted leg array) --
  *    `created: true`.
+ *
+ * Story 4.8 (FR28, AD-6) extension to step 3: for every `"project"` leg
+ * (identified by its own pre-generated `id`, not `.returning()`'s row order,
+ * which Postgres/Drizzle never guarantees to mirror `legs`' input order --
+ * see `matchesAllocationRequest`'s own doc comment for the identical
+ * precedent), also calls `moveWithdrawalToProject()` with
+ * `createInvestmentTransactionPort(tx)`/`createMoneyMovementPort(tx)` --
+ * transaction-bound ports constructed inside this same `database.transaction()`
+ * call, so the destination `investment_transactions` row and its linking
+ * `money_movements` row commit or roll back together with every leg row and
+ * the paired `audit_log` row, all as one atomic unit (AC3). Each "project"
+ * leg's derived idempotency key is `` `${idempotencyKey}:move:${legIndex}` ``
+ * (this story's Decisions), `legIndex` being that leg's position in the
+ * caller's own `legs` array (not `insertedRows`' unordered return). Called
+ * sequentially (never `Promise.all`) -- multiple queries against the same
+ * open transaction/connection must not run concurrently. Any error thrown
+ * from within (`ShareNotFoundError`/`SharesNotFullyAllocatedError`/
+ * `SubPartnerSharesOverAllocatedError`) propagates out of this whole
+ * `database.transaction()` call, rolling back every row this call would
+ * otherwise have written -- no partial allocation, no partial investment/
+ * movement rows (this story's I/O matrix).
+ *
+ * On the replay path (step 1's "legitimate replay" branch), this call reads
+ * back the *already-linked* `money_movements` rows for the matched
+ * `existingRows` (never re-creates them) so the response still carries them.
  */
 export function createWithdrawalDestinationAllocationPort(
   database: Database = getDb(),
@@ -1620,11 +1678,15 @@ export function createWithdrawalDestinationAllocationPort(
   return {
     async recordAllocation(withdrawalTransactionId, legs, idempotencyKey, actorUserId) {
       return database.transaction(async (tx) => {
-        await tx
-          .select({ id: withdrawalTransactions.id })
+        const [withdrawalRow] = await tx
+          .select({ id: withdrawalTransactions.id, projectId: withdrawalTransactions.projectId })
           .from(withdrawalTransactions)
           .where(eq(withdrawalTransactions.id, withdrawalTransactionId))
           .for("update");
+        if (!withdrawalRow) {
+          throw new Error(`Failed to record withdrawal destination allocation: no withdrawal transaction ${withdrawalTransactionId}`);
+        }
+        const sourceProjectId = withdrawalRow.projectId;
 
         const existingRows = await tx
           .select()
@@ -1634,7 +1696,20 @@ export function createWithdrawalDestinationAllocationPort(
         if (existingRows.length > 0) {
           const sameKey = existingRows.every((row) => row.idempotencyKey === idempotencyKey);
           if (sameKey && matchesAllocationRequest(existingRows, legs)) {
-            return { allocations: existingRows.map(toWithdrawalDestinationAllocation), created: false };
+            const existingMovements = await tx
+              .select()
+              .from(moneyMovements)
+              .where(
+                inArray(
+                  moneyMovements.withdrawalDestinationAllocationId,
+                  existingRows.map((row) => row.id),
+                ),
+              );
+            return {
+              allocations: existingRows.map(toWithdrawalDestinationAllocation),
+              moneyMovements: existingMovements.map(toMoneyMovement),
+              created: false,
+            };
           }
           if (sameKey) {
             throw new WithdrawalDestinationAllocationIdempotencyKeyConflictError();
@@ -1651,17 +1726,25 @@ export function createWithdrawalDestinationAllocationPort(
           throw new WithdrawalDestinationAllocationIdempotencyKeyConflictError();
         }
 
+        // Pre-generated (not left to Drizzle/Postgres to assign) so each
+        // "project" leg's id is known BEFORE the insert, independent of
+        // `.returning()`'s row order -- see this method's own doc comment.
+        const legIds = legs.map(() => uuidv7());
+
         const insertedRows = await tx
           .insert(withdrawalDestinationAllocations)
           .values(
-            legs.map((leg) => ({
-              id: uuidv7(),
+            legs.map((leg, index) => ({
+              id: legIds[index] as string,
               withdrawalTransactionId,
               destinationType: leg.destinationType,
               amount: leg.amount,
               destinationProjectId: leg.destinationProjectId,
               personName: leg.personName,
               notes: leg.notes,
+              destinationRequirementId: leg.destinationRequirementId,
+              destinationShareId: leg.destinationShareId,
+              destinationPartyType: leg.destinationPartyType,
               idempotencyKey,
             })),
           )
@@ -1681,7 +1764,44 @@ export function createWithdrawalDestinationAllocationPort(
           reason: null,
         });
 
-        return { allocations: insertedRows.map(toWithdrawalDestinationAllocation), created: true };
+        // Story 4.8: for every "project" leg, auto-create the linked
+        // destination investment_transactions row + money_movements row,
+        // inside this same transaction (AD-6). Sequential, not Promise.all
+        // -- a single open transaction/connection can't serve concurrent
+        // queries.
+        const createdMovements: MoneyMovement[] = [];
+        const investmentTransactionPort = createInvestmentTransactionPort(tx);
+        const moneyMovementPort = createMoneyMovementPort(tx);
+        for (let index = 0; index < legs.length; index++) {
+          const leg = legs[index];
+          if (!leg || leg.destinationType !== "project") continue;
+          if (!leg.destinationProjectId || !leg.destinationShareId || !leg.destinationPartyType || !leg.destinationSnapshotInput) {
+            throw new Error(
+              `Failed to move withdrawal to project: leg ${index} is a "project" leg with no resolved destination snapshot`,
+            );
+          }
+          const { moneyMovement } = await moveWithdrawalToProject(
+            legIds[index] as string,
+            sourceProjectId,
+            leg.destinationProjectId,
+            leg.destinationSnapshotInput.requirement,
+            leg.destinationSnapshotInput.partnerShares,
+            leg.destinationSnapshotInput.subPartnerSharesByPartnerId,
+            leg.destinationPartyType,
+            leg.destinationShareId,
+            leg.amount,
+            `${idempotencyKey}:move:${index}`,
+            actorUserId,
+            { investmentTransactions: investmentTransactionPort, moneyMovements: moneyMovementPort },
+          );
+          createdMovements.push(moneyMovement);
+        }
+
+        return {
+          allocations: insertedRows.map(toWithdrawalDestinationAllocation),
+          moneyMovements: createdMovements,
+          created: true,
+        };
       });
     },
     async listByWithdrawalTransactionId(withdrawalTransactionId) {
@@ -1707,6 +1827,48 @@ export function createWithdrawalDestinationAllocationPort(
         .limit(1);
       const existing = rows[0];
       return existing !== undefined && existing.idempotencyKey !== idempotencyKey;
+    },
+  };
+}
+
+/**
+ * Drizzle-backed implementation of `packages/core`'s `MoneyMovementPort`
+ * (Story 4.8, FR28, AD-6). `record` is a plain single-row insert -- no paired
+ * `audit_log` row of its own (`MoneyMovementPort.record`'s own doc comment
+ * explains why), and no idempotency handling of its own either: its single
+ * call site (`createWithdrawalDestinationAllocationPort.recordAllocation`,
+ * via `moveWithdrawalToProject()`) is only ever reached once per "project"
+ * leg, even under a concurrent double-submit race, because that port's own
+ * `SELECT ... FOR UPDATE` lock on the parent `withdrawal_transactions` row
+ * fully serializes every concurrent allocation attempt for the same
+ * withdrawal before any of this ever runs.
+ */
+export function createMoneyMovementPort(database: Database = getDb()): MoneyMovementPort {
+  return {
+    async record(input) {
+      const [row] = await database
+        .insert(moneyMovements)
+        .values({
+          id: uuidv7(),
+          withdrawalDestinationAllocationId: input.withdrawalDestinationAllocationId,
+          sourceProjectId: input.sourceProjectId,
+          destinationProjectId: input.destinationProjectId,
+          destinationInvestmentTransactionId: input.destinationInvestmentTransactionId,
+          amount: input.amount,
+        })
+        .returning();
+      if (!row) {
+        throw new Error("Failed to record money movement");
+      }
+      return toMoneyMovement(row);
+    },
+    async listByDestinationProjectId(projectId) {
+      const rows = await database
+        .select()
+        .from(moneyMovements)
+        .where(eq(moneyMovements.destinationProjectId, projectId))
+        .orderBy(asc(moneyMovements.createdAt));
+      return rows.map(toMoneyMovement);
     },
   };
 }

@@ -46,6 +46,27 @@ vi.mock("@/lib/investment-transactions", () => ({
   cancelInvestmentTransaction: (...args: unknown[]) => cancelInvestmentTransaction(...args),
 }));
 
+/**
+ * Story 4.8 (FR28): the "Moved from Project A" indicator's own fetches --
+ * mocked so every pre-existing test in this file (none of which assert on
+ * this indicator) never makes an unmocked real `fetch` call, mirroring this
+ * file's other `vi.mock` precedents above. Left as bare `vi.fn()` (resolving
+ * to `undefined`) by default in every describe block except the one added
+ * for this indicator -- the page's own `.catch(() => {})` around this fetch
+ * (best-effort, secondary enrichment) means an unmocked call never breaks an
+ * unrelated test, it just leaves the indicator showing nothing.
+ */
+const listMoneyMovements = vi.fn();
+const listProjects = vi.fn();
+
+vi.mock("@/lib/money-movements", () => ({
+  listMoneyMovements: (...args: unknown[]) => listMoneyMovements(...args),
+}));
+
+vi.mock("@/lib/projects", () => ({
+  listProjects: (...args: unknown[]) => listProjects(...args),
+}));
+
 const REQUIREMENT = {
   id: "req-1",
   projectId: "project-1",
@@ -419,5 +440,171 @@ describe("AddMoneyPage -- Cancel UI (regression, spec-3-8 Review Triage rows 2/5
       expect(screen.queryByText("Cancel this payment?")).not.toBeInTheDocument();
     });
     expect(cancelInvestmentTransaction).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `StatusChip` renders an icon element followed by two sibling text nodes
+ * ("Moved from" and the Project name) inside one `<span className="nb-chip
+ * ...">` -- a plain string `TextMatch` never matches that (RTL's default
+ * matcher requires the node's *own* normalized text to equal the query, and
+ * JSX's own whitespace collapsing between the icon and the text makes an
+ * exact string brittle regardless). Matches on any `<span>` (never a `<div>`
+ * ancestor -- every ancestor's `textContent` also happens to include this
+ * same substring, which would otherwise make a plain
+ * `.textContent.includes(...)` check ambiguous/multi-matching) whose full
+ * `textContent`, whitespace-normalized, contains `text` -- mirrors this
+ * file's own pre-existing `findParagraphContaining` substring-match
+ * precedent, generalized to `<span>` for this chip.
+ */
+function elementTextNormalizedIncludes(text: string) {
+  return (_: string, element: Element | null): boolean =>
+    element?.tagName === "SPAN" && (element.textContent ?? "").replace(/\s+/g, " ").trim().includes(text);
+}
+
+/**
+ * Review finding (Story 4.8, FR28): this indicator had zero test coverage
+ * despite the spec's own Tasks/Verification sections claiming it was
+ * tested. Covers both the positive case (a row backed by a `money_movements`
+ * entry shows "Moved from <source Project name>") and the negative case (an
+ * ordinary, manually-recorded row never shows it), in the same render so a
+ * regression that shows the chip unconditionally would also be caught.
+ */
+describe("AddMoneyPage -- 'Moved from Project A' indicator (Story 4.8, FR28)", () => {
+  beforeEach(() => {
+    listInvestmentRequirements.mockReset().mockResolvedValue({ requirements: [REQUIREMENT] });
+    getShouldPay.mockReset().mockResolvedValue(SHOULD_PAY_RESPONSE);
+    listInvestmentTransactions.mockReset();
+    recordInvestmentTransaction.mockReset();
+    listMoneyMovements.mockReset();
+    listProjects.mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("shows 'Moved from <Project name>' only on the row linked via money_movements, never on an ordinary manually-recorded row", async () => {
+    listInvestmentTransactions.mockResolvedValue({
+      transactions: [
+        makeTransaction({ id: "tx-manual", amount: "50000", transactionDate: "2026-10-02" }),
+        makeTransaction({ id: "tx-moved", amount: "150000", transactionDate: "2026-10-03" }),
+      ],
+    });
+    listMoneyMovements.mockResolvedValue({
+      moneyMovements: [
+        {
+          id: "movement-1",
+          withdrawalDestinationAllocationId: "alloc-1",
+          sourceProjectId: "project-99",
+          destinationProjectId: "project-1",
+          destinationInvestmentTransactionId: "tx-moved",
+          amount: "150000",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+    listProjects.mockResolvedValue([
+      { id: "project-99", name: "Project Alpha", description: null, createdAt: "", updatedAt: "" },
+    ]);
+
+    await renderAndExpand();
+
+    // `findByText` (not `getByText`) -- the money-movements/Projects fetch
+    // resolves via a separate async chain from the transactions/Should Pay
+    // fetch `waitFor("₹1,50,000")` would confirm, so this needs its own
+    // retry rather than assuming both settled by the same point in time.
+    const movedChip = await screen.findByText(elementTextNormalizedIncludes("Moved from Project Alpha"));
+    expect(movedChip).toBeInTheDocument();
+
+    // Exactly one indicator -- the manually-recorded row never shows it.
+    expect(screen.getAllByText(elementTextNormalizedIncludes("Moved from"))).toHaveLength(1);
+  });
+
+  it("shows nothing extra for an ordinary transaction list with no linked money movements", async () => {
+    listInvestmentTransactions.mockResolvedValue({
+      transactions: [makeTransaction({ id: "tx-manual", amount: "50000" })],
+    });
+    listMoneyMovements.mockResolvedValue({ moneyMovements: [] });
+    listProjects.mockResolvedValue([]);
+
+    await renderAndExpand();
+
+    await waitFor(() => {
+      expect(screen.getByText("₹50,000")).toBeInTheDocument();
+    });
+    // Waits for the (empty-but-successful) money-movements fetch to actually
+    // settle before asserting absence -- otherwise this negative assertion
+    // could trivially pass before that async chain ever ran at all.
+    await waitFor(() => {
+      expect(listMoneyMovements).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.queryByText(elementTextNormalizedIncludes("Moved from"))).toBeNull();
+  });
+
+  it("falls back to 'Moved from another Project' when listProjects resolves without the source Project's own entry", async () => {
+    listInvestmentTransactions.mockResolvedValue({
+      transactions: [makeTransaction({ id: "tx-moved", amount: "150000" })],
+    });
+    listMoneyMovements.mockResolvedValue({
+      moneyMovements: [
+        {
+          id: "movement-1",
+          withdrawalDestinationAllocationId: "alloc-1",
+          sourceProjectId: "project-99",
+          destinationProjectId: "project-1",
+          destinationInvestmentTransactionId: "tx-moved",
+          amount: "150000",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+    // Resolves successfully (Promise.all(...) needs BOTH fetches to succeed
+    // before either indicator-state setter runs at all) but doesn't include
+    // "project-99" -- the one realistic way `projectNamesById[...] ?? "another
+    // Project"`'s fallback is actually reached, since a *rejected*
+    // `listProjects()` fails the whole `Promise.all(...)` instead and leaves
+    // this indicator showing nothing at all for every row (best-effort,
+    // never a blocking error).
+    listProjects.mockResolvedValue([]);
+
+    await renderAndExpand();
+
+    const movedChip = await screen.findByText(elementTextNormalizedIncludes("Moved from another Project"));
+    expect(movedChip).toBeInTheDocument();
+  });
+
+  it("shows no indicator at all (never a partial one) when listProjects fails -- Promise.all(...) fails the whole best-effort fetch together", async () => {
+    listInvestmentTransactions.mockResolvedValue({
+      transactions: [makeTransaction({ id: "tx-moved", amount: "150000" })],
+    });
+    listMoneyMovements.mockResolvedValue({
+      moneyMovements: [
+        {
+          id: "movement-1",
+          withdrawalDestinationAllocationId: "alloc-1",
+          sourceProjectId: "project-99",
+          destinationProjectId: "project-1",
+          destinationInvestmentTransactionId: "tx-moved",
+          amount: "150000",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+    listProjects.mockRejectedValue(new Error("Could not load Projects."));
+
+    await renderAndExpand();
+
+    await waitFor(() => {
+      expect(screen.getByText("₹1,50,000")).toBeInTheDocument();
+    });
+    // Waits for the rejected `listProjects()` (and thus the whole
+    // `Promise.all(...)`/`.catch()`) to actually settle before asserting
+    // absence -- otherwise this negative assertion could trivially pass
+    // before that async chain ever ran at all.
+    await waitFor(() => {
+      expect(listProjects).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.queryByText(elementTextNormalizedIncludes("Moved from"))).toBeNull();
   });
 });

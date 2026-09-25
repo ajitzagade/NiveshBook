@@ -41,7 +41,8 @@ export type Action =
   | "withdrawal_transactions:list"
   | "withdrawal_adjustments:view"
   | "withdrawal_status:view"
-  | "withdrawal_destination_allocations:create";
+  | "withdrawal_destination_allocations:create"
+  | "money_movements:list";
 
 /**
  * Role -> allowed-actions permission table. All actions here are
@@ -213,6 +214,14 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // qualifier, unlike Story 4.2's `withdrawal_transactions:create`). No
   // `SELF_ACCESS_ACTIONS`/`SCOPE_SELF_ACCESS_ACTIONS` entry.
   "withdrawal_destination_allocations:create": new Set(["owner_admin"]),
+  // Story 4.8 (FR28): listing the money movements landing at one Project
+  // (the Add Money page's "Moved from Project A" indicator) is Owner/
+  // Admin-only, mirroring `investment_transactions:list`'s identical
+  // all-or-nothing-for-the-role shape -- the whole Add Money page it
+  // supports is already Owner/Admin-only (every one of its own reads is),
+  // so this introduces no new privacy surface. No `SELF_ACCESS_ACTIONS`/
+  // `SCOPE_SELF_ACCESS_ACTIONS` entry.
+  "money_movements:list": new Set(["owner_admin"]),
 };
 
 /**

@@ -58,6 +58,30 @@ vi.mock("@/lib/withdrawal-destination-allocations", () => ({
   recordDestinationAllocation: (...args: unknown[]) => recordDestinationAllocation(...args),
 }));
 
+/**
+ * Story 4.8 (FR28): a "project" leg's destination-requirement/Share pickers
+ * -- fetched lazily once a "project" leg names a destination Project.
+ * Mocked so every pre-existing test in this file (none of which pick a
+ * "project" leg's requirement/Share) never makes an unmocked real `fetch`
+ * call; tests that DO exercise a "project" leg set their own resolved
+ * values.
+ */
+const listInvestmentRequirements = vi.fn();
+const listPartnerShares = vi.fn();
+const listSubPartnerShares = vi.fn();
+
+vi.mock("@/lib/investment-requirements", () => ({
+  listInvestmentRequirements: (...args: unknown[]) => listInvestmentRequirements(...args),
+}));
+
+vi.mock("@/lib/partner-shares", () => ({
+  listPartnerShares: (...args: unknown[]) => listPartnerShares(...args),
+}));
+
+vi.mock("@/lib/subpartner-shares", () => ({
+  listSubPartnerShares: (...args: unknown[]) => listSubPartnerShares(...args),
+}));
+
 const EMPTY_ADJUSTMENTS_RESPONSE: WithdrawalAdjustmentsResponse = { partners: [] };
 
 const PARTNER_WITH_SUBS: PartnerCanTake = {
@@ -1046,7 +1070,7 @@ describe("WithdrawMoneyPage -- Record Withdrawal idempotency key reuse across a 
  * rows, the running Distributed total, Save disabled until it matches
  * exactly, and skipping without saving.
  */
-describe("WithdrawMoneyPage -- destination-allocation dialog (Story 4.7)", () => {
+describe("WithdrawMoneyPage -- destination-allocation dialog (Story 4.7, extended by Story 4.8)", () => {
   beforeEach(() => {
     getCanTake.mockReset();
     listWithdrawalTransactions.mockReset().mockResolvedValue(EMPTY_WITHDRAWALS_RESPONSE);
@@ -1054,6 +1078,9 @@ describe("WithdrawMoneyPage -- destination-allocation dialog (Story 4.7)", () =>
     getWithdrawalAdjustments.mockReset().mockResolvedValue(EMPTY_ADJUSTMENTS_RESPONSE);
     listProjects.mockReset().mockResolvedValue([]);
     recordDestinationAllocation.mockReset();
+    listInvestmentRequirements.mockReset();
+    listPartnerShares.mockReset();
+    listSubPartnerShares.mockReset();
   });
 
   afterEach(() => {
@@ -1108,6 +1135,9 @@ describe("WithdrawMoneyPage -- destination-allocation dialog (Story 4.7)", () =>
         destinationProjectId: null,
         personName: null,
         notes: "Kept as cash",
+        destinationRequirementId: null,
+        destinationShareId: null,
+        destinationPartyType: null,
       },
     ]);
 
@@ -1170,6 +1200,28 @@ describe("WithdrawMoneyPage -- destination-allocation dialog (Story 4.7)", () =>
     listProjects.mockResolvedValue([
       { id: "project-2", name: "Project Two", description: null, createdAt: "", updatedAt: "" },
     ]);
+    listInvestmentRequirements.mockResolvedValue({
+      requirements: [
+        { id: "req-2", projectId: "project-2", amount: "1000000", requirementDate: "2026-10-01", createdAt: "" },
+      ],
+    });
+    listPartnerShares.mockResolvedValue({
+      shares: [
+        {
+          id: "row-1",
+          partnerId: "partner-2",
+          projectId: "project-2",
+          name: "Destination Partner",
+          sharePercent: "100",
+          userId: null,
+          subPartnerVisibilityGrant: false,
+          effectiveFrom: "",
+          createdAt: "",
+        },
+      ],
+      total: "100",
+    });
+    listSubPartnerShares.mockResolvedValue({ shares: [], total: "0" });
     recordDestinationAllocation.mockResolvedValue({ allocations: [] });
     const user = await recordAndOpenAllocationDialog();
 
@@ -1181,6 +1233,16 @@ describe("WithdrawMoneyPage -- destination-allocation dialog (Story 4.7)", () =>
     await screen.findByLabelText("Destination Project (Destination 1)");
     fireEvent.change(screen.getByLabelText("Destination Project (Destination 1)"), {
       target: { value: "project-2" },
+    });
+
+    // Story 4.8 (FR28): the requirement/Share pickers appear once the
+    // destination Project's fetch resolves.
+    await screen.findByLabelText("Destination funding requirement (Destination 1)");
+    fireEvent.change(screen.getByLabelText("Destination funding requirement (Destination 1)"), {
+      target: { value: "req-2" },
+    });
+    fireEvent.change(screen.getByLabelText("Destination Partner/Sub-partner Share (Destination 1)"), {
+      target: { value: "partner:partner-2" },
     });
 
     // Leg 2: a Person, ₹40,000.
@@ -1210,6 +1272,9 @@ describe("WithdrawMoneyPage -- destination-allocation dialog (Story 4.7)", () =>
         destinationProjectId: "project-2",
         personName: null,
         notes: null,
+        destinationRequirementId: "req-2",
+        destinationShareId: "partner-2",
+        destinationPartyType: "partner",
       },
       {
         destinationType: "person",
@@ -1217,6 +1282,9 @@ describe("WithdrawMoneyPage -- destination-allocation dialog (Story 4.7)", () =>
         destinationProjectId: null,
         personName: "Person X",
         notes: null,
+        destinationRequirementId: null,
+        destinationShareId: null,
+        destinationPartyType: null,
       },
     ]);
     expect(typeof idempotencyKeyArg).toBe("string");
@@ -1224,6 +1292,114 @@ describe("WithdrawMoneyPage -- destination-allocation dialog (Story 4.7)", () =>
     await waitFor(() => {
       expect(screen.queryByText("Where did this money go?")).not.toBeInTheDocument();
     });
+  });
+
+  it("shows a blocking message and keeps Save disabled when the destination Project has zero funding requirements (Story 4.8's Decisions)", async () => {
+    listProjects.mockResolvedValue([
+      { id: "project-2", name: "Project Two", description: null, createdAt: "", updatedAt: "" },
+    ]);
+    listInvestmentRequirements.mockResolvedValue({ requirements: [] });
+    listPartnerShares.mockResolvedValue({ shares: [], total: "0" });
+    listSubPartnerShares.mockResolvedValue({ shares: [], total: "0" });
+    await recordAndOpenAllocationDialog();
+
+    fireEvent.change(screen.getByLabelText("Destination type (Destination 1)"), {
+      target: { value: "project" },
+    });
+    await screen.findByLabelText("Destination Project (Destination 1)");
+    fireEvent.change(screen.getByLabelText("Destination Project (Destination 1)"), {
+      target: { value: "project-2" },
+    });
+
+    expect(
+      await screen.findByText("Project Two has no funding requirements yet -- choose a different destination."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(screen.queryByLabelText("Destination funding requirement (Destination 1)")).not.toBeInTheDocument();
+  });
+
+  it("shows a blocking message and keeps Save disabled when the destination Project has requirements but zero Partner/Sub-partner Shares (review finding, Story 4.8)", async () => {
+    listProjects.mockResolvedValue([
+      { id: "project-2", name: "Project Two", description: null, createdAt: "", updatedAt: "" },
+    ]);
+    listInvestmentRequirements.mockResolvedValue({
+      requirements: [
+        { id: "req-2", projectId: "project-2", amount: "1000000", requirementDate: "2026-10-01", createdAt: "" },
+      ],
+    });
+    listPartnerShares.mockResolvedValue({ shares: [], total: "0" });
+    listSubPartnerShares.mockResolvedValue({ shares: [], total: "0" });
+    await recordAndOpenAllocationDialog();
+
+    fireEvent.change(screen.getByLabelText("Destination type (Destination 1)"), {
+      target: { value: "project" },
+    });
+    await screen.findByLabelText("Destination Project (Destination 1)");
+    fireEvent.change(screen.getByLabelText("Destination Project (Destination 1)"), {
+      target: { value: "project-2" },
+    });
+
+    expect(
+      await screen.findByText("Project Two has no Partner/Sub-partner Shares yet -- choose a different destination."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(screen.queryByLabelText("Destination funding requirement (Destination 1)")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Destination Partner/Sub-partner Share (Destination 1)"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps Save disabled for a 'project' leg with a zero amount, even once requirement/Share are both chosen (review finding, Story 4.8)", async () => {
+    listProjects.mockResolvedValue([
+      { id: "project-2", name: "Project Two", description: null, createdAt: "", updatedAt: "" },
+    ]);
+    listInvestmentRequirements.mockResolvedValue({
+      requirements: [
+        { id: "req-2", projectId: "project-2", amount: "1000000", requirementDate: "2026-10-01", createdAt: "" },
+      ],
+    });
+    listPartnerShares.mockResolvedValue({
+      shares: [
+        {
+          id: "row-1",
+          partnerId: "partner-2",
+          projectId: "project-2",
+          name: "Destination Partner",
+          sharePercent: "100",
+          userId: null,
+          subPartnerVisibilityGrant: false,
+          effectiveFrom: "",
+          createdAt: "",
+        },
+      ],
+      total: "100",
+    });
+    listSubPartnerShares.mockResolvedValue({ shares: [], total: "0" });
+    await recordAndOpenAllocationDialog();
+
+    fireEvent.change(screen.getByLabelText("Destination type (Destination 1)"), {
+      target: { value: "project" },
+    });
+    // The default row is pre-filled with the full withdrawn amount --
+    // explicitly zero it out to exercise the new gate.
+    fireEvent.change(screen.getByLabelText("Amount (Destination 1)"), { target: { value: "0" } });
+    await screen.findByLabelText("Destination Project (Destination 1)");
+    fireEvent.change(screen.getByLabelText("Destination Project (Destination 1)"), {
+      target: { value: "project-2" },
+    });
+    await screen.findByLabelText("Destination funding requirement (Destination 1)");
+    fireEvent.change(screen.getByLabelText("Destination funding requirement (Destination 1)"), {
+      target: { value: "req-2" },
+    });
+    fireEvent.change(screen.getByLabelText("Destination Partner/Sub-partner Share (Destination 1)"), {
+      target: { value: "partner:partner-2" },
+    });
+
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+
+    // Restoring a positive amount (matching the withdrawn total) re-enables it.
+    fireEvent.change(screen.getByLabelText("Amount (Destination 1)"), { target: { value: "100000" } });
+    expect(screen.getByRole("button", { name: "Save" })).not.toBeDisabled();
   });
 
   it("shows the server's error message and keeps the dialog open on a failed save", async () => {

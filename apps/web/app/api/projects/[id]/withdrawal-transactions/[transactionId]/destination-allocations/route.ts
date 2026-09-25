@@ -1,14 +1,23 @@
 import { NextResponse, type NextRequest } from "next/server";
+import type { InvestmentRequirement, PartnerShare, SubPartnerShare } from "@niveshbook/types";
 import {
   getSession,
   authorizeScope,
   listWithdrawalTransactions,
   recordDestinationAllocation,
+  listCurrentPartnerShares,
+  listCurrentSubPartnerSharesForProject,
   AllocationMismatchError,
   InvalidDestinationProjectError,
+  MissingDestinationRequirementError,
+  ZeroAmountProjectLegError,
   AlreadyAllocatedError,
   WithdrawalDestinationAllocationIdempotencyKeyConflictError,
   InvalidMoneyError,
+  ShareNotFoundError,
+  SharesNotFullyAllocatedError,
+  SubPartnerSharesOverAllocatedError,
+  type DestinationSnapshotInput,
 } from "@niveshbook/core";
 import {
   createSessionPort,
@@ -16,17 +25,43 @@ import {
   createProjectPort,
   createWithdrawalTransactionPort,
   createWithdrawalDestinationAllocationPort,
+  createInvestmentRequirementPort,
+  createPartnerSharePort,
+  createSubPartnerSharePort,
 } from "@niveshbook/db";
 import { readSessionToken } from "@/lib/session";
 import { UNAUTHENTICATED_MESSAGE, FORBIDDEN_MESSAGE } from "@/lib/users";
+import { UUID_PATTERN } from "@/lib/ids";
 import { isValidProjectId, projectNotFoundResponse } from "../../../../shared";
 import {
   DESTINATION_PROJECT_NOT_FOUND_MESSAGE,
+  DESTINATION_REQUIREMENT_OR_SHARE_NOT_FOUND_MESSAGE,
   INVALID_REQUEST_MESSAGE,
   isValidDestinationAllocationBody,
   isValidWithdrawalTransactionId,
   withdrawalTransactionNotFoundResponse,
 } from "./shared";
+
+/**
+ * Groups a Project's *current* Sub-partner Shares by their parent
+ * `partnerId` -- the shape `buildTransactionSnapshot` (via
+ * `moveWithdrawalToProject()`) expects. Mirrors
+ * `investment-requirements/[requirementId]/should-pay/route.ts`'s local
+ * helper of the same name -- kept local to each route rather than shared,
+ * matching that file's own precedent.
+ */
+function groupByPartnerId(shares: readonly SubPartnerShare[]): Record<string, SubPartnerShare[]> {
+  const byPartnerId: Record<string, SubPartnerShare[]> = {};
+  for (const share of shares) {
+    const bucket = byPartnerId[share.partnerId];
+    if (bucket) {
+      bucket.push(share);
+    } else {
+      byPartnerId[share.partnerId] = [share];
+    }
+  }
+  return byPartnerId;
+}
 
 interface RouteContext {
   params: Promise<{ id: string; transactionId: string }>;
@@ -50,9 +85,16 @@ interface RouteContext {
  * `destinationProjectId` confirmed to exist as a real Project (400
  * `validation_error` otherwise -- this route's own job, since
  * `recordDestinationAllocation` deliberately has no `ProjectPort` dependency,
- * Interface Segregation) -> `recordDestinationAllocation` itself, whose
- * exact-sum/self-Project/write-once/idempotency contract is documented on
- * that function and `WithdrawalDestinationAllocationPort.recordAllocation`.
+ * Interface Segregation) -> every `"project"` leg's `destinationRequirementId`/
+ * `destinationShareId` re-resolved against that destination Project's
+ * *current* data (Story 4.8, FR28: 404 `not_found` if either doesn't resolve
+ * -- never trusting the client's earlier fetch, mirroring
+ * `destinationProjectId`'s own existence-check precedent one step earlier) ->
+ * `recordDestinationAllocation` itself, whose exact-sum/self-Project/
+ * write-once/idempotency contract is documented on that function and
+ * `WithdrawalDestinationAllocationPort.recordAllocation` -- extended by
+ * Story 4.8 to also auto-create, atomically, every `"project"` leg's linked
+ * `investment_transactions`/`money_movements` rows (FR28, AD-6).
  *
  * A repeated `POST` with the same `idempotencyKey` and matching legs returns
  * the *original* rows with `200` (not `201`) -- mirrors
@@ -158,18 +200,104 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     );
   }
 
+  // Story 4.8 (FR28): every "project" leg's destinationRequirementId/
+  // destinationShareId, re-resolved against the destination Project's
+  // *current* data (never the client's earlier fetch) -- fresh on every
+  // request, mirroring destinationProjectId's own existence-check precedent
+  // immediately above. Cached per (destinationProjectId, destinationRequirementId)
+  // pair so two "project" legs naming the same destination requirement don't
+  // fetch it twice.
+  const investmentRequirementPort = createInvestmentRequirementPort();
+  const partnerSharePort = createPartnerSharePort();
+  const subPartnerSharePort = createSubPartnerSharePort();
+  const snapshotCache = new Map<string, DestinationSnapshotInput | null>();
+
+  async function resolveDestinationSnapshot(
+    destinationProjectId: string,
+    destinationRequirementId: string,
+  ): Promise<DestinationSnapshotInput | null> {
+    const cacheKey = `${destinationProjectId}:${destinationRequirementId}`;
+    if (snapshotCache.has(cacheKey)) {
+      return snapshotCache.get(cacheKey) ?? null;
+    }
+    if (!UUID_PATTERN.test(destinationRequirementId)) {
+      snapshotCache.set(cacheKey, null);
+      return null;
+    }
+    const requirement: InvestmentRequirement | null =
+      await investmentRequirementPort.findById(destinationRequirementId);
+    if (!requirement || requirement.projectId !== destinationProjectId) {
+      snapshotCache.set(cacheKey, null);
+      return null;
+    }
+    const [partnerShares, subPartnerShares]: [readonly PartnerShare[], readonly SubPartnerShare[]] =
+      await Promise.all([
+        listCurrentPartnerShares(destinationProjectId, { partnerShares: partnerSharePort }),
+        listCurrentSubPartnerSharesForProject(destinationProjectId, {
+          subPartnerShares: subPartnerSharePort,
+        }),
+      ]);
+    const snapshot: DestinationSnapshotInput = {
+      requirement,
+      partnerShares,
+      subPartnerSharesByPartnerId: groupByPartnerId(subPartnerShares),
+    };
+    snapshotCache.set(cacheKey, snapshot);
+    return snapshot;
+  }
+
+  const legSnapshots = new Map<number, DestinationSnapshotInput>();
+  for (let index = 0; index < body.legs.length; index++) {
+    const leg = body.legs[index];
+    if (!leg || leg.destinationType !== "project") continue;
+    // `isValidDestinationAllocationBody`'s shape guard already requires
+    // non-empty destinationProjectId/destinationRequirementId/destinationShareId/
+    // destinationPartyType for every "project" leg -- these casts reflect
+    // that already-proven invariant, not a new assumption.
+    const destinationProjectId = leg.destinationProjectId as string;
+    const destinationRequirementId = leg.destinationRequirementId as string;
+    const destinationShareId = leg.destinationShareId as string;
+    const destinationPartyType = leg.destinationPartyType as "partner" | "sub_partner";
+
+    const snapshot = await resolveDestinationSnapshot(destinationProjectId, destinationRequirementId);
+    if (!snapshot) {
+      return NextResponse.json(
+        { code: "not_found", message: DESTINATION_REQUIREMENT_OR_SHARE_NOT_FOUND_MESSAGE },
+        { status: 404 },
+      );
+    }
+    const shareExists =
+      destinationPartyType === "partner"
+        ? snapshot.partnerShares.some((share) => share.partnerId === destinationShareId)
+        : Object.values(snapshot.subPartnerSharesByPartnerId).some((subs) =>
+            subs.some((sub) => sub.subPartnerId === destinationShareId),
+          );
+    if (!shareExists) {
+      return NextResponse.json(
+        { code: "not_found", message: DESTINATION_REQUIREMENT_OR_SHARE_NOT_FOUND_MESSAGE },
+        { status: 404 },
+      );
+    }
+    legSnapshots.set(index, snapshot);
+  }
+
+  const legsWithSnapshot = body.legs.map((leg, index) => ({
+    ...leg,
+    destinationSnapshot: legSnapshots.get(index) ?? null,
+  }));
+
   const withdrawalDestinationAllocationPort = createWithdrawalDestinationAllocationPort();
   try {
     const result = await recordDestinationAllocation(
       withdrawal,
-      body.legs,
+      legsWithSnapshot,
       projectId,
       session.userId,
       body.idempotencyKey,
       { withdrawalDestinationAllocations: withdrawalDestinationAllocationPort },
     );
     return NextResponse.json(
-      { allocations: result.allocations },
+      { allocations: result.allocations, moneyMovements: result.moneyMovements },
       { status: result.created ? 201 : 200 },
     );
   } catch (error) {
@@ -179,7 +307,11 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
         { status: 400 },
       );
     }
-    if (error instanceof InvalidDestinationProjectError) {
+    if (
+      error instanceof InvalidDestinationProjectError ||
+      error instanceof MissingDestinationRequirementError ||
+      error instanceof ZeroAmountProjectLegError
+    ) {
       return NextResponse.json(
         { code: "validation_error", message: error.message },
         { status: 400 },
@@ -204,6 +336,30 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       // comments) -- never silently return the mismatched rows.
       return NextResponse.json(
         { code: "idempotency_key_conflict", message: error.message },
+        { status: 409 },
+      );
+    }
+    // Story 4.8 (FR28): defense-in-depth for the race between this route's
+    // own destination-share existence check above and the atomic write --
+    // `buildTransactionSnapshot` (deep inside `moveWithdrawalToProject()`,
+    // called from `recordAllocation`'s transaction) can still throw these if
+    // the destination Project's data changed in that narrow window, this
+    // story's I/O matrix.
+    if (error instanceof ShareNotFoundError) {
+      return NextResponse.json(
+        { code: "not_found", message: DESTINATION_REQUIREMENT_OR_SHARE_NOT_FOUND_MESSAGE },
+        { status: 404 },
+      );
+    }
+    if (error instanceof SharesNotFullyAllocatedError) {
+      return NextResponse.json(
+        { code: "shares_not_fully_allocated", message: error.message },
+        { status: 409 },
+      );
+    }
+    if (error instanceof SubPartnerSharesOverAllocatedError) {
+      return NextResponse.json(
+        { code: "sub_partner_shares_over_allocated", message: error.message },
         { status: 409 },
       );
     }
