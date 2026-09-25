@@ -109,7 +109,8 @@
   }
   .nb-btn-ghost {
     background: var(--color-surface);
-    color: var(--color-ink-soft);
+    color: var(--color-ink);
+    font-weight: 700;
     border: 1px solid var(--color-border);
   }
 
