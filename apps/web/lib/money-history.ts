@@ -64,11 +64,22 @@ export async function getMoneyHistory(
  * disambiguated only by `destinationType` -- `money-history.ts`'s own
  * `buildWithdrawalDestinationAllocationEntries`) trace back to that same leg,
  * `"used_from_available_balance"` to its own `available_balance_spends` row.
- * The `Record<MoneyHistoryEntryType, MoneyTrailNodeType>` shape forces this
- * to stay exhaustive against `packages/types`'s union at compile time,
- * mirroring the Money History page's own `ENTRY_TYPE_LABELS` precedent.
+ *
+ * Story 5.3 (FR33/FR34, AD-4): `"adjustment"` is deliberately EXCLUDED from
+ * this map's key set (`Record<Exclude<MoneyHistoryEntryType, "adjustment">,
+ * MoneyTrailNodeType>`, not a plain `Record<MoneyHistoryEntryType, ...>`) --
+ * an `AdjustmentNetting` record has no linked money movement to trace
+ * (nothing moved, spec-5-3's Decisions #4), so there is no `MoneyTrailNodeType`
+ * it could correctly map to. Excluding the key (rather than, say, mapping it
+ * to an arbitrary existing node type) means TypeScript's own excess-property
+ * check on the object literal below forces this to be handled deliberately at
+ * every call site, not silently ignored or misrouted -- `getTrailStartFromEntry`
+ * returns `null` for exactly this case.
  */
-export const MONEY_HISTORY_ENTRY_TYPE_TO_TRAIL_NODE_TYPE: Record<MoneyHistoryEntryType, MoneyTrailNodeType> = {
+export const MONEY_HISTORY_ENTRY_TYPE_TO_TRAIL_NODE_TYPE: Record<
+  Exclude<MoneyHistoryEntryType, "adjustment">,
+  MoneyTrailNodeType
+> = {
   money_added: "investment_transaction",
   money_withdrawn: "withdrawal_transaction",
   moved_to_project: "withdrawal_destination_allocation",
@@ -77,7 +88,17 @@ export const MONEY_HISTORY_ENTRY_TYPE_TO_TRAIL_NODE_TYPE: Record<MoneyHistoryEnt
   used_from_available_balance: "available_balance_spend",
 };
 
-/** The `{ type, id }` starting point `GET /api/money-trail` needs to trace `entry` -- `entry.id` is always the originating row's own id (`MoneyHistoryEntry`'s own doc comment), so no further lookup is needed beyond the type mapping above. */
-export function getTrailStartFromEntry(entry: MoneyHistoryEntry): { type: MoneyTrailNodeType; id: string } {
+/**
+ * The `{ type, id }` starting point `GET /api/money-trail` needs to trace
+ * `entry` -- `entry.id` is always the originating row's own id
+ * (`MoneyHistoryEntry`'s own doc comment), so no further lookup is needed
+ * beyond the type mapping above. Returns `null` for an `"adjustment"` entry
+ * (Story 5.3) -- there is nothing to trace; callers must omit the trace/click
+ * affordance for these rows rather than treating `null` as an error.
+ */
+export function getTrailStartFromEntry(entry: MoneyHistoryEntry): { type: MoneyTrailNodeType; id: string } | null {
+  if (entry.type === "adjustment") {
+    return null;
+  }
   return { type: MONEY_HISTORY_ENTRY_TYPE_TO_TRAIL_NODE_TYPE[entry.type], id: entry.id };
 }

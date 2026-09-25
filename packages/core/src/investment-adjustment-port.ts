@@ -40,4 +40,15 @@ export interface InvestmentAdjustmentPort {
    * adjustments for it via `GET .../adjustments` before this read runs.
    */
   listByProjectId(projectId: string): Promise<InvestmentAdjustment[]>;
+
+  /**
+   * Every current `(partyType, shareId, projectId)` adjustment row across
+   * every Project, unfiltered, no pagination (Story 5.3, FR33/FR34) --
+   * mirrors `InvestmentTransactionPort.listAll()`'s identical Story 5.1
+   * shape one ledger over. The Adjust Next Time page's own scope filter
+   * (`packages/core`'s `filterAdjustNextTimeByScope`) is the sole consumer,
+   * alongside `POST /api/adjustment-nettings`'s existence-check read via
+   * `listByProjectId` (unchanged).
+   */
+  listAll(): Promise<InvestmentAdjustment[]>;
 }

@@ -434,6 +434,45 @@ export interface WithdrawalAdjustment {
 }
 
 /**
+ * Story 5.3 (FR33/FR34, AD-4): a pure AUDIT RECORD of an Owner/Admin's
+ * explicit decision to net an amount between one person's `InvestmentAdjustment`
+ * (at `investmentRequirementId`, a specific funding requirement) and their
+ * `WithdrawalAdjustment` (at `projectId`) -- zero computed effect on either
+ * ledger: neither `InvestmentAdjustment` nor `WithdrawalAdjustment` rows are
+ * ever written to as a result of this record existing, staying exactly as
+ * freshly computed from Should Pay/Can Take (spec-5-3's Decisions #1). This
+ * record's only effect is existing, permanently, as a transparent, audited
+ * fact -- visible in Money History as a `"adjustment"`-type entry (no linked
+ * money movement to trace, `MoneyHistoryEntryType`'s own doc comment).
+ *
+ * `shareId`/`partyType` are the *stable* `PartnerShare.partnerId`/
+ * `SubPartnerShare.subPartnerId` (disambiguated by `partyType`), never
+ * `User.id` (AD-4) -- mirrors `InvestmentAdjustment.shareId`'s identical
+ * convention. `investmentRequirementId` anchors this record to the specific
+ * funding round netted (spec-5-3's Decisions #2: `investment_adjustments` is
+ * keyed by `(partyType, shareId, projectId, requirementId)` -- a person can
+ * have several across different funding rounds within one Project -- while
+ * `withdrawal_adjustments` is Project-scoped only, so `projectId` alone
+ * identifies which Withdrawal Adjustment row this netted against).
+ */
+export interface AdjustmentNetting {
+  id: string;
+  projectId: string;
+  partyType: "partner" | "sub_partner";
+  /** The stable `partnerId`/`subPartnerId` this netting is about -- never `User.id` (AD-4). */
+  shareId: string;
+  /** The specific funding requirement whose Investment Adjustment this record netted against. */
+  investmentRequirementId: string;
+  /** The amount the Owner/Admin declared netted -- an explicit business decision, not itself re-derived from either adjustment's own gap. */
+  amount: Money;
+  notes: string | null;
+  /** The Owner/Admin who performed this netting action. */
+  actorUserId: string;
+  /** ISO 8601 timestamp */
+  createdAt: string;
+}
+
+/**
  * Story 4.7 (Epic 4, FR27): the four places a withdrawn amount can be
  * allocated to in the "Where did this money go?" prompt -- "another
  * Project" (`"project"`), a free-text Person (`"person"`, no Person/contact
@@ -650,14 +689,21 @@ export interface MoneyTrailReconciliationResult {
 }
 
 /**
- * Story 5.1 (FR31): the 6 plain-language kinds `assembleMoneyHistory()`
- * produces, one per source-row shape in the I/O matrix (spec-5-1). No
- * `"adjustment"` member -- `investment_adjustments`/`withdrawal_adjustments`
- * are single-current-row upserts, not append-only history, so they're
- * omitted entirely this story (spec-5-1's Decisions #3); the real AD-4
- * audited netting-transaction type this label refers to is Story 5.3's job.
+ * Story 5.1 (FR31): the plain-language kinds `assembleMoneyHistory()`
+ * produces, one per source-row shape in the I/O matrix (spec-5-1).
  * `"other"`-destination legs/spends are labeled `"given_to_person"` too (no
  * 7th type invented) -- disambiguated by `to`/`notes` instead.
+ *
+ * Story 5.3 (FR33/FR34, AD-4) adds `"adjustment"` -- one entry per
+ * `AdjustmentNetting` row, the audited netting-transaction type spec-5-1's
+ * own comment above originally deferred to this story. Unlike every other
+ * member, `"adjustment"` has no corresponding `MoneyTrailNodeType` (a
+ * netting record has no linked money movement to trace -- nothing moved,
+ * spec-5-3's Decisions #4): `apps/web/lib/money-history.ts`'s
+ * `MONEY_HISTORY_ENTRY_TYPE_TO_TRAIL_NODE_TYPE` deliberately excludes this
+ * key (`Record<Exclude<MoneyHistoryEntryType, "adjustment">, MoneyTrailNodeType>`),
+ * and the Money History page omits the trace/click affordance for these rows
+ * instead of mapping them to a wrong/synthetic trail node.
  */
 export type MoneyHistoryEntryType =
   | "money_added"
@@ -665,7 +711,8 @@ export type MoneyHistoryEntryType =
   | "moved_to_project"
   | "given_to_person"
   | "added_to_available_balance"
-  | "used_from_available_balance";
+  | "used_from_available_balance"
+  | "adjustment";
 
 /**
  * One row of the unified Money History list (Story 5.1, FR31) -- the plain-

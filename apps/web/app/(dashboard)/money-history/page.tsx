@@ -184,7 +184,15 @@ export default function MoneyHistoryPage() {
   }
 
   function handleTraceEntry(entry: MoneyHistoryEntry) {
+    // Story 5.3 (FR33/FR34, AD-4): `getTrailStartFromEntry` returns `null`
+    // for an `"adjustment"` entry -- nothing to trace. The row itself never
+    // gets the `onClick` that would call this in the first place (see the
+    // `isTraceable` guard below), so this is defense in depth, not the
+    // primary gate.
     const start = getTrailStartFromEntry(entry);
+    if (!start) {
+      return;
+    }
     const params = new URLSearchParams(searchParams.toString());
     params.set("traceType", start.type);
     params.set("traceId", start.id);
@@ -337,13 +345,20 @@ export default function MoneyHistoryPage() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {state.entries.map((entry) => (
-                <TableRow
-                  key={entry.id}
-                  className="cursor-pointer hover:bg-surface-alt"
-                  onClick={() => handleTraceEntry(entry)}
-                  title="View this entry's money trail"
-                >
+              {state.entries.map((entry) => {
+                // Story 5.3 (FR33/FR34, AD-4): an "adjustment" entry (a
+                // netting audit record) has no linked money movement to
+                // trace -- omit the row's click/hover trace affordance
+                // entirely for these rows, rather than sending the actor
+                // into a trace that goes nowhere.
+                const isTraceable = entry.type !== "adjustment";
+                return (
+                  <TableRow
+                    key={entry.id}
+                    className={isTraceable ? "cursor-pointer hover:bg-surface-alt" : undefined}
+                    onClick={isTraceable ? () => handleTraceEntry(entry) : undefined}
+                    title={isTraceable ? "View this entry's money trail" : undefined}
+                  >
                   <Td className="!text-left text-ink-soft">{entry.date}</Td>
                   <Td className="!text-left">
                     <span className="inline-flex items-center gap-1.5">
@@ -366,8 +381,9 @@ export default function MoneyHistoryPage() {
                   <Td className="!text-left text-ink-soft">{entry.from ?? "—"}</Td>
                   <Td className="!text-left text-ink-soft">{entry.to ?? "—"}</Td>
                   <Td className="!text-left text-ink-soft">{entry.notes ?? "—"}</Td>
-                </TableRow>
-              ))}
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         )}

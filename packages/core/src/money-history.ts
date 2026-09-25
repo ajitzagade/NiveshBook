@@ -1,4 +1,5 @@
 import type {
+  AdjustmentNetting,
   AvailableBalanceSpend,
   InvestmentTransaction,
   MoneyHistoryEntry,
@@ -28,8 +29,18 @@ export type MoneyHistoryScope =
   | { unrestricted: true }
   | { unrestricted: false; shareKeys: ReadonlySet<string> };
 
-/** Builds the `shareKeys`/entry-scoping key -- shared by `resolveMoneyHistoryScope` (building the actor's own set) and `assembleMoneyHistory` (checking each entry against it), so the two can never drift out of sync on key shape. */
-function moneyHistoryShareKey(
+/**
+ * Builds the `shareKeys`/entry-scoping key -- shared by
+ * `resolveMoneyHistoryScope` (building the actor's own set) and
+ * `assembleMoneyHistory` (checking each entry against it), so the two can
+ * never drift out of sync on key shape. Exported (Story 5.3) so
+ * `adjust-next-time.ts`'s `filterAdjustNextTimeByScope` can check an
+ * `InvestmentAdjustment`/`WithdrawalAdjustment` row against a
+ * `MoneyHistoryScope` using the identical key convention, rather than
+ * re-deriving a second, duplicate key-builder for a scope shape this module
+ * already owns (spec-5-3's Code Map: "no new scope-resolution logic").
+ */
+export function moneyHistoryShareKey(
   partyType: "partner" | "sub_partner",
   shareId: string,
   projectId: string,
@@ -132,6 +143,17 @@ export interface MoneyHistoryRawData {
   withdrawalDestinationAllocations: readonly WithdrawalDestinationAllocation[];
   moneyMovements: readonly MoneyMovement[];
   availableBalanceSpends: readonly AvailableBalanceSpend[];
+  /**
+   * Story 5.3 (FR33/FR34, AD-4): every `AdjustmentNetting` audit record --
+   * optional (defaults to `[]` when omitted) so every pre-Story-5.3 caller
+   * of `assembleMoneyHistory()`/construction of this type keeps compiling
+   * unchanged, mirroring this codebase's established non-breaking-additive-
+   * field convention (e.g. `withdrawal_destination_allocations`'
+   * `destinationRequirementId`/`destinationShareId`/`destinationPartyType`,
+   * Story 4.8). `GET /api/money-history`'s route is the one real caller that
+   * now always supplies it.
+   */
+  adjustmentNettings?: readonly AdjustmentNetting[];
   projectNamesById: Readonly<Record<string, string>>;
   partnerNamesById: Readonly<Record<string, string>>;
   subPartnerNamesById: Readonly<Record<string, string>>;
@@ -354,6 +376,43 @@ function buildAvailableBalanceSpendEntries(raw: MoneyHistoryRawData): MoneyHisto
   }));
 }
 
+/**
+ * Builds every `adjustment_nettings` row's Money History entry (Story 5.3,
+ * FR33/FR34, AD-4) -- `"adjustment"`, always, `from`/`to`: always `null`
+ * (nothing moved -- this is a pure audit record of a business decision, not
+ * a money movement, spec-5-3's Decisions #1/#4), `notes` carries the
+ * netting's own notes, `personName`/`partyType`/`shareId`/`projectId`
+ * resolved from the netting row directly (mirrors every other
+ * `build*Entries` function's identical `resolvePersonName`/
+ * `resolveProjectName` convention). `paymentMode` is always `null` -- a
+ * netting has no payment mode concept. `date` is derived from `createdAt`'s
+ * own ISO-date prefix, mirroring `buildAvailableBalanceSpendEntries`'
+ * identical "no separate `transactionDate` column" precedent -- a netting is
+ * always recorded "now". `status` is always `"active"`/`reversalOfTransactionId`
+ * always `null` -- `adjustment_nettings` has no cancel/reverse capability
+ * built anywhere in this codebase (this story's Boundaries never call for
+ * one: the record's whole point is being a permanent, immutable fact).
+ */
+function buildAdjustmentNettingEntries(raw: MoneyHistoryRawData): MoneyHistoryEntry[] {
+  return (raw.adjustmentNettings ?? []).map((netting) => ({
+    id: netting.id,
+    type: "adjustment" as MoneyHistoryEntryType,
+    date: netting.createdAt.slice(0, 10),
+    projectId: netting.projectId,
+    projectName: resolveProjectName(netting.projectId, raw.projectNamesById),
+    partyType: netting.partyType,
+    shareId: netting.shareId,
+    personName: resolvePersonName(netting.partyType, netting.shareId, netting.projectId, raw),
+    amount: netting.amount,
+    paymentMode: null,
+    from: null,
+    to: null,
+    notes: netting.notes,
+    status: "active" as const,
+    reversalOfTransactionId: null,
+  }));
+}
+
 /** `true` if `entry` is inside `scope` -- always `true` when unrestricted, otherwise checked against `scope.shareKeys` via the identical key shape `resolveMoneyHistoryScope` builds. */
 function isEntryInScope(entry: MoneyHistoryEntry, scope: MoneyHistoryScope): boolean {
   if (scope.unrestricted) {
@@ -420,6 +479,7 @@ export function assembleMoneyHistory(
     ...buildWithdrawalTransactionEntries(raw),
     ...buildWithdrawalDestinationAllocationEntries(raw, withdrawalTransactionsById),
     ...buildAvailableBalanceSpendEntries(raw),
+    ...buildAdjustmentNettingEntries(raw),
   ];
 
   return allEntries

@@ -16,6 +16,15 @@ import type {
  * page's `PAYMENT_MODE_LABELS` precedent. Reused by `describeTrailNode()`
  * below so the flat Money History list and the Trail view never drift onto
  * different wording for the same underlying event.
+ *
+ * Story 5.3 (FR33/FR34, AD-4) adds `adjustment: "Adjustment"` --
+ * `MoneyHistoryEntryType` gaining the `"adjustment"` member forces this
+ * `Record` to be extended too, or it wouldn't compile (the exhaustiveness
+ * guard working as designed, spec-5-3's Code Map). Unlike every other entry
+ * type, `"adjustment"` has no `MoneyTrailNodeType` counterpart --
+ * `apps/web/lib/money-history.ts`'s `MONEY_HISTORY_ENTRY_TYPE_TO_TRAIL_NODE_TYPE`
+ * deliberately excludes it, and the Money History page omits the trace/click
+ * affordance for these rows.
  */
 export const ENTRY_TYPE_LABELS: Record<MoneyHistoryEntryType, string> = {
   money_added: "Money Added",
@@ -24,6 +33,7 @@ export const ENTRY_TYPE_LABELS: Record<MoneyHistoryEntryType, string> = {
   given_to_person: "Given to Person",
   added_to_available_balance: "Added to Available Balance",
   used_from_available_balance: "Used from Available Balance",
+  adjustment: "Adjustment",
 };
 
 const PARTY_TYPE_LABELS: Record<"partner" | "sub_partner", string> = {

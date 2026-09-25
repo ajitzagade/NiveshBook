@@ -48,7 +48,9 @@ export type Action =
   | "available_balances:view"
   | "available_balances:spend"
   | "money_trail:view"
-  | "money_history:list";
+  | "money_history:list"
+  | "adjust_next_time:view"
+  | "adjustment_nettings:create";
 
 /**
  * Role -> allowed-actions permission table. All actions here are
@@ -270,6 +272,21 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // Story 5.4-5.6's job, not this one's; granting the role here only means
   // the API itself is correctly scoped starting now.
   "money_history:list": new Set(["owner_admin", "partner", "sub_partner"]),
+  // Story 5.3 (FR33/FR34, Epic 5): the Adjust Next Time page's own view
+  // action -- mirrors `money_history:list`'s exact shape (spec-5-3's
+  // Decisions #3): a plain multi-role Set, not a single-owner_admin-only Set
+  // with a `SELF_ACCESS_ACTIONS`/`SCOPE_SELF_ACCESS_ACTIONS` override,
+  // since the scoping need is identical to Money History's own "what's
+  // actor's own scope across a whole list assembly spanning every Project"
+  // shape -- `resolveMoneyHistoryScope()` (reused unchanged) does the actual
+  // per-row scoping after this gate passes, not this table.
+  "adjust_next_time:view": new Set(["owner_admin", "partner", "sub_partner"]),
+  // Story 5.3: performing a netting action stays Owner/Admin-only -- no
+  // self-access, matching the AC's "an Owner/Admin explicitly performs"
+  // framing (spec-5-3's Decisions #3) -- mirrors
+  // `withdrawal_destination_allocations:create`'s identical all-or-nothing-
+  // for-the-role shape, checked via `authorizeScope()` only.
+  "adjustment_nettings:create": new Set(["owner_admin"]),
 };
 
 /**

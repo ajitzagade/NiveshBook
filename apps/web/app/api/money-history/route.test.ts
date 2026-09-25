@@ -15,6 +15,7 @@ const withdrawalTransactionsListAll = vi.fn();
 const withdrawalDestinationAllocationsListAll = vi.fn();
 const moneyMovementsListAll = vi.fn();
 const availableBalanceSpendsListAll = vi.fn();
+const adjustmentNettingsListAll = vi.fn();
 
 vi.mock("@niveshbook/db", () => ({
   createSessionPort: () => ({
@@ -87,6 +88,10 @@ vi.mock("@niveshbook/db", () => ({
     recordSpend: vi.fn(),
     findById: vi.fn(),
     listAll: availableBalanceSpendsListAll,
+  }),
+  createAdjustmentNettingPort: () => ({
+    recordNetting: vi.fn(),
+    listAll: adjustmentNettingsListAll,
   }),
 }));
 
@@ -230,6 +235,21 @@ function makeMovement(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+function makeAdjustmentNetting(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: "netting-1",
+    projectId: "project-a",
+    partyType: "partner",
+    shareId: "partner-1",
+    investmentRequirementId: "req-1",
+    amount: "50000",
+    notes: null,
+    actorUserId: "owner-1",
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
 function makeSpend(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: "spend-1",
@@ -262,6 +282,7 @@ function resetMocks() {
   withdrawalDestinationAllocationsListAll.mockReset();
   moneyMovementsListAll.mockReset();
   availableBalanceSpendsListAll.mockReset();
+  adjustmentNettingsListAll.mockReset();
 
   partnerSharesListAll.mockResolvedValue([]);
   subPartnerSharesListAll.mockResolvedValue([]);
@@ -274,6 +295,7 @@ function resetMocks() {
   withdrawalDestinationAllocationsListAll.mockResolvedValue([]);
   moneyMovementsListAll.mockResolvedValue([]);
   availableBalanceSpendsListAll.mockResolvedValue([]);
+  adjustmentNettingsListAll.mockResolvedValue([]);
 }
 
 function sessionFor(user: ReturnType<typeof makeUser>) {
@@ -404,6 +426,31 @@ describe("GET /api/money-history (Story 5.1, FR31)", () => {
     expect(withdrawalDestinationAllocationsListAll).toHaveBeenCalledTimes(1);
     expect(moneyMovementsListAll).toHaveBeenCalledTimes(1);
     expect(availableBalanceSpendsListAll).toHaveBeenCalledTimes(1);
+  });
+
+  // Story 5.3 (FR33/FR34, AD-4): proves the route actually wires the new
+  // `createAdjustmentNettingPort().listAll()` fetch through to
+  // `assembleMoneyHistory()` and back out as an `"adjustment"`-type entry --
+  // not just core's own pure-function logic (already covered by
+  // `money-history.test.ts`).
+  it("wires adjustment_nettings through end to end -- an 'adjustment' entry appears alongside the other 6 source tables", async () => {
+    sessionFor(OWNER_USER);
+    adjustmentNettingsListAll.mockResolvedValue([makeAdjustmentNetting({ id: "netting-1" })]);
+    partnerSharesListAll.mockResolvedValue([PARTNER_SHARE_PROJECT_A]);
+
+    const response = await GET(makeRequest("", `${SESSION_COOKIE_NAME}=t`));
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.entries).toHaveLength(1);
+    expect(body.entries[0]).toMatchObject({
+      id: "netting-1",
+      type: "adjustment",
+      from: null,
+      to: null,
+      personName: "Partner A (Project A)",
+    });
+    expect(adjustmentNettingsListAll).toHaveBeenCalledTimes(1);
   });
 
   it("returns 403 if the authorized session's user row can no longer be found", async () => {

@@ -1186,7 +1186,7 @@ describe("Story 3.4's computeInvestmentAdjustment reflects a cancelled transacti
     };
 
     const results = await computeInvestmentAdjustment(requirement, partners, {}, byShareKey, {
-      investmentAdjustments: { upsert, listByProjectId: async () => [] },
+      investmentAdjustments: { upsert, listByProjectId: async () => [], listAll: async () => [] },
     });
 
     // No active transaction remains for this share at all -- actualPaid is "0".
@@ -1272,7 +1272,7 @@ describe("Story 3.4's computeInvestmentAdjustment reflects an edited amount with
     };
 
     const results = await computeInvestmentAdjustment(requirement, partners, {}, byShareKey, {
-      investmentAdjustments: { upsert, listByProjectId: async () => [] },
+      investmentAdjustments: { upsert, listByProjectId: async () => [], listAll: async () => [] },
     });
 
     expect(results[0]?.actualPaid).toBe("850000");

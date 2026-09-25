@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type {
+  AdjustmentNetting,
   AvailableBalanceSpend,
   InvestmentTransaction,
   Money,
@@ -109,6 +110,21 @@ function makeSpend(overrides: Partial<AvailableBalanceSpend> = {}): AvailableBal
   };
 }
 
+function makeAdjustmentNetting(overrides: Partial<AdjustmentNetting> = {}): AdjustmentNetting {
+  return {
+    id: "netting-1",
+    projectId: "project-a",
+    partyType: "partner",
+    shareId: "partner-1",
+    investmentRequirementId: "req-1",
+    amount: "50000" as Money,
+    notes: null,
+    actorUserId: "owner-1",
+    createdAt: "2026-09-20T10:00:00.000Z",
+    ...overrides,
+  };
+}
+
 function makePartnerShare(overrides: Partial<PartnerShare> = {}): PartnerShare {
   const now = new Date().toISOString();
   return {
@@ -148,6 +164,7 @@ function emptyRaw(overrides: Partial<MoneyHistoryRawData> = {}): MoneyHistoryRaw
     withdrawalDestinationAllocations: [],
     moneyMovements: [],
     availableBalanceSpends: [],
+    adjustmentNettings: [],
     projectNamesById: { "project-a": "Project A", "project-b": "Project B", "project-c": "Project C" },
     // Keyed by `(shareId, projectId)`, via `moneyHistoryPersonNameKey` --
     // review round 2's fix for the name-collapse bug (partner-1/partner-2
@@ -338,6 +355,55 @@ describe("assembleMoneyHistory — I/O matrix row: Available Balance spend, 'per
     const [entry] = assembleMoneyHistory(raw, UNRESTRICTED, {});
 
     expect(entry).toMatchObject({ id: "spend-person", type: "used_from_available_balance", to: "Suresh" });
+  });
+});
+
+describe("assembleMoneyHistory — I/O matrix row: Adjustment Netting (Story 5.3, FR33/FR34, AD-4)", () => {
+  it("produces an 'adjustment' entry -- from/to null, notes carries the netting's own notes, no paymentMode, date derived from createdAt", () => {
+    const netting = makeAdjustmentNetting({ id: "netting-1", amount: "75000" as Money, notes: "Agreed over call" });
+    const raw = emptyRaw({ adjustmentNettings: [netting] });
+
+    const [entry] = assembleMoneyHistory(raw, UNRESTRICTED, {});
+
+    expect(entry).toMatchObject({
+      id: "netting-1",
+      type: "adjustment",
+      date: "2026-09-20",
+      projectId: "project-a",
+      projectName: "Project A",
+      partyType: "partner",
+      shareId: "partner-1",
+      personName: "Partner A",
+      amount: "75000",
+      paymentMode: null,
+      from: null,
+      to: null,
+      notes: "Agreed over call",
+      status: "active",
+      reversalOfTransactionId: null,
+    });
+  });
+
+  it("is omitted entirely when raw.adjustmentNettings is undefined (non-breaking-additive-field convention, pre-Story-5.3 callers)", () => {
+    const raw = emptyRaw({ investmentTransactions: [makeInvestmentTransaction({ id: "inv-1" })] });
+    delete (raw as { adjustmentNettings?: unknown }).adjustmentNettings;
+
+    const entries = assembleMoneyHistory(raw, UNRESTRICTED, {});
+
+    expect(entries.map((e) => e.id)).toEqual(["inv-1"]);
+  });
+
+  it("sits alongside every other entry type in one unified, sorted list -- never merged/summed with money_added/money_withdrawn", () => {
+    const netting = makeAdjustmentNetting({ id: "netting-1", createdAt: "2026-09-25T00:00:00.000Z" });
+    const investment = makeInvestmentTransaction({ id: "inv-1", transactionDate: "2026-09-01" });
+    const raw = emptyRaw({ adjustmentNettings: [netting], investmentTransactions: [investment] });
+
+    const entries = assembleMoneyHistory(raw, UNRESTRICTED, {});
+
+    expect(entries.map((e) => ({ id: e.id, type: e.type }))).toEqual([
+      { id: "netting-1", type: "adjustment" },
+      { id: "inv-1", type: "money_added" },
+    ]);
   });
 });
 

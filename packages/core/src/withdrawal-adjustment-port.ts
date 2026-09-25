@@ -39,4 +39,12 @@ export interface WithdrawalAdjustmentPort {
    * `InvestmentAdjustmentPort.listByProjectId`'s identical shape.
    */
   listByProjectId(projectId: string): Promise<WithdrawalAdjustment[]>;
+
+  /**
+   * Every current `(partyType, shareId, projectId)` adjustment row across
+   * every Project, unfiltered, no pagination (Story 5.3, FR33/FR34) --
+   * mirrors `InvestmentAdjustmentPort.listAll()`'s identical shape one
+   * ledger over.
+   */
+  listAll(): Promise<WithdrawalAdjustment[]>;
 }

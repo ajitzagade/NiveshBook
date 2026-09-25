@@ -169,14 +169,38 @@ const REVERSAL_ENTRY = {
   reversalOfTransactionId: "inv-cancelled",
 };
 
+// Story 5.3 (FR33/FR34, AD-4): a netting audit record -- has no linked money
+// movement to trace, unlike every other entry type above.
+const ADJUSTMENT_ENTRY = {
+  id: "netting-1",
+  type: "adjustment",
+  date: "2026-09-20",
+  projectId: "project-a",
+  projectName: "Project A",
+  partyType: "partner",
+  shareId: "partner-1",
+  personName: "Partner One",
+  amount: "50000",
+  paymentMode: null,
+  from: null,
+  to: null,
+  notes: "Agreed over call",
+  status: "active",
+  reversalOfTransactionId: null,
+};
+
 beforeEach(() => {
   getMoneyHistory.mockReset();
   getMoneyTrail.mockReset();
   getTrailStartFromEntry.mockReset();
-  getTrailStartFromEntry.mockImplementation((entry: { type: string; id: string }) => ({
-    type: ENTRY_TYPE_TO_NODE_TYPE[entry.type],
-    id: entry.id,
-  }));
+  getTrailStartFromEntry.mockImplementation((entry: { type: string; id: string }) => {
+    // Mirrors the real `getTrailStartFromEntry`'s Story 5.3 behavior:
+    // `null` for an "adjustment" entry -- nothing to trace.
+    if (entry.type === "adjustment") {
+      return null;
+    }
+    return { type: ENTRY_TYPE_TO_NODE_TYPE[entry.type], id: entry.id };
+  });
   routerPush.mockReset();
   mockSearchParams = new URLSearchParams();
   listProjects.mockReset();
@@ -404,5 +428,40 @@ describe("MoneyHistoryPage -- trail navigation (Story 5.2, FR32)", () => {
     // round trip, not just that the URL-building logic strips two params.
     await waitFor(() => expect(screen.getByLabelText(/^project$/i)).toBeInTheDocument());
     expect(screen.getByLabelText(/^project$/i)).toHaveValue("project-b");
+  });
+});
+
+describe("MoneyHistoryPage -- 'adjustment' rows have no trace affordance (Story 5.3, FR33/FR34, AD-4)", () => {
+  it("renders the 'Adjustment' label for an adjustment-type entry", async () => {
+    getMoneyHistory.mockResolvedValue({ entries: [ADJUSTMENT_ENTRY] });
+
+    render(<MoneyHistoryPage />);
+
+    await waitFor(() => expect(screen.getByText("Adjustment")).toBeInTheDocument());
+  });
+
+  it("clicking an adjustment row does not navigate into trace mode -- nothing to trace", async () => {
+    const user = userEvent.setup();
+    getMoneyHistory.mockResolvedValue({ entries: [ADJUSTMENT_ENTRY] });
+
+    render(<MoneyHistoryPage />);
+
+    await waitFor(() => expect(screen.getByText("Adjustment")).toBeInTheDocument());
+    await user.click(screen.getByText("Adjustment"));
+
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  it("an adjustment row has no 'View this entry's money trail' title/hover affordance, unlike a traceable row", async () => {
+    getMoneyHistory.mockResolvedValue({ entries: [ONE_ENTRY, ADJUSTMENT_ENTRY] });
+
+    render(<MoneyHistoryPage />);
+
+    await waitFor(() => expect(screen.getByText("Adjustment")).toBeInTheDocument());
+
+    const adjustmentRow = screen.getByText("Adjustment").closest("tr");
+    const traceableRow = screen.getByText("Money Added").closest("tr");
+    expect(adjustmentRow).not.toHaveAttribute("title");
+    expect(traceableRow).toHaveAttribute("title", "View this entry's money trail");
   });
 });

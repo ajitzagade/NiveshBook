@@ -9,9 +9,11 @@ import { getDb } from "./client";
 import {
   createAvailableBalancePort,
   createAvailableBalanceSpendPort,
+  createInvestmentAdjustmentPort,
   createInvestmentTransactionPort,
   createMoneyMovementPort,
   createSubPartnerSharePort,
+  createWithdrawalAdjustmentPort,
   createWithdrawalDestinationAllocationPort,
   createWithdrawalTransactionPort,
 } from "./ports";
@@ -404,5 +406,54 @@ describe("Story 5.1 listAll() port methods (live Postgres)", () => {
 
     const all = await spendPort.listAll();
     expect(all.find((row) => row.id === result.spend.id)).toEqual(result.spend);
+  });
+
+  // Story 5.3 (FR33/FR34): the two `listAll()` additions to the existing
+  // Investment/Withdrawal Adjustment ports -- mirrors this suite's own
+  // Story 5.1 precedent exactly one level over (a plain, unfiltered
+  // `select().from(table)`, seeded via the already-proven `upsert()` write
+  // path).
+  it("investmentAdjustmentPort.listAll() includes a freshly-upserted row", async () => {
+    const port = createInvestmentAdjustmentPort();
+    const projectId = await seedProject();
+    const requirementId = uuidv7();
+    await getDb().insert(investmentRequirements).values({
+      id: requirementId,
+      projectId,
+      amount: "500000",
+      requirementDate: "2026-10-05",
+    });
+
+    const upserted = await port.upsert({
+      projectId,
+      partyType: "partner",
+      shareId: uuidv7(),
+      requirementId,
+      shouldPay: "500000" as Money,
+      actualPaid: "0" as Money,
+      adjustmentType: "pending",
+      adjustmentAmount: "500000" as Money,
+    });
+
+    const all = await port.listAll();
+    expect(all.find((row) => row.id === upserted.id)).toEqual(upserted);
+  });
+
+  it("withdrawalAdjustmentPort.listAll() includes a freshly-upserted row", async () => {
+    const port = createWithdrawalAdjustmentPort();
+    const projectId = await seedProject();
+
+    const upserted = await port.upsert({
+      projectId,
+      partyType: "partner",
+      shareId: uuidv7(),
+      canTake: "150000" as Money,
+      taken: "0" as Money,
+      adjustmentType: "keep_for_later",
+      adjustmentAmount: "150000" as Money,
+    });
+
+    const all = await port.listAll();
+    expect(all.find((row) => row.id === upserted.id)).toEqual(upserted);
   });
 });

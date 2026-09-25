@@ -82,7 +82,7 @@ describe("computeWithdrawalAdjustment", () => {
     const partners = [makePartner({ partnerId: "b", name: "B", sharePercent: "100" as Percent })];
 
     const result = await computeWithdrawalAdjustment(PROJECT_ID, "150000" as Money, partners, {}, {}, {
-      withdrawalAdjustments: { upsert, listByProjectId: vi.fn() },
+      withdrawalAdjustments: { upsert, listByProjectId: vi.fn(), listAll: vi.fn() },
     });
 
     const b = result.find((p) => p.partnerId === "b");
@@ -102,7 +102,7 @@ describe("computeWithdrawalAdjustment", () => {
       partners,
       {},
       takenByShareKey,
-      { withdrawalAdjustments: { upsert, listByProjectId: vi.fn() } },
+      { withdrawalAdjustments: { upsert, listByProjectId: vi.fn(), listAll: vi.fn() } },
     );
 
     const a = result.find((p) => p.partnerId === "a");
@@ -120,7 +120,7 @@ describe("computeWithdrawalAdjustment", () => {
       partners,
       {},
       takenByShareKey,
-      { withdrawalAdjustments: { upsert, listByProjectId: vi.fn() } },
+      { withdrawalAdjustments: { upsert, listByProjectId: vi.fn(), listAll: vi.fn() } },
     );
 
     const a = result.find((p) => p.partnerId === "a");
@@ -141,7 +141,7 @@ describe("computeWithdrawalAdjustment", () => {
       partners,
       {},
       takenByShareKey,
-      { withdrawalAdjustments: { upsert, listByProjectId: vi.fn() } },
+      { withdrawalAdjustments: { upsert, listByProjectId: vi.fn(), listAll: vi.fn() } },
     );
 
     const a = result.find((p) => p.partnerId === "a");
@@ -154,7 +154,7 @@ describe("computeWithdrawalAdjustment", () => {
     const partners = [makePartner({ partnerId: "c", name: "C", sharePercent: "100" as Percent })];
 
     const result = await computeWithdrawalAdjustment(PROJECT_ID, "100000" as Money, partners, {}, {}, {
-      withdrawalAdjustments: { upsert, listByProjectId: vi.fn() },
+      withdrawalAdjustments: { upsert, listByProjectId: vi.fn(), listAll: vi.fn() },
     });
 
     const c = result.find((p) => p.partnerId === "c");
@@ -167,7 +167,7 @@ describe("computeWithdrawalAdjustment", () => {
     const partners = [makePartner({ partnerId: "c", name: "C", sharePercent: "100" as Percent })];
 
     const noneRecorded = await computeWithdrawalAdjustment(PROJECT_ID, "100000" as Money, partners, {}, {}, {
-      withdrawalAdjustments: { upsert: makeUpsertMock(), listByProjectId: vi.fn() },
+      withdrawalAdjustments: { upsert: makeUpsertMock(), listByProjectId: vi.fn(), listAll: vi.fn() },
     });
     const explicitZero = await computeWithdrawalAdjustment(
       PROJECT_ID,
@@ -175,7 +175,7 @@ describe("computeWithdrawalAdjustment", () => {
       partners,
       {},
       { [withdrawalShareKey("partner", "c")]: ["0"].map(toMoney) },
-      { withdrawalAdjustments: { upsert: makeUpsertMock(), listByProjectId: vi.fn() } },
+      { withdrawalAdjustments: { upsert: makeUpsertMock(), listByProjectId: vi.fn(), listAll: vi.fn() } },
     );
 
     const relevant = (adjustment: (typeof noneRecorded)[number]) => ({
@@ -208,7 +208,7 @@ describe("computeWithdrawalAdjustment", () => {
       partners,
       subsByPartnerId,
       takenByShareKey,
-      { withdrawalAdjustments: { upsert, listByProjectId: vi.fn() } },
+      { withdrawalAdjustments: { upsert, listByProjectId: vi.fn(), listAll: vi.fn() } },
     );
 
     const a = result.find((p) => p.partnerId === "a");
@@ -233,7 +233,7 @@ describe("computeWithdrawalAdjustment", () => {
     };
 
     await computeWithdrawalAdjustment(PROJECT_ID, "1000000" as Money, partners, subsByPartnerId, {}, {
-      withdrawalAdjustments: { upsert, listByProjectId: vi.fn() },
+      withdrawalAdjustments: { upsert, listByProjectId: vi.fn(), listAll: vi.fn() },
     });
 
     expect(upsert).toHaveBeenCalledTimes(3);
@@ -253,10 +253,10 @@ describe("computeWithdrawalAdjustment", () => {
     const takenByShareKey = { [withdrawalShareKey("partner", "a")]: ["30000"].map(toMoney) };
 
     await computeWithdrawalAdjustment(PROJECT_ID, "150000" as Money, partners, {}, takenByShareKey, {
-      withdrawalAdjustments: { upsert, listByProjectId: vi.fn() },
+      withdrawalAdjustments: { upsert, listByProjectId: vi.fn(), listAll: vi.fn() },
     });
     await computeWithdrawalAdjustment(PROJECT_ID, "150000" as Money, partners, {}, takenByShareKey, {
-      withdrawalAdjustments: { upsert, listByProjectId: vi.fn() },
+      withdrawalAdjustments: { upsert, listByProjectId: vi.fn(), listAll: vi.fn() },
     });
 
     expect(upsert).toHaveBeenCalledTimes(2);
@@ -273,7 +273,7 @@ describe("computeWithdrawalAdjustment", () => {
       partners,
       {},
       { [withdrawalShareKey("partner", "a")]: ["50000"].map(toMoney) },
-      { withdrawalAdjustments: { upsert, listByProjectId: vi.fn() } },
+      { withdrawalAdjustments: { upsert, listByProjectId: vi.fn(), listAll: vi.fn() } },
     );
     const second = await computeWithdrawalAdjustment(
       PROJECT_ID,
@@ -281,7 +281,7 @@ describe("computeWithdrawalAdjustment", () => {
       partners,
       {},
       { [withdrawalShareKey("partner", "a")]: ["50000", "100000"].map(toMoney) },
-      { withdrawalAdjustments: { upsert, listByProjectId: vi.fn() } },
+      { withdrawalAdjustments: { upsert, listByProjectId: vi.fn(), listAll: vi.fn() } },
     );
 
     expect(first[0]?.taken).toBe("50000");
@@ -298,7 +298,7 @@ describe("computeWithdrawalAdjustment", () => {
 
     await expect(
       computeWithdrawalAdjustment(PROJECT_ID, "100000" as Money, partners, {}, {}, {
-        withdrawalAdjustments: { upsert, listByProjectId: vi.fn() },
+        withdrawalAdjustments: { upsert, listByProjectId: vi.fn(), listAll: vi.fn() },
       }),
     ).rejects.toThrow(PartnerSharesNotFullyAllocatedError);
     expect(upsert).not.toHaveBeenCalled();
@@ -315,7 +315,7 @@ describe("computeWithdrawalAdjustment", () => {
 
     await expect(
       computeWithdrawalAdjustment(PROJECT_ID, "100000" as Money, partners, subsByPartnerId, {}, {
-        withdrawalAdjustments: { upsert, listByProjectId: vi.fn() },
+        withdrawalAdjustments: { upsert, listByProjectId: vi.fn(), listAll: vi.fn() },
       }),
     ).rejects.toThrow(CanTakeSubPartnerSharesOverAllocatedError);
     expect(upsert).not.toHaveBeenCalled();
@@ -341,7 +341,7 @@ describe("computeWithdrawalAdjustment", () => {
       partners,
       subsByPartnerId,
       takenByShareKey,
-      { withdrawalAdjustments: { upsert, listByProjectId: vi.fn() } },
+      { withdrawalAdjustments: { upsert, listByProjectId: vi.fn(), listAll: vi.fn() } },
     );
 
     const a = result.find((p) => p.partnerId === "a");
@@ -378,7 +378,7 @@ describe("computeWithdrawalAdjustment", () => {
     }));
 
     const result = await computeWithdrawalAdjustment(PROJECT_ID, "500000" as Money, partners, {}, {}, {
-      withdrawalAdjustments: { upsert: persistingUpsert, listByProjectId: vi.fn() },
+      withdrawalAdjustments: { upsert: persistingUpsert, listByProjectId: vi.fn(), listAll: vi.fn() },
     });
 
     expect(result[0]?.taken).toBe("999999");

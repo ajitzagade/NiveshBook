@@ -42,6 +42,9 @@ import {
   type AvailableBalancePort,
   type AvailableBalanceSpendPort,
   type RecordAvailableBalanceSpendInput,
+  AdjustmentNettingIdempotencyKeyConflictError,
+  type AdjustmentNettingPort,
+  type RecordAdjustmentNettingInput,
 } from "@niveshbook/core";
 import type {
   User,
@@ -65,6 +68,7 @@ import type {
   AuditLogEntry,
   AvailableBalance,
   AvailableBalanceSpend,
+  AdjustmentNetting,
 } from "@niveshbook/types";
 import type { Database } from "./client";
 import { getDb } from "./client";
@@ -84,6 +88,7 @@ import {
   moneyMovements,
   availableBalances,
   availableBalanceSpends,
+  adjustmentNettings,
   auditLog,
   type SessionRow,
   type UserRow,
@@ -100,6 +105,7 @@ import {
   type MoneyMovementRow,
   type AvailableBalanceRow,
   type AvailableBalanceSpendRow,
+  type AdjustmentNettingRow,
   type AuditLogRow,
 } from "./schema";
 
@@ -375,6 +381,21 @@ function toAvailableBalanceSpend(row: AvailableBalanceSpendRow): AvailableBalanc
     personName: row.personName,
     amount: row.amount as Money,
     notes: row.notes,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+/** Converts an `adjustment_nettings` row -- mirrors `toAvailableBalanceSpend`'s identical shape one table over (Story 5.3). */
+function toAdjustmentNetting(row: AdjustmentNettingRow): AdjustmentNetting {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    partyType: row.partyType as AdjustmentNetting["partyType"],
+    shareId: row.shareId,
+    investmentRequirementId: row.investmentRequirementId,
+    amount: row.amount as Money,
+    notes: row.notes,
+    actorUserId: row.actorUserId,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -1523,6 +1544,11 @@ export function createWithdrawalAdjustmentPort(
         .where(eq(withdrawalAdjustments.projectId, projectId));
       return rows.map(toWithdrawalAdjustment);
     },
+    /** Story 5.3 (FR33/FR34) -- mirrors `createInvestmentAdjustmentPort.listAll`'s identical shape one ledger over. */
+    async listAll() {
+      const rows = await database.select().from(withdrawalAdjustments);
+      return rows.map(toWithdrawalAdjustment);
+    },
   };
 }
 
@@ -2061,6 +2087,11 @@ export function createInvestmentAdjustmentPort(
         .select()
         .from(investmentAdjustments)
         .where(eq(investmentAdjustments.projectId, projectId));
+      return rows.map(toInvestmentAdjustment);
+    },
+    /** Story 5.3 (FR33/FR34) -- mirrors `createInvestmentTransactionPort.listAll`'s identical Story 5.1 shape one ledger over. */
+    async listAll() {
+      const rows = await database.select().from(investmentAdjustments);
       return rows.map(toInvestmentAdjustment);
     },
   };
@@ -2811,6 +2842,135 @@ export function createAvailableBalanceSpendPort(
     async listAll() {
       const rows = await database.select().from(availableBalanceSpends);
       return rows.map(toAvailableBalanceSpend);
+    },
+  };
+}
+
+/**
+ * `true` if `existing` (an `adjustment_nettings` row found by
+ * `idempotencyKey`) actually represents the *same* logical netting request
+ * as `input` -- mirrors `matchesAvailableBalanceSpendRequest`'s exact
+ * rationale one financial-write table over. `amount` is compared via
+ * `moneyEquals` (decimal-value-aware), never `===` -- `existing.amount` came
+ * back from Postgres's `numeric(14,2)` column, which round-trips a stored
+ * value at its full declared scale, while `input.amount` is the
+ * freshly-submitted, unreformatted value.
+ */
+export function matchesAdjustmentNettingRequest(
+  existing: AdjustmentNetting,
+  input: RecordAdjustmentNettingInput,
+): boolean {
+  return (
+    existing.projectId === input.projectId &&
+    existing.partyType === input.partyType &&
+    existing.shareId === input.shareId &&
+    existing.investmentRequirementId === input.investmentRequirementId &&
+    moneyEquals(existing.amount, input.amount) &&
+    (existing.notes ?? null) === (input.notes ?? null)
+  );
+}
+
+/**
+ * Drizzle-backed implementation of `packages/core`'s `AdjustmentNettingPort`
+ * (Story 5.3, FR33/FR34, AD-4/AD-5) -- mirrors
+ * `createAvailableBalanceSpendPort.recordSpend`'s exact
+ * check-first-then-transact idempotency structure (`idempotencyKey`/
+ * `actorUserId` are separate parameters, not fields on `input`), simpler
+ * since a netting write never touches a second ledger table -- it is a
+ * single-row insert plus its paired `audit_log` row, nothing else (AD-4:
+ * `investment_adjustments`/`withdrawal_adjustments` are never read-to-
+ * compute-or-offset here, and never written to by this port).
+ *
+ * `recordNetting`'s idempotency handling, in order (mirrors
+ * `createWithdrawalTransactionPort.recordTransaction`'s identical shape):
+ * 1. `SELECT` by `idempotencyKey` first -- if a row already exists AND it
+ *    `matchesAdjustmentNettingRequest` the current `input`, return it
+ *    immediately (`created: false`), no transaction attempted at all. If a
+ *    row exists but does NOT match, this is a genuine key collision between
+ *    two unrelated requests -- throw `AdjustmentNettingIdempotencyKeyConflictError`.
+ * 2. Otherwise (no existing row), insert the netting row and its paired
+ *    `audit_log` row together inside one `database.transaction()` call
+ *    (`created: true`).
+ * 3. If that insert throws because of the `idempotency_key` UNIQUE
+ *    constraint (SQL state `23505`) -- a concurrent double-submit that raced
+ *    step 1 -- catch it, re-`SELECT` by `idempotencyKey`, and apply the same
+ *    `matchesAdjustmentNettingRequest` check to the winning row: match ->
+ *    return it (`created: false`) instead of propagating the error;
+ *    mismatch -> `AdjustmentNettingIdempotencyKeyConflictError`. Any other
+ *    error still propagates unchanged.
+ */
+export function createAdjustmentNettingPort(database: Database = getDb()): AdjustmentNettingPort {
+  async function findByIdempotencyKey(idempotencyKey: string): Promise<AdjustmentNetting | null> {
+    const rows = await database
+      .select()
+      .from(adjustmentNettings)
+      .where(eq(adjustmentNettings.idempotencyKey, idempotencyKey))
+      .limit(1);
+    const row = rows[0];
+    return row ? toAdjustmentNetting(row) : null;
+  }
+
+  return {
+    async recordNetting(input, idempotencyKey, actorUserId) {
+      const existing = await findByIdempotencyKey(idempotencyKey);
+      if (existing) {
+        if (!matchesAdjustmentNettingRequest(existing, input)) {
+          throw new AdjustmentNettingIdempotencyKeyConflictError();
+        }
+        return { netting: existing, created: false };
+      }
+
+      try {
+        const inserted = await database.transaction(async (tx) => {
+          const [row] = await tx
+            .insert(adjustmentNettings)
+            .values({
+              id: uuidv7(),
+              projectId: input.projectId,
+              partyType: input.partyType,
+              shareId: input.shareId,
+              investmentRequirementId: input.investmentRequirementId,
+              amount: input.amount,
+              notes: input.notes,
+              idempotencyKey,
+              actorUserId,
+            })
+            .returning();
+          if (!row) {
+            throw new Error("Failed to record adjustment netting");
+          }
+
+          await tx.insert(auditLog).values({
+            id: uuidv7(),
+            entityType: "adjustment_netting",
+            entityId: row.id,
+            action: "create",
+            actorUserId,
+            oldValue: null,
+            newValue: row,
+            reason: null,
+          });
+
+          return row;
+        });
+
+        return { netting: toAdjustmentNetting(inserted), created: true };
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          const winner = await findByIdempotencyKey(idempotencyKey);
+          if (winner) {
+            if (!matchesAdjustmentNettingRequest(winner, input)) {
+              throw new AdjustmentNettingIdempotencyKeyConflictError();
+            }
+            return { netting: winner, created: false };
+          }
+        }
+        throw error;
+      }
+    },
+    async listAll() {
+      const rows = await database.select().from(adjustmentNettings);
+      return rows.map(toAdjustmentNetting);
     },
   };
 }

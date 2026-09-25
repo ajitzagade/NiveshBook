@@ -20,6 +20,7 @@ import {
   createWithdrawalDestinationAllocationPort,
   createMoneyMovementPort,
   createAvailableBalanceSpendPort,
+  createAdjustmentNettingPort,
 } from "@niveshbook/db";
 import { readSessionToken } from "@/lib/session";
 import { UNAUTHENTICATED_MESSAGE, FORBIDDEN_MESSAGE } from "@/lib/users";
@@ -129,6 +130,7 @@ export async function GET(request: NextRequest) {
   const withdrawalDestinationAllocationPort = createWithdrawalDestinationAllocationPort();
   const moneyMovementPort = createMoneyMovementPort();
   const availableBalanceSpendPort = createAvailableBalanceSpendPort();
+  const adjustmentNettingPort = createAdjustmentNettingPort();
 
   const [
     allPartnerShares,
@@ -139,6 +141,7 @@ export async function GET(request: NextRequest) {
     withdrawalDestinationAllocations,
     moneyMovements,
     availableBalanceSpends,
+    adjustmentNettings,
   ] = await Promise.all([
     listAllCurrentPartnerShares({ partnerShares: partnerSharePort }),
     listAllCurrentSubPartnerShares({ subPartnerShares: subPartnerSharePort }),
@@ -148,6 +151,10 @@ export async function GET(request: NextRequest) {
     withdrawalDestinationAllocationPort.listAll(),
     moneyMovementPort.listAll(),
     availableBalanceSpendPort.listAll(),
+    // Story 5.3 (FR33/FR34, AD-4): every recorded netting, so it shows up
+    // in the unified list as an `"adjustment"`-type entry
+    // (`assembleMoneyHistory`'s new `buildAdjustmentNettingEntries` branch).
+    adjustmentNettingPort.listAll(),
   ]);
 
   const scope = resolveMoneyHistoryScope(actor.role, actor.id, allPartnerShares, allSubPartnerShares);
@@ -178,6 +185,7 @@ export async function GET(request: NextRequest) {
       withdrawalDestinationAllocations,
       moneyMovements,
       availableBalanceSpends,
+      adjustmentNettings,
       projectNamesById,
       partnerNamesById,
       subPartnerNamesById,

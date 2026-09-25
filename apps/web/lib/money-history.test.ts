@@ -80,4 +80,21 @@ describe("getTrailStartFromEntry (Story 5.2, FR32)", () => {
       expect(getTrailStartFromEntry(entry)).toEqual({ type: nodeType, id: "row-id" });
     },
   );
+
+  // Story 5.3 (FR33/FR34, AD-4): an "adjustment" entry has no linked money
+  // movement to trace -- returns `null` rather than mapping to a wrong/
+  // synthetic trail node.
+  it("returns null for an 'adjustment' entry -- nothing to trace", () => {
+    const entry = makeEntry({ id: "netting-1", type: "adjustment" });
+
+    expect(getTrailStartFromEntry(entry)).toBeNull();
+  });
+});
+
+describe("MONEY_HISTORY_ENTRY_TYPE_TO_TRAIL_NODE_TYPE excludes 'adjustment' (Story 5.3, FR33/FR34)", () => {
+  it("'adjustment' is not a key -- confirms the exhaustiveness guard forces exclusion, not a silently-wrong mapping", () => {
+    expect(Object.prototype.hasOwnProperty.call(MONEY_HISTORY_ENTRY_TYPE_TO_TRAIL_NODE_TYPE, "adjustment")).toBe(
+      false,
+    );
+  });
 });

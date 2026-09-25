@@ -162,6 +162,9 @@ function makeFakeInvestmentAdjustmentPort(): InvestmentAdjustmentPort {
     async listByProjectId(projectId: string) {
       return [...store.values()].filter((row) => row.projectId === projectId);
     },
+    async listAll() {
+      return [...store.values()];
+    },
   };
 }
 

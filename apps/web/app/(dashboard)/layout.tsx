@@ -40,8 +40,10 @@ const ICON_SIZE = 14;
  * already works) rather than staying permanently inert. `SidebarNav` still
  * highlights each correctly when you're actually on a Project's own
  * Shares/Add Money/Withdraw Money/Available Balance page, independent of
- * this link target. The rest render icon+label with no destination (inert,
- * not a dead link) until their stories land.
+ * this link target. Adjust Next Time (Story 5.3) and Money History (Story
+ * 5.1) are both deliberately NOT Project-scoped, so each links straight to
+ * its own page instead. Reports still renders icon+label with no
+ * destination (inert, not a dead link) until its story lands.
  */
 const NAV_ITEMS: readonly SidebarNavItem[] = [
   { key: "home", label: "Home", icon: <Home size={ICON_SIZE} />, href: "/home" },
@@ -50,7 +52,20 @@ const NAV_ITEMS: readonly SidebarNavItem[] = [
   { key: "addMoney", label: "Add Money", icon: <Plus size={ICON_SIZE} />, href: "/projects" },
   { key: "withdrawMoney", label: "Withdraw Money", icon: <Minus size={ICON_SIZE} />, href: "/projects" },
   { key: "availableBalance", label: "Available Balance", icon: <Wallet size={ICON_SIZE} />, href: "/projects" },
-  { key: "adjustNextTime", label: "Adjust Next Time", icon: <RotateCcw size={ICON_SIZE} /> },
+  // Story 5.3 (FR33/FR34): activated -- mirrors Money History's identical
+  // Story 5.1 rationale immediately below: not Project-scoped (spans every
+  // Project a viewer is linked to), so it links straight to its own page
+  // rather than to `/projects`. `SidebarNav.isActive` highlights it on that
+  // exact route. Reachable via THIS shell only for Owner/Admin today
+  // (`requireOwnerAdminSession()` below, unchanged) -- the API itself is
+  // already correctly scoped for all three roles (spec-5-3's Decisions #3);
+  // a Partner/Sub-partner's own reachable path to it is a later story's job.
+  {
+    key: "adjustNextTime",
+    label: "Adjust Next Time",
+    icon: <RotateCcw size={ICON_SIZE} />,
+    href: "/adjust-next-time",
+  },
   // Story 5.1 (FR31): activated -- unlike Partner Shares/Add Money/Withdraw
   // Money/Available Balance's own "no current Project to jump into yet"
   // rationale above, Money History is deliberately NOT Project-scoped (it

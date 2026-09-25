@@ -826,3 +826,64 @@ export const moneyMovements = pgTable(
 );
 
 export type MoneyMovementRow = typeof moneyMovements.$inferSelect;
+
+/**
+ * Story 5.3 (FR33/FR34): a pure AUDIT RECORD of an Owner/Admin's explicit
+ * decision to net an amount between one person's Investment Adjustment (at
+ * a specific funding requirement) and their Withdrawal Adjustment (at this
+ * Project) -- AD-4's "never a side effect of either cycle's calculation"
+ * literally: `investment_adjustments`/`withdrawal_adjustments` themselves
+ * are NEVER written to as a result of a row landing here, staying exactly as
+ * freshly computed from Should Pay/Can Take. This table's only effect is
+ * existing, permanently, as a transparent, audited fact.
+ *
+ * `investmentRequirementId` anchors the record to the specific funding round
+ * whose Investment Adjustment was netted -- `investment_adjustments` is
+ * keyed by `(partyType, shareId, projectId, requirementId)` (a person can
+ * have several across different funding rounds within one Project), while
+ * `withdrawal_adjustments` is Project-scoped only (no requirement
+ * equivalent, Story 4.3's design) -- so `projectId` alone identifies which
+ * Withdrawal Adjustment row this netted against; the route layer confirms
+ * both referenced rows actually exist before writing here (never trusted
+ * from the client alone). `shareId`/`partyType` are the *stable*
+ * `partner_shares.partnerId`/`subpartner_shares.subPartnerId` (disambiguated
+ * by `partyType`), never `users.id` (AD-4) -- deliberately **not** a foreign
+ * key, mirroring every other share-keyed table in this schema (neither share
+ * table has a uniqueness constraint on that stable id to reference).
+ * `idempotencyKey` is UNIQUE at the DB level, mirroring
+ * `withdrawal_transactions.idempotencyKey`'s identical precedent -- the
+ * actual double-submit protection mechanism (AD-5), not merely an
+ * application-layer check.
+ */
+export const adjustmentNettings = pgTable(
+  "adjustment_nettings",
+  {
+    id: uuid("id").primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    partyType: text("party_type").notNull(),
+    shareId: uuid("share_id").notNull(),
+    investmentRequirementId: uuid("investment_requirement_id")
+      .notNull()
+      .references(() => investmentRequirements.id, { onDelete: "cascade" }),
+    amount: numeric("amount", { precision: 14, scale: 2 }).notNull(),
+    notes: text("notes"),
+    idempotencyKey: text("idempotency_key").notNull().unique(),
+    actorUserId: uuid("actor_user_id")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // Money History (Story 5.1's `assembleMoneyHistory`, extended this
+    // story) and this story's own `AdjustmentNettingPort.listAll()`/route-
+    // layer existence checks all benefit from a project-scoped lookup path
+    // -- mirrors every other financial-write table's identical `project_id`
+    // index.
+    index("adjustment_nettings_project_id_idx").on(table.projectId),
+    index("adjustment_nettings_share_id_project_id_idx").on(table.shareId, table.projectId),
+  ],
+);
+
+export type AdjustmentNettingRow = typeof adjustmentNettings.$inferSelect;
