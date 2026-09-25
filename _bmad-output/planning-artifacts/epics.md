@@ -183,8 +183,8 @@ Owner/Admin can process withdrawals flexibly per partner (Can Take / Take Now / 
 **FRs covered:** FR21, FR22, FR23, FR24, FR25, FR26, FR27, FR28, FR29, FR30
 
 ### Epic 5: The Full Picture — History, Adjustments, Dashboards & Reports
-Everyone — Owner, Partner, Sub-partner — can see their complete, trustworthy financial picture: role-scoped dashboards, a plain-language Money History with fully-linked, navigable trails, the Adjust Next Time summary (investment and withdrawal adjustments side by side, independent, never auto-netted), permission-scoped reports with filtering and export, and — for Owner/Admin — the audit-history view behind any edited transaction. Standalone: read surfaces over data created in Epics 2–4; delivers the "can I trust this system" payoff the whole product promises.
-**FRs covered:** FR31, FR32, FR33, FR34, FR35, FR36, FR37, FR38, FR39, FR40 (viewing surface for FR41, FR42's audit mechanism, built in Epic 3)
+Everyone — Owner, Partner, Sub-partner — can see their complete, trustworthy financial picture: role-scoped dashboards, a plain-language Money History with fully-linked, navigable trails, the Adjust Next Time summary (investment and withdrawal adjustments side by side, independent, never auto-netted), permission-scoped reports with filtering and export, a per-Project/per-Partner structure diagram switchable between ownership %, actual amount, and money flow (Story 5.10, 2026-09-25 addition), and — for Owner/Admin — the audit-history view behind any edited transaction. Standalone: read surfaces over data created in Epics 2–4; delivers the "can I trust this system" payoff the whole product promises.
+**FRs covered:** FR31, FR32, FR33, FR34, FR35, FR36, FR37, FR38, FR39, FR40 (viewing surface for FR41, FR42's audit mechanism, built in Epic 3); Story 5.10 has no FR number (added after the original PRD)
 
 **Implementation notes / file-overlap review:** Epics 3 and 4 both write through the same `packages/core` financial-mutation path (AD-2, AD-5, AD-6) — kept as two epics rather than merged because they deliver genuinely separate user capabilities (funding vs. withdrawing) and Epic 4 has a materially different shape (multi-destination split, cross-project auto-linking) that benefits from Epic 3's transactional/audit pattern already being proven first. Epic 5's five FR clusters (History, Adjustments, Dashboards, Reports) are bundled into one epic because they're all thin read-surfaces over the same underlying data with heavy UI/file overlap (`apps/web` dashboard and list components) and no epic among them meaningfully stands alone without the others existing conceptually — splitting them would just be technical-layer slicing of the same "see your data" capability.
 
@@ -1106,7 +1106,51 @@ So that **I can trust that nothing changed silently**.
 **When** permitted per FR41
 **Then** they see it; viewing someone else's returns 403
 
+### Story 5.10: Ownership & Money-Flow Structure Diagram
+
+**2026-09-25 addition** — not in the original PRD's FR31-42 range; added per founder request after reviewing a reference diagram (Project → Partners → Sub-partners, boxes connected by lines, each node showing its Share %). Confirmed via a fresh check of `EXPERIENCE.md`/`DESIGN.md`/`epics.md` that no tree/graph ownership view was previously spec'd anywhere — Partner Shares (Epic 2, done) only ever specified a flat indented list (`↳` prefix, one level) with a running-total bar, per `EXPERIENCE.md`'s Component Patterns table.
+
+The founder clarified the reference image is illustrative only: the same box/tree structure must support **three user-selectable view modes**, not just the static percentage shown in the reference:
+1. **Percentage** — each node shows Share % (the reference image's own mode) — from `PARTNER_SHARE`/`SUB_PARTNER_SHARE`, no new schema.
+2. **Actual Amount** — each node shows that Partner/Sub-partner's actual invested amount to date, reusing Story 3.4's existing per-person Actual Paid computation (`investment-adjustment.ts`) rather than a new aggregation.
+3. **Money Flow** — each node/edge shows the *movement* of money over time (investment in, withdrawal out, cross-project movement per Story 4.8), on the same tree skeleton. This mode is the one place this story legitimately overlaps the Money History "trail"/"Trail Quick View" (`DESIGN.md.trail-node`/`trail-branch`) — it should reuse that existing trail data/visual language (box+connector styling) rather than reinvent it, but stays a distinct component from Money History's own trail screen: this is "show me flow *on the ownership tree*," not a replacement for Money History's own chronological trail.
+
+As an **Owner/Admin (or a Partner/Sub-partner viewing their own authorized structure)**,
+I want **a visual diagram of a Project's Partner/Sub-partner structure, switchable between Share %, actual amount invested, and money flow**,
+So that **I can see whichever picture of the ownership structure I actually need, at a glance, instead of reconstructing it from a flat list or a separate report**.
+
+**Acceptance Criteria:**
+
+**Given** a Project with Partner Shares (and some Partners with Sub-partner Shares)
+**When** an authorized user opens its structure diagram
+**Then** it renders as connected boxes: the Project as the root, each Partner as a first-level node, and any Sub-partners as second-level nodes branching from their parent Partner — labeled per whichever view mode is currently selected
+
+**Given** the diagram is open
+**When** the user switches the view-mode toggle (Percentage / Actual Amount / Money Flow)
+**Then** every node relabels accordingly without changing the tree's shape or scope — switching modes is purely a display change, never a different underlying selection
+
+**Given** Percentage mode, and a Partner who has allocated part of their Share % to Sub-partners
+**When** their node renders
+**Then** it's labeled with their *retained* % ("own, after sub-split"), distinct from a Sub-partner's node, labeled as that Sub-partner's % *of the whole Project* — mirroring `formatSharePercent`/`retainedMessage`'s existing display-only computation from Story 2.3, never a newly stored value
+
+**Given** Actual Amount mode
+**When** a node renders
+**Then** it shows that person's actual invested amount to date for this Project, sourced from the same computation Story 3.4's Adjustment chip already uses — no new aggregation logic
+
+**Given** Money Flow mode
+**When** a node or connecting edge renders
+**Then** it reflects real recorded movement (investment/withdrawal/cross-project, per Epics 3-4), reusing the existing trail data rather than a new computation, and clearly indicates direction (in vs. out)
+
+**Given** the user wants to choose what they're looking at
+**When** they pick a Project from a selector
+**Then** the diagram scopes to that Project's whole structure; **when** they instead pick (or drill into) one specific Partner
+**Then** the diagram scopes down to just that Partner and their own Sub-partners, not the Project's other Partners — independent of which view mode is active
+
+**Given** FR7/FR8/AD-1's existing visibility rules (Story 2.4/2.6's precedent: a Partner's Sub-partner split is private)
+**When** anyone other than Owner/Admin or that Partner themselves requests a Partner's scoped diagram, in any view mode
+**Then** it's refused (403) exactly like Story 2.3's existing Sub-partner-list gate — this diagram is a new read surface over existing data, it never loosens an existing privacy rule
+
 ## Epic 5 Summary
 
-9 stories, covering FR31–FR40 and the viewing surface for FR41/FR42. All FRs assigned to Epic 5 are addressed.
+10 stories, covering FR31–FR40, the viewing surface for FR41/FR42, and Story 5.10 (2026-09-25 founder addition, no FR number). All FRs assigned to Epic 5 are addressed.
 

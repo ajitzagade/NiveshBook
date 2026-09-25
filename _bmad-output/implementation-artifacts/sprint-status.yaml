@@ -91,4 +91,5 @@ development_status:
   5-7-permission-scoped-reports: backlog
   5-8-report-export: backlog
   5-9-audit-history-viewing-surface: backlog
+  5-10-ownership-structure-diagram: backlog # 2026-09-25 addition -- see epics.md
   epic-5-retrospective: optional
