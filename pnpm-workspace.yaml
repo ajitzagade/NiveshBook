@@ -3,8 +3,20 @@ packages:
   - "packages/*"
 overrides:
   esbuild@<0.25.0: ">=0.25.0"
+  # Story 5.8: exceljs@4.4.0 pins uuid@^8.3.0, whose v4() has a moderate,
+  # already-patched buffer-bounds-check finding (GHSA-w5hq-g745-h8pq) that
+  # `pnpm audit` flags. uuid's v4() call shape (`uuidv4()`, no args) is
+  # unchanged all the way through v11, so this override is safe -- same
+  # "pin the transitive dependency forward to the patched range" precedent
+  # as the existing esbuild@<0.25.0 override for drizzle-kit.
+  uuid@<11.1.1: ">=11.1.1"
 allowBuilds:
   argon2: true
+  # Story 5.8: core-js is jspdf's optional canvg (SVG-to-canvas) dependency
+  # -- unused here (this story's PDF export only renders tables via
+  # jspdf-autotable, never SVG/canvas content). Its postinstall script only
+  # prints a donation banner, nothing this codebase needs to run.
+  core-js: false
   esbuild: true
   sharp: true
   unrs-resolver: true

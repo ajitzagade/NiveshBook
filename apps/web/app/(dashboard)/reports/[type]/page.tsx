@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
-import { Search } from "lucide-react";
+import { ChevronDown, Search } from "lucide-react";
 import type { MoneyHistoryEntry, Project } from "@niveshbook/types";
 import type {
   AvailableBalanceReportRow,
@@ -15,6 +15,10 @@ import {
   Amount,
   Button,
   Card,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
   EmptyState,
   Field,
   Input,
@@ -31,6 +35,7 @@ import {
 import { getReport, type ReportFiltersInput, type ReportRow } from "@/lib/reports";
 import { getReportDefinition, type ReportSlug } from "@/lib/report-catalog";
 import { ENTRY_TYPE_LABELS } from "@/lib/money-trail-view";
+import { exportReportToExcel, exportReportToPdf } from "@/lib/report-export";
 import { listProjects } from "@/lib/projects";
 
 const PAYMENT_MODE_LABELS: Record<string, string> = {
@@ -373,13 +378,64 @@ export default function ReportViewerPage() {
     setAppliedFilters(EMPTY_FILTERS);
   }
 
+  // Story 5.8 (FR40): export always operates on the CURRENTLY loaded,
+  // CURRENTLY filtered `state.rows` -- never a fresh fetch, never an
+  // unfiltered one (spec-5-8 Decisions #1/#8). Disabled whenever nothing is
+  // loaded/loaded-but-empty (spec-5-8's I/O matrix) -- exporting nothing is
+  // not a valid action.
+  const canExport = state.status === "loaded" && state.rows.length > 0;
+
+  function handleExportExcel() {
+    if (state.status !== "loaded" || state.rows.length === 0) return;
+    void exportReportToExcel(slug as ReportSlug, state.rows);
+  }
+
+  function handleExportPdf() {
+    if (state.status !== "loaded" || state.rows.length === 0) return;
+    void exportReportToPdf(slug as ReportSlug, state.rows);
+  }
+
   const title = definition?.name ?? "Report";
   const description = definition?.description ?? "";
   const supportsDateFilter = definition?.supportsDateFilter ?? false;
 
   return (
     <div>
-      <PageHeader title={title} description={description} />
+      <PageHeader
+        title={title}
+        description={description}
+        action={
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              {/*
+                A raw `<button>`, not the shared `Button` component --
+                mirrors `ProjectSwitcher.tsx`'s own established precedent
+                for composing a Radix `DropdownMenuTrigger asChild` child
+                (this codebase's only other `DropdownMenu` usage so far):
+                `Button` is a plain function component with no
+                `forwardRef`, and Radix's `Slot`-based `asChild` cloning
+                needs a ref-forwarding host element. Reuses the exact same
+                `nb-btn`/`nb-btn-ghost` CSS classes `Button`'s ghost variant
+                itself emits (`packages/ui/src/styles/tokens.css`), so this
+                stays pixel-consistent with every other ghost button rather
+                than inventing new styling.
+              */}
+              <button
+                type="button"
+                disabled={!canExport}
+                className="nb-btn nb-btn-ghost inline-flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Export
+                <ChevronDown size={14} />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={handleExportExcel}>Export as Excel</DropdownMenuItem>
+              <DropdownMenuItem onSelect={handleExportPdf}>Export as PDF</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        }
+      />
 
       <Card className="mb-5">
         <form onSubmit={handleFilterSubmit} className="flex flex-wrap items-end gap-3.5">

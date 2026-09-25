@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import ReportViewerPage from "./page";
 
 const getReport = vi.fn();
@@ -12,6 +13,13 @@ vi.mock("@/lib/reports", () => ({
 const listProjects = vi.fn();
 vi.mock("@/lib/projects", () => ({
   listProjects: (...args: unknown[]) => listProjects(...args),
+}));
+
+const exportReportToExcel = vi.fn();
+const exportReportToPdf = vi.fn();
+vi.mock("@/lib/report-export", () => ({
+  exportReportToExcel: (...args: unknown[]) => exportReportToExcel(...args),
+  exportReportToPdf: (...args: unknown[]) => exportReportToPdf(...args),
 }));
 
 let mockType = "money-history";
@@ -207,5 +215,80 @@ describe("ReportViewerPage (Story 5.7, FR38/FR39)", () => {
     render(<ReportViewerPage />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent("You don't have permission to do that.");
+  });
+});
+
+/**
+ * Story 5.8 (FR40): the Export dropdown -- disabled/hidden whenever
+ * `state.status !== "loaded"` or `state.rows.length === 0` (exporting
+ * nothing is never a valid action), otherwise wired to call
+ * `exportReportToExcel`/`exportReportToPdf` with the exact `slug`/`rows`
+ * the page currently holds (never a re-fetch, spec-5-8 Decisions #1/#8).
+ */
+describe("Export dropdown (Story 5.8, FR40)", () => {
+  it("is disabled while the report is still loading", async () => {
+    mockType = "money-added";
+    getReport.mockReturnValue(new Promise(() => {})); // never resolves -- stays "loading"
+
+    render(<ReportViewerPage />);
+
+    expect(await screen.findByRole("button", { name: /export/i })).toBeDisabled();
+  });
+
+  it("is disabled when the report loaded with zero rows", async () => {
+    mockType = "money-added";
+    getReport.mockResolvedValue({ rows: [] });
+
+    render(<ReportViewerPage />);
+
+    await waitFor(() => expect(getReport).toHaveBeenCalled());
+    expect(await screen.findByRole("button", { name: /export/i })).toBeDisabled();
+  });
+
+  it("is disabled when the report errored", async () => {
+    mockType = "money-movement";
+    getReport.mockRejectedValue(new Error("You don't have permission to do that."));
+
+    render(<ReportViewerPage />);
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /export/i })).toBeDisabled();
+  });
+
+  it("Export as Excel calls exportReportToExcel with the current slug and the exact loaded/filtered rows", async () => {
+    mockType = "money-added";
+    getReport.mockResolvedValue({ rows: [MONEY_ADDED_ENTRY] });
+
+    render(<ReportViewerPage />);
+
+    const trigger = await screen.findByRole("button", { name: /export/i });
+    await waitFor(() => expect(trigger).toBeEnabled());
+    await userEvent.click(trigger);
+    await userEvent.click(await screen.findByText("Export as Excel"));
+
+    expect(exportReportToExcel).toHaveBeenCalledWith("money-added", [MONEY_ADDED_ENTRY]);
+    expect(exportReportToPdf).not.toHaveBeenCalled();
+  });
+
+  it("Export as PDF calls exportReportToPdf with the current slug and the exact loaded/filtered rows", async () => {
+    mockType = "project-money";
+    const row = {
+      projectId: "project-a",
+      projectName: "Project A",
+      totalAdded: "500000",
+      totalWithdrawn: "100000",
+      totalAvailableBalance: "50000",
+    };
+    getReport.mockResolvedValue({ rows: [row] });
+
+    render(<ReportViewerPage />);
+
+    const trigger = await screen.findByRole("button", { name: /export/i });
+    await waitFor(() => expect(trigger).toBeEnabled());
+    await userEvent.click(trigger);
+    await userEvent.click(await screen.findByText("Export as PDF"));
+
+    expect(exportReportToPdf).toHaveBeenCalledWith("project-money", [row]);
+    expect(exportReportToExcel).not.toHaveBeenCalled();
   });
 });
