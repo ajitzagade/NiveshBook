@@ -39,6 +39,8 @@ export type Action =
   | "can_take:view"
   | "withdrawal_transactions:create"
   | "withdrawal_transactions:list"
+  | "withdrawal_transactions:edit"
+  | "withdrawal_transactions:cancel"
   | "withdrawal_adjustments:view"
   | "withdrawal_status:view"
   | "withdrawal_destination_allocations:create"
@@ -194,6 +196,13 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // precedent one ledger over; a person's own withdrawal history view is
   // Epic 5's job.
   "withdrawal_transactions:list": new Set(["owner_admin"]),
+  // Story 4.11: editing/cancelling a withdrawal is Owner/Admin-only -- no
+  // self-access, mirroring `investment_transactions:edit`/`:cancel`'s
+  // identical all-or-nothing-for-the-role shape exactly one ledger over
+  // (this story's Decisions: mirrors Story 3.7/3.8's precedent, no AC
+  // qualifier names a self-service persona for either action).
+  "withdrawal_transactions:edit": new Set(["owner_admin"]),
+  "withdrawal_transactions:cancel": new Set(["owner_admin"]),
   // Story 4.3 (Epic 4): Withdrawal Adjustment (Can Take - Taken) is
   // Owner/Admin-only in this story, mirroring `investment_adjustments:view`'s
   // identical precedent (spec-4-3's Decisions) -- the AC's "As a Partner"

@@ -340,10 +340,9 @@ export interface AuditLogEntry {
  * per-funding-round), `partyType`/`shareId` disambiguated the identical way
  * (AD-4: `shareId` is `PartnerShare.partnerId` or `SubPartnerShare.subPartnerId`,
  * the *stable* id shared across every version row, never a version row's
- * own `id` and never `User.id`), and no `status`/`reversalOfTransactionId`
- * column yet (this story's Decisions -- mirrors `InvestmentTransaction`'s
- * original Story 3.3 shape before Story 3.8 added them; Story 4.11 adds the
- * withdrawal equivalent later, via its own migration).
+ * own `id` and never `User.id`). Story 4.11 adds `status`/`reversalOfTransactionId`,
+ * mirroring `InvestmentTransaction`'s identical Story 3.8 addition one
+ * ledger over -- see that field's own doc comment below.
  *
  * `sharePercentSnapshot`/`canTakeSnapshot` are captured once, at creation
  * time, by re-running Story 4.1's `computeCanTake` server-side -- never a
@@ -367,6 +366,32 @@ export interface WithdrawalTransaction {
   paymentMode: PaymentMode;
   referenceNumber: string | null;
   notes: string | null;
+  /**
+   * `"active"` (default) is a live withdrawal; `"cancelled"` (Story 4.11)
+   * marks a voided original (or its linked reversal row, which carries this
+   * status too) -- set on the *original* row when it's cancelled, and also
+   * on the newly-created *reversal* row itself, mirroring
+   * `InvestmentTransaction.status`'s identical Story 3.8 column shape one
+   * ledger over. Never hard-deleted either way.
+   *
+   * Unlike the investment side, this status is NOT currently excluded from
+   * Taken/Withdrawal Adjustment (Story 4.3) -- `WithdrawalTransactionPort.sumActiveAmountByProjectId`
+   * was deliberately left summing every row unconditionally, cancelled or
+   * not, when this column was added (Story 4.11's own Implementation Notes:
+   * extending Taken/Can Take to exclude cancelled withdrawals was judged out
+   * of that story's frozen Code Map/Boundaries, a real product question left
+   * for a future story to decide, not silently assumed here). A cancelled
+   * withdrawal's amount DOES still count toward Taken today.
+   */
+  status: "active" | "cancelled";
+  /**
+   * Present only on a reversal row (Story 4.11) -- the id of the *original*
+   * withdrawal this row reverses. `null` on every other row, including a
+   * cancelled original itself (one-directional: the reversal points at the
+   * original, never the reverse) -- mirrors `InvestmentTransaction.reversalOfTransactionId`
+   * exactly.
+   */
+  reversalOfTransactionId: string | null;
   /** ISO 8601 timestamp */
   createdAt: string;
 }

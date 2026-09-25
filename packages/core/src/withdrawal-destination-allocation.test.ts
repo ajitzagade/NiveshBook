@@ -44,6 +44,8 @@ function makeWithdrawal(overrides: Partial<WithdrawalTransaction> = {}): Withdra
     paymentMode: "neft",
     referenceNumber: null,
     notes: null,
+    status: "active",
+    reversalOfTransactionId: null,
     createdAt: new Date().toISOString(),
     ...overrides,
   };

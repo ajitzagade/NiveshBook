@@ -1,14 +1,32 @@
 import type { Money, PartnerShare, PaymentMode, Percent, SubPartnerShare } from "@niveshbook/types";
-import { toMoney, InvalidMoneyError } from "./decimal-math";
+import { toMoney, InvalidMoneyError, moneyEquals } from "./decimal-math";
 import { computeCanTake } from "./can-take";
 import type {
+  CancelWithdrawalTransactionInput,
+  CancelWithdrawalTransactionResult,
   CreateWithdrawalTransactionInput,
+  EditWithdrawalTransactionInput,
+  EditWithdrawalTransactionResult,
   RecordWithdrawalTransactionResult,
   WithdrawalTransactionPort,
 } from "./withdrawal-transaction-port";
+import type { WithdrawalDestinationAllocationPort } from "./withdrawal-destination-allocation-port";
 
 export interface WithdrawalTransactionDeps {
   withdrawalTransactions: WithdrawalTransactionPort;
+}
+
+/**
+ * Story 4.11: `editWithdrawalTransaction`'s own deps, narrower than a plain
+ * `WithdrawalTransactionDeps` -- `Pick<>`-narrowed to exactly the one method
+ * (`listByWithdrawalTransactionId`) its fast, non-authoritative
+ * `assertAmountEditable` pre-check needs (ISP, mirrors `MoneyTrailDeps`'s
+ * `Pick<>`-narrowing precedent). `recordWithdrawalTransaction`/
+ * `listWithdrawalTransactions`/`cancelWithdrawalTransaction` keep using the
+ * plain `WithdrawalTransactionDeps` above -- none of them need this.
+ */
+export interface EditWithdrawalTransactionDeps extends WithdrawalTransactionDeps {
+  withdrawalDestinationAllocations: Pick<WithdrawalDestinationAllocationPort, "listByWithdrawalTransactionId">;
 }
 
 export interface RecordWithdrawalTransactionInput {
@@ -144,6 +162,82 @@ export class WithdrawalIdempotencyKeyConflictError extends Error {
       "This idempotency key was already used for a different withdrawal request -- generate a new key for this submission.",
     );
     this.name = "WithdrawalIdempotencyKeyConflictError";
+  }
+}
+
+/**
+ * Thrown by `packages/db`'s `createWithdrawalTransactionPort.editTransaction`/
+ * `.cancelTransaction` (Story 4.11) when the target withdrawal's `status` is
+ * already `"cancelled"` at write time, and the attempt is NOT a
+ * concurrent-race replay of the exact same `idempotencyKey` -- i.e. someone
+ * is trying to edit/cancel an already-void withdrawal a second, genuinely
+ * different time. The route layer maps this to 409 `already_cancelled`.
+ * Named `WithdrawalAlreadyCancelledError`, not `AlreadyCancelledError`
+ * (`investment-transaction.ts` already exports that exact name) -- so
+ * `packages/core/src/index.ts`'s two `export *` statements never produce an
+ * ambiguous/dropped barrel export for this symbol, mirroring
+ * `InvalidWithdrawalAmountError`'s identical barrel-export-collision
+ * rationale.
+ */
+export class WithdrawalAlreadyCancelledError extends Error {
+  constructor() {
+    super("This withdrawal has already been cancelled.");
+    this.name = "WithdrawalAlreadyCancelledError";
+  }
+}
+
+/**
+ * Thrown by `packages/db`'s `createWithdrawalTransactionPort.editTransaction`
+ * (Story 4.11, this story's Decisions #5) when a caller tries to change
+ * `amount` on a withdrawal that already has one or more
+ * `withdrawal_destination_allocations` legs recorded -- the allocation's
+ * legs must keep summing to the withdrawal's own `amount` (Story 4.7's
+ * `AllocationMismatchError`), so an amount edit after allocation would
+ * silently create a permanent mismatch Story 4.10's reconciliation check
+ * would then flag. Every other field (date/payment mode/reference number/
+ * notes) stays freely editable regardless of allocation status -- only
+ * `amount` is locked. The route layer maps this to 409
+ * `amount_locked_by_allocation`.
+ */
+export class WithdrawalAmountLockedByAllocationError extends Error {
+  constructor() {
+    super(
+      "This withdrawal's amount can no longer be edited because its destination allocation has already been recorded -- the allocation's legs must keep summing to the withdrawal's own amount. Other fields (date, payment mode, reference number, notes) can still be edited.",
+    );
+    this.name = "WithdrawalAmountLockedByAllocationError";
+  }
+}
+
+/**
+ * Pure precondition check (Story 4.11) -- throws `WithdrawalAlreadyCancelledError`
+ * if `status` is already `"cancelled"`, otherwise a no-op. Shared by both the
+ * fast, non-authoritative `packages/core`-level guard (`editWithdrawalTransaction`
+ * below) and `packages/db`'s AUTHORITATIVE check, run inside the same locked
+ * `database.transaction()` as the write it protects -- mirrors
+ * `investment-transaction.ts`'s identical two-layer fast-check/authoritative-check
+ * shape (spec-3-8's Review Triage Log, row 1) one ledger over.
+ */
+export function assertWithdrawalNotCancelled(status: "active" | "cancelled"): void {
+  if (status === "cancelled") {
+    throw new WithdrawalAlreadyCancelledError();
+  }
+}
+
+/**
+ * Pure precondition check (Story 4.11, this story's Decisions #5) -- throws
+ * `WithdrawalAmountLockedByAllocationError` only when both `hasExistingLegs`
+ * AND `amountChanged` are `true`; a no-op otherwise (an already-allocated
+ * withdrawal's non-amount fields stay freely editable, and an unallocated
+ * withdrawal's amount stays freely editable). Shared by both the fast,
+ * non-authoritative `packages/core`-level guard (`editWithdrawalTransaction`
+ * below, called against a `listByWithdrawalTransactionId` read outside any
+ * lock) and `packages/db`'s AUTHORITATIVE check (run inside the same locked
+ * `database.transaction()` as the `UPDATE` it protects, against a fresh
+ * `listByWithdrawalTransactionId` read taken after the lock is acquired).
+ */
+export function assertAmountEditable(hasExistingLegs: boolean, amountChanged: boolean): void {
+  if (hasExistingLegs && amountChanged) {
+    throw new WithdrawalAmountLockedByAllocationError();
   }
 }
 
@@ -311,4 +405,154 @@ export async function recordWithdrawalTransaction(
  */
 export async function listWithdrawalTransactions(projectId: string, deps: WithdrawalTransactionDeps) {
   return deps.withdrawalTransactions.listByProjectId(projectId);
+}
+
+/**
+ * Raw, unvalidated edit request (Story 4.11) -- mirrors
+ * `EditInvestmentTransactionRequest`'s exact shape one ledger over.
+ */
+export interface EditWithdrawalTransactionRequest {
+  /** Raw, unvalidated -- `"0"` remains explicitly valid, mirroring create's identical rule. */
+  amount: string;
+  /** Raw, unvalidated `YYYY-MM-DD` string. */
+  transactionDate: string;
+  /** Raw, unvalidated -- must match one of `WITHDRAWAL_PAYMENT_MODES` after normalization. */
+  paymentMode: string;
+  referenceNumber: string | null;
+  notes: string | null;
+  /** Required, non-empty -- this story reuses AD-5's idempotency mechanism, via `audit_log.idempotencyKey`. */
+  idempotencyKey: string;
+  /** Optional -- `audit_log.reason` is nullable; no AC requires one for an edit either. */
+  reason: string | null;
+}
+
+/**
+ * Edits a previously recorded withdrawal's mutable fields IN PLACE (Story
+ * 4.11): validates `amount`/`transactionDate`/`paymentMode`/`idempotencyKey`
+ * via the same normalization helpers `recordWithdrawalTransaction` uses
+ * (400-mappable errors), then calls the port -- whose atomicity/idempotency
+ * contract is documented on `WithdrawalTransactionPort.editTransaction`
+ * itself.
+ *
+ * Deliberately does **not** touch `sharePercentSnapshot`/`canTakeSnapshot`
+ * (AD-3's frozen-at-creation guarantee) and needs no new recompute of any
+ * downstream ledger -- every current consumer already reads live, current
+ * withdrawal amounts on every view.
+ *
+ * Two fast, non-authoritative pre-checks run before the port is ever called
+ * (mirroring `editInvestmentTransaction`'s identical "fast-fail optimization,
+ * not the authoritative guard" shape, spec-3-8's Review Triage Log row 1):
+ * (1) if the withdrawal's *current* state (via `findById`) is already
+ * `"cancelled"`, throws `WithdrawalAlreadyCancelledError` immediately, before
+ * any amount/date/paymentMode/idempotencyKey validation runs; (2) once the
+ * new `amount` has been validated, if the withdrawal already has one or more
+ * destination-allocation legs recorded AND the validated `amount` differs
+ * from the current row's `amount`, throws `WithdrawalAmountLockedByAllocationError`
+ * (this story's Decisions #5). Both checks are plain, non-locking reads in a
+ * separate round trip from the port's own write -- the AUTHORITATIVE guard
+ * for both lives in `packages/db`'s `editTransaction` implementation itself,
+ * inside the same locked `database.transaction()` as the `UPDATE` it
+ * protects. If no row is found at all, both guards are skipped and the
+ * existing not-found behavior (the port's own error, surfaced by the route's
+ * already-established 404 check beforehand) is unchanged.
+ *
+ * Callers must run `authorizeScope()` for `"withdrawal_transactions:edit"`
+ * (Owner/Admin-only, no self-access -- mirrors `"investment_transactions:edit"`
+ * exactly) before calling this -- it performs no permission check of its own
+ * (AD-1's gate lives at the route layer), and it never validates that
+ * `transactionId` belongs to *this* Project -- callers (the route handler)
+ * must resolve and confirm that first, both to surface the 404 case and
+ * because this function has no Project context to check against.
+ */
+export async function editWithdrawalTransaction(
+  transactionId: string,
+  input: EditWithdrawalTransactionRequest,
+  actorUserId: string,
+  deps: EditWithdrawalTransactionDeps,
+): Promise<EditWithdrawalTransactionResult> {
+  const current = await deps.withdrawalTransactions.findById(transactionId);
+  if (current) {
+    assertWithdrawalNotCancelled(current.status);
+  }
+
+  const amount = normalizeAmount(input.amount);
+  const transactionDate = normalizeTransactionDate(input.transactionDate);
+  const paymentMode = normalizePaymentMode(input.paymentMode);
+  const idempotencyKey = normalizeIdempotencyKey(input.idempotencyKey);
+  const referenceNumber = normalizeOptionalText(input.referenceNumber);
+  const notes = normalizeOptionalText(input.notes);
+  const reason = normalizeOptionalText(input.reason);
+
+  if (current) {
+    const amountChanged = !moneyEquals(current.amount, amount);
+    const legs = await deps.withdrawalDestinationAllocations.listByWithdrawalTransactionId(transactionId);
+    assertAmountEditable(legs.length > 0, amountChanged);
+  }
+
+  const portInput: EditWithdrawalTransactionInput = {
+    transactionId,
+    amount,
+    transactionDate,
+    paymentMode,
+    referenceNumber,
+    notes,
+    idempotencyKey,
+    reason,
+    actorUserId,
+  };
+
+  return deps.withdrawalTransactions.editTransaction(portInput);
+}
+
+/**
+ * Raw, unvalidated cancel request (Story 4.11) -- mirrors
+ * `CancelInvestmentTransactionRequest`'s exact shape one ledger over:
+ * cancelling never touches amount/date/paymentMode/reference/notes.
+ */
+export interface CancelWithdrawalTransactionRequest {
+  /** Required, non-empty -- reuses `audit_log.idempotencyKey` unchanged, mirroring the investment side's identical mechanism. */
+  idempotencyKey: string;
+  /** Optional -- `audit_log.reason` is nullable; no AC requires one for a cancel either. */
+  reason: string | null;
+}
+
+/**
+ * Cancels/reverses a previously recorded withdrawal (Story 4.11): validates
+ * `idempotencyKey` via the same `normalizeIdempotencyKey` helper
+ * `recordWithdrawalTransaction`/`editWithdrawalTransaction` use
+ * (400-mappable `MissingWithdrawalIdempotencyKeyError`), then calls the port
+ * -- whose atomicity/idempotency/already-cancelled/cascade contract is
+ * documented on `WithdrawalTransactionPort.cancelTransaction` itself. Unlike
+ * `editWithdrawalTransaction`, this function has no fast pre-check of its
+ * own (mirrors `cancelInvestmentTransaction`'s identical shape -- the
+ * already-cancelled guard lives entirely at the authoritative
+ * `packages/db` layer for a cancel, since there's no "fast-fail on the
+ * common case" upside for an action that's already doing a full cascade
+ * either way).
+ *
+ * Callers must run `authorizeScope()` for `"withdrawal_transactions:cancel"`
+ * (Owner/Admin-only, no self-access -- mirrors `"investment_transactions:cancel"`
+ * exactly) before calling this -- it performs no permission check of its own
+ * (AD-1's gate lives at the route layer), and it never validates that
+ * `transactionId` belongs to *this* Project -- callers (the route handler)
+ * must resolve and confirm that first, both to surface the 404 case and
+ * because this function has no Project context to check against.
+ */
+export async function cancelWithdrawalTransaction(
+  transactionId: string,
+  input: CancelWithdrawalTransactionRequest,
+  actorUserId: string,
+  deps: WithdrawalTransactionDeps,
+): Promise<CancelWithdrawalTransactionResult> {
+  const idempotencyKey = normalizeIdempotencyKey(input.idempotencyKey);
+  const reason = normalizeOptionalText(input.reason);
+
+  const portInput: CancelWithdrawalTransactionInput = {
+    transactionId,
+    idempotencyKey,
+    reason,
+    actorUserId,
+  };
+
+  return deps.withdrawalTransactions.cancelTransaction(portInput);
 }

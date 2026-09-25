@@ -458,10 +458,9 @@ export type AuditLogRow = typeof auditLog.$inferSelect;
  * precedent -- the actual double-submit protection mechanism, not merely an
  * application-layer check.
  *
- * No `status`/`reversalOfTransactionId` column yet (this story's Decisions
- * -- mirrors `investment_transactions`' original Story 3.3 shape before
- * Story 3.8 added them; Story 4.11 adds the withdrawal equivalent later, via
- * its own migration).
+ * Story 4.11 adds `status`/`reversalOfTransactionId`, mirroring
+ * `investment_transactions`' identical Story 3.8 columns exactly (never
+ * hard-deleted, flip status + insert a linked reversal row instead, AD-5).
  */
 export const withdrawalTransactions = pgTable(
   "withdrawal_transactions",
@@ -480,6 +479,10 @@ export const withdrawalTransactions = pgTable(
     referenceNumber: text("reference_number"),
     notes: text("notes"),
     idempotencyKey: text("idempotency_key").notNull().unique(),
+    status: text("status").notNull().default("active"),
+    reversalOfTransactionId: uuid("reversal_of_transaction_id").references(
+      (): AnyPgColumn => withdrawalTransactions.id,
+    ),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -492,6 +495,12 @@ export const withdrawalTransactions = pgTable(
     // `investment_transactions_share_id_project_id_idx`'s identical
     // precedent one ledger over.
     index("withdrawal_transactions_share_id_project_id_idx").on(table.shareId, table.projectId),
+    // Story 4.11: `cancelTransaction`'s idempotent-replay/concurrent-race
+    // recovery paths look up a reversal row by its `reversalOfTransactionId`
+    // -- mirrors `investment_transactions_reversal_of_transaction_id_idx`.
+    index("withdrawal_transactions_reversal_of_transaction_id_idx").on(
+      table.reversalOfTransactionId,
+    ),
   ],
 );
 

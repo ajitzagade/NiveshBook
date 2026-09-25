@@ -295,9 +295,39 @@ describe("withdrawal_transactions table schema (Story 4.2)", () => {
     expect(withdrawalTransactions.createdAt.hasDefault).toBe(true);
   });
 
-  it("has no status/reversalOfTransactionId column yet -- mirrors investment_transactions' original Story 3.3 shape before Story 3.8 added them (this story's Decisions: Story 4.11 adds the withdrawal equivalent later, via its own migration)", () => {
-    expect(Object.keys(withdrawalTransactions)).not.toContain("status");
-    expect(Object.keys(withdrawalTransactions)).not.toContain("reversalOfTransactionId");
+  it("marks status NOT NULL with an 'active' DB-side default (Story 4.11) -- mirrors investment_transactions.status's identical Story 3.8 shape one ledger over, no migration-time backfill needed", () => {
+    expect(withdrawalTransactions.status.notNull).toBe(true);
+    expect(withdrawalTransactions.status.hasDefault).toBe(true);
+    expect(withdrawalTransactions.status.columnType).toBe("PgText");
+    expect(withdrawalTransactions.status.default).toBe("active");
+  });
+
+  it("leaves reversalOfTransactionId nullable with no implicit default -- null on every row except a reversal row itself (Story 4.11)", () => {
+    expect(withdrawalTransactions.reversalOfTransactionId.notNull).toBe(false);
+    expect(withdrawalTransactions.reversalOfTransactionId.hasDefault).toBe(false);
+    expect(withdrawalTransactions.reversalOfTransactionId.columnType).toBe("PgUUID");
+  });
+
+  it("self-references withdrawal_transactions.id via reversalOfTransactionId (Story 4.11) -- the linked-reversal-row FK", () => {
+    const { foreignKeys } = getTableConfig(withdrawalTransactions);
+    const reversalFk = foreignKeys.find((fk) =>
+      fk.reference().columns.some((column) => column.name === "reversal_of_transaction_id"),
+    );
+    expect(reversalFk).toBeDefined();
+    const ref = reversalFk!.reference();
+    expect(ref.foreignTable).toBe(withdrawalTransactions);
+    expect(ref.foreignColumns.map((column) => column.name)).toEqual(["id"]);
+  });
+
+  it("indexes reversalOfTransactionId for cancelTransaction's idempotent-replay/concurrent-race recovery lookups (Story 4.11)", () => {
+    const { indexes } = getTableConfig(withdrawalTransactions);
+    const reversalIndex = indexes.find(
+      (idx) => idx.config.name === "withdrawal_transactions_reversal_of_transaction_id_idx",
+    );
+    expect(reversalIndex).toBeDefined();
+    expect(reversalIndex!.config.columns.map((column) => (column as { name: string }).name)).toEqual([
+      "reversal_of_transaction_id",
+    ]);
   });
 
   it("cascade-deletes when its projectId's project is deleted", () => {

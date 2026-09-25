@@ -4,10 +4,12 @@ import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from
 import { useParams } from "next/navigation";
 import {
   ArrowLeft,
+  Ban,
   BanknoteArrowDown,
   Building2,
   Minus,
   MoreHorizontal,
+  Pencil,
   Plus,
   Save,
   ShieldCheck,
@@ -44,6 +46,8 @@ import { getCanTake } from "@/lib/can-take";
 import { getWithdrawalAdjustments } from "@/lib/withdrawal-adjustments";
 import { listProjects } from "@/lib/projects";
 import {
+  cancelWithdrawalTransaction,
+  editWithdrawalTransaction,
   listWithdrawalTransactions,
   recordWithdrawalTransaction,
 } from "@/lib/withdrawal-transactions";
@@ -80,6 +84,27 @@ interface RecordWithdrawalTarget {
   partyType: "partner" | "sub_partner";
   shareId: string;
   personName: string;
+}
+
+/**
+ * Story 4.11: the withdrawal currently open in the Edit Withdrawal dialog --
+ * unlike `RecordWithdrawalTarget` (identified by `partyType`+`shareId`,
+ * since nothing exists yet to edit), this is identified by the specific
+ * `transaction` being corrected -- mirrors `add-money/page.tsx`'s
+ * `EditPaymentTarget` one ledger over (no `requirementId` here, this ledger
+ * is Project-scoped).
+ */
+interface EditWithdrawalTarget {
+  transaction: WithdrawalTransaction;
+}
+
+/**
+ * Story 4.11: the withdrawal currently pending confirmation in the Cancel
+ * Withdrawal dialog -- mirrors `EditWithdrawalTarget`'s exact shape one
+ * dialog over (identified by the specific `transaction` being cancelled).
+ */
+interface CancelWithdrawalTarget {
+  transaction: WithdrawalTransaction;
 }
 
 /**
@@ -403,6 +428,47 @@ export default function WithdrawMoneyPage() {
   // second copy -- see `./destination-picker.tsx`'s own doc comment.
   const { destinationProjectData, ensureDestinationProjectData } = useDestinationProjectData();
 
+  // Story 4.11: the Edit Withdrawal dialog -- mirrors `add-money/page.tsx`'s
+  // Story 3.7 Edit Payment dialog state field-for-field, plus
+  // `editIdempotencyKey` following the exact same
+  // mint-once-per-logical-submission-attempt lifecycle as
+  // `recordIdempotencyKey`.
+  const [editTarget, setEditTarget] = useState<EditWithdrawalTarget | null>(null);
+  const [editAmount, setEditAmount] = useState("");
+  const [editDate, setEditDate] = useState("");
+  const [editPaymentMode, setEditPaymentMode] = useState<PaymentMode>("cash");
+  const [editReferenceNumber, setEditReferenceNumber] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [editFormError, setEditFormError] = useState<string | null>(null);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editIdempotencyKey, setEditIdempotencyKey] = useState("");
+  const [editConfirmOpen, setEditConfirmOpen] = useState(false);
+
+  // Story 4.11: the Cancel Withdrawal confirmation dialog -- no editable
+  // fields (cancelling never changes amount/date/paymentMode/etc.), so this
+  // state is narrower than Record/Edit Withdrawal's -- mirrors
+  // `add-money/page.tsx`'s Story 3.8 Cancel Payment dialog state exactly.
+  const [cancelTarget, setCancelTarget] = useState<CancelWithdrawalTarget | null>(null);
+  const [cancelFormError, setCancelFormError] = useState<string | null>(null);
+  const [cancelSubmitting, setCancelSubmitting] = useState(false);
+  const [cancelIdempotencyKey, setCancelIdempotencyKey] = useState("");
+
+  // Story 4.11: withdrawal ids allocated (a destination split saved) during
+  // THIS browser session -- drives the Edit dialog's "amount locked" message
+  // and disables its Amount field once a withdrawal has legs. There is no
+  // `GET` endpoint to list a withdrawal's destination-allocation legs
+  // (deliberately out of this story's own Code Map -- only the PATCH/cancel
+  // routes are new), so this is a best-effort, session-local signal, not an
+  // authoritative one: a withdrawal allocated in an earlier session (or by
+  // another user concurrently) still submits normally here, and the
+  // server's own authoritative `409 amount_locked_by_allocation` guard
+  // (`packages/db`'s `editTransaction`, inside its own `FOR UPDATE` lock) is
+  // what actually enforces the rule either way -- surfaced inline via
+  // `editFormError` on that response, exactly like every other edit-time
+  // error this page already handles. Documented in spec-4-11's
+  // Implementation Notes as a deliberate, scoped decision.
+  const [allocatedWithdrawalIds, setAllocatedWithdrawalIds] = useState<Set<string>>(new Set());
+
   async function refreshCanTake() {
     const result = await getCanTake(projectId);
     setState({ status: "loaded", availableToWithdraw: result.availableToWithdraw, partners: result.partners });
@@ -655,6 +721,9 @@ export default function WithdrawMoneyPage() {
         allocationIdempotencyKey,
       );
       toast.success(`Destination allocation saved for ${formatAmount(allocationTarget.amount)}`);
+      // Story 4.11: this withdrawal's amount is now locked -- see
+      // `allocatedWithdrawalIds`'s own doc comment above.
+      setAllocatedWithdrawalIds((prev) => new Set(prev).add(allocationTarget.id));
     } catch (err) {
       setAllocationFormError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
       setAllocationSubmitting(false);
@@ -767,6 +836,132 @@ export default function WithdrawMoneyPage() {
   /** Confirms the Authorize Extra Withdrawal dialog (Story 4.5, FR25) -- resubmits with `extraWithdrawalAuthorized: true`. No form fields of its own to validate (mirrors Cancel Payment's identical "no editable fields" shape). */
   async function handleAuthorizeExtraWithdrawalConfirm() {
     await submitWithdrawal(true);
+  }
+
+  /** Opens the Edit Withdrawal dialog, pre-filled with `transaction`'s current values (Story 4.11) -- Owner/Admin-facing only, mirroring `add-money/page.tsx`'s `openEditPaymentDialog` one ledger over. */
+  function openEditWithdrawalDialog(transaction: WithdrawalTransaction) {
+    setEditTarget({ transaction });
+    setEditAmount(transaction.amount);
+    setEditDate(transaction.transactionDate);
+    setEditPaymentMode(transaction.paymentMode);
+    setEditReferenceNumber(transaction.referenceNumber ?? "");
+    setEditNotes(transaction.notes ?? "");
+    setEditFormError(null);
+    setEditConfirmOpen(false);
+    // A fresh key for this new logical edit attempt -- mirrors `recordIdempotencyKey`'s own doc comment.
+    setEditIdempotencyKey(crypto.randomUUID());
+  }
+
+  function closeEditWithdrawalDialog() {
+    setEditTarget(null);
+  }
+
+  /** The form's own `onSubmit` -- opens the summary-confirm step rather than submitting directly, mirroring `add-money/page.tsx`'s identical two-step pattern for money-moving actions. */
+  function handleEditWithdrawalSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editTarget) return;
+    setEditFormError(null);
+    setEditConfirmOpen(true);
+  }
+
+  /**
+   * Saves a corrected withdrawal (Story 4.11) -- Owner/Admin-only. Passes
+   * `editIdempotencyKey` through unchanged -- minted once, when the dialog
+   * opens (`openEditWithdrawalDialog`), not here -- mirrors
+   * `handleConfirmEditPayment`'s identical retry-reuses-the-same-key
+   * contract on the investment side.
+   */
+  async function handleConfirmEditWithdrawal() {
+    if (!editTarget) return;
+
+    setEditFormError(null);
+    setEditSubmitting(true);
+    try {
+      await editWithdrawalTransaction(
+        projectId,
+        editTarget.transaction.id,
+        {
+          amount: editAmount,
+          transactionDate: editDate,
+          paymentMode: editPaymentMode,
+          referenceNumber: editReferenceNumber.trim().length > 0 ? editReferenceNumber.trim() : null,
+          notes: editNotes.trim().length > 0 ? editNotes.trim() : null,
+          reason: null,
+        },
+        editIdempotencyKey,
+      );
+      toast.success(`Withdrawal updated to ${formatAmount(editAmount)}`);
+    } catch (err) {
+      setEditFormError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+      setEditSubmitting(false);
+      return;
+    }
+
+    setEditSubmitting(false);
+    setEditConfirmOpen(false);
+    closeEditWithdrawalDialog();
+    // Best-effort, mirroring `add-money/page.tsx`'s identical convention.
+    await Promise.all([refreshWithdrawals().catch(() => {}), refreshAdjustments().catch(() => {})]);
+  }
+
+  /**
+   * Opens the Cancel Withdrawal confirmation dialog for `transaction` (Story
+   * 4.11) -- Owner/Admin-facing only, mirroring `openEditWithdrawalDialog`'s
+   * Decisions one dialog over. A confirmation step precedes the actual
+   * `cancelWithdrawalTransaction` call (`handleCancelWithdrawalConfirm`
+   * below) -- this feels destructive even though nothing is hard-deleted,
+   * mirroring `add-money/page.tsx`'s Cancel Payment dialog's identical
+   * rationale. Unlike that one-table cancel, this one can cascade to a
+   * linked destination Project's investment record or a reversed Available
+   * Balance credit -- the dialog's own copy below calls that out.
+   */
+  function openCancelWithdrawalDialog(transaction: WithdrawalTransaction) {
+    setCancelTarget({ transaction });
+    setCancelFormError(null);
+    // A fresh key for this new logical cancel attempt -- mirrors `editIdempotencyKey`'s own doc comment.
+    setCancelIdempotencyKey(crypto.randomUUID());
+  }
+
+  function closeCancelWithdrawalDialog() {
+    setCancelTarget(null);
+  }
+
+  /**
+   * Confirms and performs the cancel (Story 4.11) -- no form fields to
+   * validate (cancelling never changes amount/date/paymentMode/etc.), so
+   * this is a plain confirm handler, not a form `onSubmit`, mirroring
+   * `add-money/page.tsx`'s `handleCancelPaymentConfirm` one ledger over.
+   */
+  async function handleCancelWithdrawalConfirm() {
+    if (!cancelTarget) return;
+
+    setCancelFormError(null);
+    setCancelSubmitting(true);
+    try {
+      await cancelWithdrawalTransaction(
+        projectId,
+        cancelTarget.transaction.id,
+        null,
+        cancelIdempotencyKey,
+      );
+      toast.success("Withdrawal cancelled");
+    } catch (err) {
+      setCancelFormError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+      setCancelSubmitting(false);
+      return;
+    }
+
+    setCancelSubmitting(false);
+    closeCancelWithdrawalDialog();
+    // Best-effort, mirroring `add-money/page.tsx`'s identical convention --
+    // a cancel can also change the Project's live Can Take (a "project" leg's
+    // destination cancel, or an "available_balance" leg's reversed credit),
+    // so Can Take is refreshed here too, not just Withdrawal Adjustment.
+    await Promise.all([
+      refreshWithdrawals().catch(() => {}),
+      refreshCanTake().catch(() => {}),
+      refreshAdjustments().catch(() => {}),
+    ]);
   }
 
   // Derived once per render for the Authorize Extra Withdrawal dialog's copy
@@ -885,6 +1080,9 @@ export default function WithdrawMoneyPage() {
                   </div>
                   <RecordedWithdrawals
                     transactions={recordedWithdrawalsFor("partner", partner.partnerId)}
+                    allocatedWithdrawalIds={allocatedWithdrawalIds}
+                    onEdit={openEditWithdrawalDialog}
+                    onCancel={openCancelWithdrawalDialog}
                   />
 
                   {partner.subPartners.length > 0 ? (
@@ -921,6 +1119,9 @@ export default function WithdrawMoneyPage() {
                           </div>
                           <RecordedWithdrawals
                             transactions={recordedWithdrawalsFor("sub_partner", sub.subPartnerId)}
+                            allocatedWithdrawalIds={allocatedWithdrawalIds}
+                            onEdit={openEditWithdrawalDialog}
+                            onCancel={openCancelWithdrawalDialog}
                           />
                         </div>
                         );
@@ -1181,6 +1382,211 @@ export default function WithdrawMoneyPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <Dialog
+        open={editTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) closeEditWithdrawalDialog();
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>Edit Withdrawal</DialogTitle>
+          <DialogDescription>
+            Owner/Admin only. The previous values, who changed it, and when, are preserved in the audit
+            trail -- this updates the recorded withdrawal in place, it never creates a new row.
+            {editTarget && allocatedWithdrawalIds.has(editTarget.transaction.id) ? (
+              <>
+                {" "}
+                Amount can no longer be edited -- a destination allocation has already been recorded for
+                this withdrawal, and its legs must keep summing to the withdrawal&apos;s own amount. Date,
+                payment mode, reference number, and notes can still be edited.
+              </>
+            ) : null}
+          </DialogDescription>
+          <form onSubmit={handleEditWithdrawalSubmit} className="mt-4">
+            <Field>
+              <Label htmlFor="edit-wtx-amount">Amount</Label>
+              <Input
+                id="edit-wtx-amount"
+                name="amount"
+                inputMode="decimal"
+                value={editAmount}
+                onChange={(event) => setEditAmount(event.target.value)}
+                required
+                autoFocus
+                disabled={editTarget !== null && allocatedWithdrawalIds.has(editTarget.transaction.id)}
+              />
+              <Helper>0 is accepted -- no forced withdrawal.</Helper>
+            </Field>
+            <Field>
+              <Label htmlFor="edit-wtx-date">Date</Label>
+              <Input
+                id="edit-wtx-date"
+                name="transactionDate"
+                type="date"
+                value={editDate}
+                onChange={(event) => setEditDate(event.target.value)}
+                required
+              />
+            </Field>
+            <Field>
+              <Label htmlFor="edit-wtx-payment-mode">Payment Mode</Label>
+              <select
+                id="edit-wtx-payment-mode"
+                name="paymentMode"
+                className="w-full rounded-el border border-border bg-surface px-3 py-2.5 text-[14px] text-ink focus:border-accent focus:outline focus:outline-2 focus:outline-accent-soft"
+                value={editPaymentMode}
+                onChange={(event) => setEditPaymentMode(event.target.value as PaymentMode)}
+              >
+                {PAYMENT_MODE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field>
+              <Label htmlFor="edit-wtx-reference">Reference Number</Label>
+              <Input
+                id="edit-wtx-reference"
+                name="referenceNumber"
+                value={editReferenceNumber}
+                onChange={(event) => setEditReferenceNumber(event.target.value)}
+              />
+              <Helper>Optional -- e.g. a cash withdrawal often has none.</Helper>
+            </Field>
+            <Field>
+              <Label htmlFor="edit-wtx-notes">Notes</Label>
+              <Input
+                id="edit-wtx-notes"
+                name="notes"
+                value={editNotes}
+                onChange={(event) => setEditNotes(event.target.value)}
+              />
+            </Field>
+
+            {editFormError ? (
+              <p role="alert" className="mb-4 text-[13.4px] text-danger">
+                {editFormError}
+              </p>
+            ) : null}
+
+            <div className="flex gap-2.5">
+              <Button type="submit" disabled={editSubmitting} icon={<Save size={14} />}>
+                Save
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={closeEditWithdrawalDialog}
+                disabled={editSubmitting}
+                icon={<X size={14} />}
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={editConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open) setEditConfirmOpen(false);
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>Confirm Changes</DialogTitle>
+          <DialogDescription>
+            Update this withdrawal to <strong>{formatAmount(editAmount)}</strong> on{" "}
+            <strong>{editDate}</strong> via <strong>{PAYMENT_MODE_LABELS[editPaymentMode]}</strong>
+            {editReferenceNumber.trim() ? (
+              <>
+                {" "}
+                (Ref: <strong>{editReferenceNumber.trim()}</strong>)
+              </>
+            ) : null}
+            ? The previous values, who changed it, and when, are preserved in the audit trail.
+          </DialogDescription>
+
+          {editFormError ? (
+            <p role="alert" className="mt-4 text-[13.4px] text-danger">
+              {editFormError}
+            </p>
+          ) : null}
+
+          <div className="mt-4 flex gap-2.5">
+            <Button
+              type="button"
+              onClick={handleConfirmEditWithdrawal}
+              disabled={editSubmitting}
+              icon={<Save size={14} />}
+            >
+              {editSubmitting ? "Saving…" : "Confirm"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setEditConfirmOpen(false)}
+              disabled={editSubmitting}
+              icon={<ArrowLeft size={14} />}
+            >
+              Back
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={cancelTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) closeCancelWithdrawalDialog();
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>Cancel this withdrawal?</DialogTitle>
+          <DialogDescription>
+            {cancelTarget ? (
+              <>
+                Cancel the <strong>{formatAmount(cancelTarget.transaction.amount)}</strong> withdrawal
+                from <strong>{cancelTarget.transaction.transactionDate}</strong> (
+                {PAYMENT_MODE_LABELS[cancelTarget.transaction.paymentMode]})?{" "}
+              </>
+            ) : null}
+            Owner/Admin only. The original record is preserved with a &quot;Cancelled&quot; status and a
+            linked reversal record is created -- nothing is deleted. If this withdrawal was allocated to
+            another Project, that Project&apos;s own investment record is also cancelled; if it was
+            allocated to Available Balance, the credited pool is reversed (rejected instead if that pool
+            was already spent elsewhere -- nothing changes in that case, and this withdrawal stays active).
+          </DialogDescription>
+
+          {cancelFormError ? (
+            <p role="alert" className="mt-4 text-[13.4px] text-danger">
+              {cancelFormError}
+            </p>
+          ) : null}
+
+          <div className="mt-4 flex gap-2.5">
+            <Button
+              type="button"
+              onClick={handleCancelWithdrawalConfirm}
+              disabled={cancelSubmitting}
+              icon={<Ban size={14} />}
+            >
+              {cancelSubmitting ? "Cancelling…" : "Confirm Cancel"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={closeCancelWithdrawalDialog}
+              disabled={cancelSubmitting}
+              icon={<ArrowLeft size={14} />}
+            >
+              Back
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1344,12 +1750,33 @@ function AllocationLegRow({
  * The recorded-withdrawals list shown under a Partner/Sub-partner's Can Take
  * row once withdrawals exist for them on this Project (Story 4.2) -- Date,
  * Amount, Payment Mode, mirroring `add-money/page.tsx`'s `RecordedPayments`
- * one ledger over. No edit/cancel affordance yet (Story 4.11's job, mirroring
- * `withdrawal_transactions`' own Story-3.3-before-3.7/3.8 shape). Renders
- * nothing when there's nothing to show (no fetch-state handling here --
- * `recordedWithdrawalsFor` already resolves "not loaded yet" to `[]`).
+ * one ledger over.
+ *
+ * Story 4.11 adds an Edit pencil/Cancel ban affordance per row (Owner/Admin-
+ * facing only -- the API itself gates the rest, matching every other
+ * affordance on this page), a "Cancelled" `StatusChip` (reusing
+ * `packages/ui`'s component, mirroring `RecordedPayments`'s identical
+ * `danger`-variant treatment) for any row whose `status` is already
+ * `"cancelled"` -- labeled "(reversal)" for the linked reversal row itself,
+ * so the two are never confused (mirrors FR42's "self-explanatory audit
+ * trail" one ledger over) -- and hides both affordances entirely for an
+ * already-cancelled row, since there's nothing left to edit or cancel.
+ *
+ * Renders nothing when there's nothing to show (no fetch-state handling here
+ * -- `recordedWithdrawalsFor` already resolves "not loaded yet" to `[]`).
  */
-function RecordedWithdrawals({ transactions }: { transactions: WithdrawalTransaction[] }) {
+function RecordedWithdrawals({
+  transactions,
+  allocatedWithdrawalIds,
+  onEdit,
+  onCancel,
+}: {
+  transactions: WithdrawalTransaction[];
+  /** Story 4.11: withdrawal ids allocated during this session -- see `allocatedWithdrawalIds`'s own doc comment on the page component. */
+  allocatedWithdrawalIds: Set<string>;
+  onEdit: (transaction: WithdrawalTransaction) => void;
+  onCancel: (transaction: WithdrawalTransaction) => void;
+}) {
   if (transactions.length === 0) {
     return null;
   }
@@ -1360,6 +1787,24 @@ function RecordedWithdrawals({ transactions }: { transactions: WithdrawalTransac
           <span>{transaction.transactionDate}</span>
           <Amount value={transaction.amount} size="sm" />
           <span>{PAYMENT_MODE_LABELS[transaction.paymentMode]}</span>
+          {transaction.status === "cancelled" ? (
+            <StatusChip variant="danger">
+              Cancelled{transaction.reversalOfTransactionId ? " (reversal)" : ""}
+            </StatusChip>
+          ) : null}
+          {transaction.status === "active" ? (
+            <Button variant="ghost" onClick={() => onEdit(transaction)} icon={<Pencil size={12} />}>
+              Edit
+            </Button>
+          ) : null}
+          {transaction.status === "active" ? (
+            <Button variant="ghost" onClick={() => onCancel(transaction)} icon={<Ban size={12} />}>
+              Cancel
+            </Button>
+          ) : null}
+          {transaction.status === "active" && allocatedWithdrawalIds.has(transaction.id) ? (
+            <span className="text-ink-faint">(amount locked -- destination allocated)</span>
+          ) : null}
         </div>
       ))}
     </div>

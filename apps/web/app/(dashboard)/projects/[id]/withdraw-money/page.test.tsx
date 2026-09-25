@@ -27,10 +27,14 @@ vi.mock("@/lib/can-take", () => ({
 
 const listWithdrawalTransactions = vi.fn();
 const recordWithdrawalTransaction = vi.fn();
+const editWithdrawalTransaction = vi.fn();
+const cancelWithdrawalTransaction = vi.fn();
 
 vi.mock("@/lib/withdrawal-transactions", () => ({
   listWithdrawalTransactions: (...args: unknown[]) => listWithdrawalTransactions(...args),
   recordWithdrawalTransaction: (...args: unknown[]) => recordWithdrawalTransaction(...args),
+  editWithdrawalTransaction: (...args: unknown[]) => editWithdrawalTransaction(...args),
+  cancelWithdrawalTransaction: (...args: unknown[]) => cancelWithdrawalTransaction(...args),
 }));
 
 /** Story 4.3: the Withdrawal Adjustment fetch -- mocked so every existing test in this file (which never asserts on adjustment chips) keeps resolving to "nothing to show" rather than an unmocked real `fetch` call. */
@@ -649,6 +653,8 @@ function makeWithdrawalTransaction(overrides: Record<string, unknown> = {}) {
     paymentMode: "cash",
     referenceNumber: null,
     notes: null,
+    status: "active",
+    reversalOfTransactionId: null,
     createdAt: new Date().toISOString(),
     ...overrides,
   };
@@ -686,6 +692,249 @@ describe("WithdrawMoneyPage -- recorded-withdrawals list persists across reload 
     });
     expect(await screen.findByText("2026-10-05")).toBeInTheDocument();
     expect(screen.getByText("Cash")).toBeInTheDocument();
+  });
+});
+
+/**
+ * Story 4.11: the Edit/Cancel affordances on `RecordedWithdrawals` --
+ * mirrors `add-money/page.test.tsx`'s equivalent Edit/Cancel dialog
+ * coverage one ledger over.
+ */
+describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
+  beforeEach(() => {
+    getCanTake.mockReset();
+    listWithdrawalTransactions.mockReset();
+    getWithdrawalAdjustments.mockReset().mockResolvedValue(EMPTY_ADJUSTMENTS_RESPONSE);
+    editWithdrawalTransaction.mockReset();
+    cancelWithdrawalTransaction.mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("shows Edit/Cancel buttons for an active withdrawal, no StatusChip", async () => {
+    getCanTake.mockResolvedValue(CAN_TAKE_RESPONSE);
+    listWithdrawalTransactions.mockResolvedValue({
+      transactions: [makeWithdrawalTransaction({ amount: "100000" })],
+    });
+
+    render(<WithdrawMoneyPage />);
+    await screen.findByText("2026-10-05");
+
+    expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(screen.queryByText(/Cancelled/)).not.toBeInTheDocument();
+  });
+
+  it("shows a Cancelled StatusChip and hides Edit/Cancel for a cancelled withdrawal", async () => {
+    getCanTake.mockResolvedValue(CAN_TAKE_RESPONSE);
+    listWithdrawalTransactions.mockResolvedValue({
+      transactions: [makeWithdrawalTransaction({ amount: "100000", status: "cancelled" })],
+    });
+
+    render(<WithdrawMoneyPage />);
+    await screen.findByText("2026-10-05");
+
+    expect(screen.getByText("Cancelled")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+  });
+
+  it("labels a reversal row 'Cancelled (reversal)' distinctly from the original", async () => {
+    getCanTake.mockResolvedValue(CAN_TAKE_RESPONSE);
+    listWithdrawalTransactions.mockResolvedValue({
+      transactions: [
+        makeWithdrawalTransaction({ id: "wtx-1", amount: "100000", status: "cancelled" }),
+        makeWithdrawalTransaction({
+          id: "wtx-2",
+          amount: "100000",
+          status: "cancelled",
+          reversalOfTransactionId: "wtx-1",
+        }),
+      ],
+    });
+
+    render(<WithdrawMoneyPage />);
+    await screen.findAllByText("2026-10-05");
+
+    expect(screen.getByText("Cancelled")).toBeInTheDocument();
+    expect(screen.getByText("Cancelled (reversal)")).toBeInTheDocument();
+  });
+
+  it("edits a withdrawal successfully and refreshes the recorded-withdrawals list", async () => {
+    getCanTake.mockResolvedValue(CAN_TAKE_RESPONSE);
+    listWithdrawalTransactions.mockResolvedValue({
+      transactions: [makeWithdrawalTransaction({ id: "wtx-1", amount: "100000" })],
+    });
+    editWithdrawalTransaction.mockResolvedValue(
+      makeWithdrawalTransaction({ id: "wtx-1", amount: "150000" }),
+    );
+    const user = userEvent.setup();
+
+    render(<WithdrawMoneyPage />);
+    await screen.findByText("2026-10-05");
+    listWithdrawalTransactions.mockResolvedValueOnce({
+      transactions: [makeWithdrawalTransaction({ id: "wtx-1", amount: "150000" })],
+    });
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const amountInput = await screen.findByLabelText("Amount");
+    fireEvent.change(amountInput, { target: { value: "150000" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => {
+      expect(editWithdrawalTransaction).toHaveBeenCalledTimes(1);
+    });
+    expect(editWithdrawalTransaction).toHaveBeenCalledWith(
+      "project-1",
+      "wtx-1",
+      expect.objectContaining({ amount: "150000" }),
+      expect.any(String),
+    );
+    await waitFor(() => {
+      expect(listWithdrawalTransactions).toHaveBeenCalledTimes(2);
+    });
+    expect(await screen.findByText("₹1,50,000")).toBeInTheDocument();
+  });
+
+  it("renders a server error inside the Edit dialog on failure, without closing it", async () => {
+    getCanTake.mockResolvedValue(CAN_TAKE_RESPONSE);
+    listWithdrawalTransactions.mockResolvedValue({
+      transactions: [makeWithdrawalTransaction({ id: "wtx-1", amount: "100000" })],
+    });
+    editWithdrawalTransaction.mockRejectedValue(
+      new Error(
+        "This withdrawal's amount can no longer be edited because its destination allocation has already been recorded.",
+      ),
+    );
+    const user = userEvent.setup();
+
+    render(<WithdrawMoneyPage />);
+    await screen.findByText("2026-10-05");
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(await screen.findByRole("button", { name: "Save" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm" }));
+
+    // Both the (still-open, underneath) Edit dialog and the Confirm Changes
+    // dialog on top of it render the error (mirrors `add-money/page.tsx`'s
+    // identical stacked-dialogs-both-show-the-error convention) -- assert at
+    // least one is present, rather than requiring exactly one.
+    expect((await screen.findAllByText(/amount can no longer be edited/)).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Confirm" })).toBeInTheDocument();
+  });
+
+  it("cancels a withdrawal successfully and refreshes the recorded-withdrawals list", async () => {
+    getCanTake.mockResolvedValue(CAN_TAKE_RESPONSE);
+    listWithdrawalTransactions.mockResolvedValue({
+      transactions: [makeWithdrawalTransaction({ id: "wtx-1", amount: "100000" })],
+    });
+    cancelWithdrawalTransaction.mockResolvedValue({
+      originalTransaction: makeWithdrawalTransaction({ id: "wtx-1", amount: "100000", status: "cancelled" }),
+      reversalTransaction: makeWithdrawalTransaction({
+        id: "wtx-2",
+        amount: "100000",
+        status: "cancelled",
+        reversalOfTransactionId: "wtx-1",
+      }),
+    });
+    const user = userEvent.setup();
+
+    render(<WithdrawMoneyPage />);
+    await screen.findByText("2026-10-05");
+    listWithdrawalTransactions.mockResolvedValueOnce({
+      transactions: [
+        makeWithdrawalTransaction({ id: "wtx-1", amount: "100000", status: "cancelled" }),
+        makeWithdrawalTransaction({
+          id: "wtx-2",
+          amount: "100000",
+          status: "cancelled",
+          reversalOfTransactionId: "wtx-1",
+        }),
+      ],
+    });
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm Cancel" }));
+
+    await waitFor(() => {
+      expect(cancelWithdrawalTransaction).toHaveBeenCalledTimes(1);
+    });
+    expect(cancelWithdrawalTransaction).toHaveBeenCalledWith(
+      "project-1",
+      "wtx-1",
+      null,
+      expect.any(String),
+    );
+    await waitFor(() => {
+      expect(listWithdrawalTransactions).toHaveBeenCalledTimes(2);
+    });
+    expect(await screen.findByText("Cancelled (reversal)")).toBeInTheDocument();
+  });
+
+  it("renders a server error inside the Cancel dialog on failure, without closing it", async () => {
+    getCanTake.mockResolvedValue(CAN_TAKE_RESPONSE);
+    listWithdrawalTransactions.mockResolvedValue({
+      transactions: [makeWithdrawalTransaction({ id: "wtx-1", amount: "100000" })],
+    });
+    cancelWithdrawalTransaction.mockRejectedValue(
+      new Error("Cannot spend 250000 from an available balance of only 100000 -- insufficient balance."),
+    );
+    const user = userEvent.setup();
+
+    render(<WithdrawMoneyPage />);
+    await screen.findByText("2026-10-05");
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm Cancel" }));
+
+    expect(await screen.findByText(/insufficient balance/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirm Cancel" })).toBeInTheDocument();
+  });
+
+  it("disables the Amount field and shows the amount-locked message in the Edit dialog once a destination allocation has been saved this session", async () => {
+    getCanTake.mockResolvedValue(CAN_TAKE_RESPONSE);
+    listWithdrawalTransactions.mockResolvedValue(EMPTY_WITHDRAWALS_RESPONSE);
+    recordWithdrawalTransaction.mockResolvedValue(
+      makeWithdrawalTransaction({ id: "wtx-locked-1", amount: "100000" }),
+    );
+    listProjects.mockResolvedValue([]);
+    recordDestinationAllocation.mockResolvedValue({ allocations: [] });
+    const user = userEvent.setup();
+
+    render(<WithdrawMoneyPage />);
+    await screen.findByText("A");
+
+    // Record the withdrawal -- `submitWithdrawal` refreshes the
+    // recorded-withdrawals list right after saving (before the allocation
+    // dialog is even filled in), so the new row (with its Edit/Cancel
+    // buttons) is already visible underneath the destination-allocation
+    // dialog once queued here.
+    listWithdrawalTransactions.mockResolvedValueOnce({
+      transactions: [makeWithdrawalTransaction({ id: "wtx-locked-1", amount: "100000" })],
+    });
+    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "100000" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Where did this money go?");
+
+    // Save its destination allocation -- this is what populates
+    // `allocatedWithdrawalIds` (see that state's own doc comment on the page
+    // component: a session-local signal, no GET endpoint exists to list a
+    // withdrawal's legs).
+    fireEvent.change(screen.getByLabelText("Notes (Destination 1)"), { target: { value: "Kept as cash" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(screen.queryByText("Where did this money go?")).not.toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    expect(await screen.findByText(/Amount can no longer be edited/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Amount")).toBeDisabled();
   });
 });
 

@@ -38,13 +38,103 @@ export interface RecordWithdrawalTransactionResult {
 }
 
 /**
+ * The mutable-fields-only edit request (Story 4.11) -- mirrors
+ * `EditInvestmentTransactionInput`'s exact shape one ledger over,
+ * deliberately excluding every identity/snapshot field an edit must never
+ * touch: `sharePercentSnapshot`/`canTakeSnapshot` (AD-3's frozen-at-creation
+ * guarantee), `projectId`/`partyType`/`shareId` (a withdrawal's identity
+ * never moves via an edit), its own `idempotencyKey` (the original *create*
+ * action's key, untouched), and `createdAt`.
+ */
+export interface EditWithdrawalTransactionInput {
+  /** The existing withdrawal's id -- already confirmed to exist (and belong to this Project) by the route layer before this port is called. */
+  transactionId: string;
+  amount: Money;
+  /** Plain date, `YYYY-MM-DD` -- already validated by the domain layer before this port is called. */
+  transactionDate: string;
+  paymentMode: PaymentMode;
+  referenceNumber: string | null;
+  notes: string | null;
+  /**
+   * Enforced UNIQUE-when-present at the DB level, on `audit_log.idempotencyKey`
+   * -- deliberately NOT `withdrawal_transactions.idempotencyKey` (that column
+   * holds the original *create* action's key), mirroring
+   * `EditInvestmentTransactionInput.idempotencyKey`'s exact role one ledger
+   * over.
+   */
+  idempotencyKey: string;
+  /** The acting user's id -- written onto the paired `audit_log` row (`actorUserId`), never a column on `withdrawal_transactions` itself. */
+  actorUserId: string;
+  /** Optional -- written onto the paired `audit_log` row's `reason` column, `null` when the caller didn't supply one. */
+  reason: string | null;
+}
+
+export interface EditWithdrawalTransactionResult {
+  transaction: WithdrawalTransaction;
+  /**
+   * `true` only when this call genuinely updated the row. `false` when it
+   * resolved to an idempotent replay of an already-applied edit -- mirrors
+   * `EditTransactionResult.edited`'s exact shape one ledger over.
+   */
+  edited: boolean;
+}
+
+/**
+ * The cancel request (Story 4.11) -- deliberately minimal, mirroring
+ * `CancelInvestmentTransactionInput`'s exact shape one ledger over:
+ * cancelling never changes any of the original row's own recorded fields --
+ * it only flips `status` to `"cancelled"` in place, creates a linked
+ * reversal row, and cascades to every linked leg (see
+ * `CancelWithdrawalTransactionResult`'s own doc comment).
+ */
+export interface CancelWithdrawalTransactionInput {
+  /** The existing withdrawal's id -- already confirmed to exist (and belong to this Project) by the route layer before this port is called. */
+  transactionId: string;
+  /**
+   * Enforced UNIQUE-when-present at the DB level, on `audit_log.idempotencyKey`
+   * -- mirrors `EditWithdrawalTransactionInput.idempotencyKey`'s exact role
+   * one field over.
+   */
+  idempotencyKey: string;
+  /** The acting user's id -- written onto the paired `audit_log` row (`actorUserId`), never a column on `withdrawal_transactions` itself. */
+  actorUserId: string;
+  /** Optional -- written onto the paired `audit_log` row's `reason` column. */
+  reason: string | null;
+}
+
+export interface CancelWithdrawalTransactionResult {
+  /** The original withdrawal, `status` now `"cancelled"` -- every other field untouched. */
+  originalTransaction: WithdrawalTransaction;
+  /**
+   * The newly-created linked reversal row -- carries the same `projectId`/
+   * `partyType`/`shareId`/`paymentMode`/`amount` as `originalTransaction`,
+   * `status: "cancelled"` too, `reversalOfTransactionId` pointing back at
+   * `originalTransaction.id` -- mirrors `CancelTransactionResult.reversalTransaction`
+   * exactly.
+   */
+  reversalTransaction: WithdrawalTransaction;
+  /**
+   * `true` only when this call genuinely performed the cancel (flipped the
+   * original row, cascaded to every linked leg via `cancelWithdrawalBundle()`,
+   * and inserted the reversal row). `false` when it resolved to an idempotent
+   * replay of an already-applied cancel.
+   */
+  cancelled: boolean;
+}
+
+/**
  * Port for reading/writing Withdrawal Transaction rows (Story 4.2) --
  * implemented by `packages/db` against Postgres; `packages/core` never
  * imports a DB driver directly (AD-9). Mirrors `InvestmentTransactionPort`'s
- * exact atomicity/idempotency contract one ledger over -- deliberately
- * narrower than that port, since this story builds no edit/cancel path yet
- * (Story 4.11's job, mirroring `InvestmentTransactionPort`'s own
- * Story-3.3-before-3.7/3.8 shape).
+ * exact atomicity/idempotency contract one ledger over.
+ *
+ * Story 4.11 extends this port with `editTransaction`/`cancelTransaction`,
+ * mirroring `InvestmentTransactionPort`'s identical Story 3.7/3.8 additions
+ * one ledger over -- `cancelTransaction` additionally cascades to every
+ * linked leg (a "project" leg's destination `investment_transactions` row,
+ * an "available_balance" leg's credited pool), the genuinely new
+ * cross-cutting concern this story adds that the investment side never
+ * needed.
  */
 export interface WithdrawalTransactionPort {
   /**
@@ -89,4 +179,68 @@ export interface WithdrawalTransactionPort {
   sumActiveAmountByProjectId(projectId: string): Promise<Money>;
   /** The withdrawal with this id, or `null` if it doesn't exist (Story 4.10, FR30) -- mirrors `InvestmentTransactionPort.findById`'s identical shape one ledger over. */
   findById(id: string): Promise<WithdrawalTransaction | null>;
+  /**
+   * Atomicity contract (AD-5), mirroring `InvestmentTransactionPort.editTransaction`'s
+   * exact shape one ledger over: a successful call updates exactly one
+   * `withdrawal_transactions` row's mutable fields and inserts exactly one
+   * paired `audit_log` row (`entityType: "withdrawal_transaction"`,
+   * `entityId` = `input.transactionId`, `action: "edit"`, `actorUserId`,
+   * `oldValue` = the full previous row, `newValue` = the full new row,
+   * `reason`, `idempotencyKey`) inside a single DB transaction.
+   *
+   * Idempotency contract, mirroring `editTransaction`'s (investment-side)
+   * exactly: if an `audit_log` entry with `input.idempotencyKey` already
+   * exists, this call does NOT re-apply the edit -- it returns the
+   * withdrawal's current state (`edited: false`) instead.
+   *
+   * Already-cancelled contract: for a genuinely new edit attempt, this is
+   * the AUTHORITATIVE already-cancelled check -- performed INSIDE the same
+   * `database.transaction()`, immediately after a `SELECT ... FOR UPDATE`
+   * read of the row being edited: if the locked row's `status` is already
+   * `"cancelled"`, throws `WithdrawalAlreadyCancelledError` before the
+   * `UPDATE` ever runs.
+   *
+   * Amount-locked contract (Story 4.11's new precondition, no investment-side
+   * equivalent): if this withdrawal already has one or more
+   * `withdrawal_destination_allocations` legs recorded AND `input.amount`
+   * differs from the row's current `amount`, throws
+   * `WithdrawalAmountLockedByAllocationError` before the `UPDATE` ever runs
+   * -- every other field (date/payment mode/reference number/notes) stays
+   * freely editable regardless of allocation status.
+   */
+  editTransaction(input: EditWithdrawalTransactionInput): Promise<EditWithdrawalTransactionResult>;
+  /**
+   * Atomicity contract (AD-5), mirroring `InvestmentTransactionPort.cancelTransaction`'s
+   * exact shape one ledger over, extended with a cascade this story adds: a
+   * successful call (1) cascades to every linked
+   * `withdrawal_destination_allocations` leg via `cancelWithdrawalBundle()`
+   * (a `"project"` leg's destination `investment_transactions` row is
+   * cancelled via `InvestmentTransactionPort.cancelTransaction()`, an
+   * `"available_balance"` leg's credited pool is reversed via
+   * `AvailableBalancePort.debitBalance()`), (2) updates the original
+   * `withdrawal_transactions` row's `status` to `"cancelled"`, (3) inserts
+   * exactly one new `withdrawal_transactions` row (the reversal), and (4)
+   * inserts exactly one paired `audit_log` row (`entityType:
+   * "withdrawal_transaction"`, `action: "cancel"`) -- all inside a single DB
+   * transaction, never a subset. No `DELETE` is ever issued, and
+   * `withdrawal_destination_allocations`/`money_movements` rows are never
+   * touched by a cancel (this story's Decisions #3/#4).
+   *
+   * If the cascade's `"available_balance"` leg reversal can't be applied
+   * because the pool's current balance is less than what that leg
+   * originally credited (i.e. some or all of it was already spent onward),
+   * `AvailableBalancePort.debitBalance()`'s own `InsufficientAvailableBalanceError`
+   * propagates uncaught and the ENTIRE cancellation rolls back -- nothing
+   * partially cancelled, the withdrawal stays active, no status flip, no
+   * reversal row (this story's Decisions #2, a deliberate, confirmed design
+   * choice).
+   *
+   * Idempotency/already-cancelled contracts otherwise mirror `editTransaction`'s
+   * exactly, one action over: a replayed `idempotencyKey` returns the
+   * already-cancelled original plus its existing reversal row (`cancelled:
+   * false`), without re-running the cascade a second time; a genuinely new
+   * cancel attempt against an already-`"cancelled"` row throws
+   * `WithdrawalAlreadyCancelledError`.
+   */
+  cancelTransaction(input: CancelWithdrawalTransactionInput): Promise<CancelWithdrawalTransactionResult>;
 }

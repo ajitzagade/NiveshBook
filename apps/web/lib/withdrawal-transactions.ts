@@ -86,3 +86,77 @@ export async function recordWithdrawalTransaction(
   }
   return (await response.json()) as WithdrawalTransaction;
 }
+
+export interface EditWithdrawalTransactionInput {
+  /** `"0"` is explicitly allowed -- no forced withdrawal, mirrors create's rule. */
+  amount: string;
+  /** Plain date, `YYYY-MM-DD`. */
+  transactionDate: string;
+  paymentMode: string;
+  referenceNumber: string | null;
+  notes: string | null;
+  /** Optional -- `audit_log.reason`'s existing nullable design (Story 4.2). */
+  reason: string | null;
+}
+
+/**
+ * Edits a previously recorded withdrawal's mutable fields (Story 4.11,
+ * AD-5) -- Owner/Admin-only. `idempotencyKey` mirrors
+ * `recordWithdrawalTransaction`'s exact lifecycle contract one level over:
+ * the caller mints one fresh key per *logical* edit attempt (e.g. when the
+ * Edit Withdrawal dialog opens) and reuses that same key across a retry of
+ * that same attempt. This function never generates or mutates the key.
+ */
+export async function editWithdrawalTransaction(
+  projectId: string,
+  transactionId: string,
+  input: EditWithdrawalTransactionInput,
+  idempotencyKey: string,
+): Promise<WithdrawalTransaction> {
+  const response = await fetch(
+    `/api/projects/${projectId}/withdrawal-transactions/${transactionId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...input, idempotencyKey }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as WithdrawalTransaction;
+}
+
+/** `POST .../withdrawal-transactions/[transactionId]/cancel`'s response shape (Story 4.11). */
+export interface CancelWithdrawalTransactionResult {
+  originalTransaction: WithdrawalTransaction;
+  reversalTransaction: WithdrawalTransaction;
+}
+
+/**
+ * Cancels/reverses a previously recorded withdrawal (Story 4.11, AD-5) --
+ * Owner/Admin-only. `idempotencyKey` mirrors `editWithdrawalTransaction`'s
+ * exact lifecycle contract one level over: the caller mints one fresh key
+ * per *logical* cancel attempt (e.g. when the confirmation dialog opens) and
+ * reuses that same key across a retry of that same attempt. This function
+ * never generates or mutates the key.
+ */
+export async function cancelWithdrawalTransaction(
+  projectId: string,
+  transactionId: string,
+  reason: string | null,
+  idempotencyKey: string,
+): Promise<CancelWithdrawalTransactionResult> {
+  const response = await fetch(
+    `/api/projects/${projectId}/withdrawal-transactions/${transactionId}/cancel`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idempotencyKey, reason }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as CancelWithdrawalTransactionResult;
+}

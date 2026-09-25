@@ -4,7 +4,9 @@ import type { CreateWithdrawalDestinationAllocationLegInput } from "@niveshbook/
 import {
   isUniqueViolation,
   matchesCancelRequest,
+  matchesCancelWithdrawalRequest,
   matchesEditRequest,
+  matchesEditWithdrawalRequest,
   matchesRequest,
   matchesWithdrawalRequest,
   matchesAllocationRequest,
@@ -380,6 +382,8 @@ function makeExistingWithdrawalTransaction(
     paymentMode: "neft",
     referenceNumber: null,
     notes: null,
+    status: "active",
+    reversalOfTransactionId: null,
     createdAt: new Date().toISOString(),
     ...overrides,
   };
@@ -486,6 +490,117 @@ describe("matchesWithdrawalRequest", () => {
     });
 
     expect(result).toBe(false);
+  });
+});
+
+describe("matchesEditWithdrawalRequest — Story 4.11", () => {
+  function makeAuditEntry(overrides: { entityId?: string; newValue?: unknown } = {}) {
+    return {
+      entityId: overrides.entityId ?? "wtx-1",
+      newValue:
+        "newValue" in overrides
+          ? overrides.newValue
+          : {
+              amount: "300000",
+              transactionDate: "2026-10-06",
+              paymentMode: "upi",
+              referenceNumber: "REF-2",
+              notes: "corrected",
+            },
+    };
+  }
+
+  function makeEditInput(overrides: Record<string, unknown> = {}) {
+    return {
+      transactionId: "wtx-1",
+      amount: "300000" as Money,
+      transactionDate: "2026-10-06",
+      paymentMode: "upi" as const,
+      referenceNumber: "REF-2",
+      notes: "corrected",
+      ...overrides,
+    };
+  }
+
+  it("matches when every field is byte-identical", () => {
+    expect(matchesEditWithdrawalRequest(makeAuditEntry(), makeEditInput())).toBe(true);
+  });
+
+  it("matches a legitimate replay even though the stored amount round-tripped through numeric(14,2)", () => {
+    const entry = makeAuditEntry({
+      newValue: {
+        amount: "300000.00",
+        transactionDate: "2026-10-06",
+        paymentMode: "upi",
+        referenceNumber: "REF-2",
+        notes: "corrected",
+      },
+    });
+
+    expect(matchesEditWithdrawalRequest(entry, makeEditInput({ amount: "300000" as Money }))).toBe(true);
+  });
+
+  it("rejects a mismatched entityId (a different withdrawal entirely)", () => {
+    const entry = makeAuditEntry({ entityId: "wtx-2" });
+
+    expect(matchesEditWithdrawalRequest(entry, makeEditInput({ transactionId: "wtx-1" }))).toBe(false);
+  });
+
+  it("rejects a genuinely different amount -- a true key collision, not a replay", () => {
+    expect(
+      matchesEditWithdrawalRequest(makeAuditEntry(), makeEditInput({ amount: "300000.01" as Money })),
+    ).toBe(false);
+  });
+
+  it("rejects a mismatched transactionDate/paymentMode/referenceNumber/notes even when amount matches", () => {
+    expect(
+      matchesEditWithdrawalRequest(makeAuditEntry(), makeEditInput({ transactionDate: "2026-10-07" })),
+    ).toBe(false);
+    expect(matchesEditWithdrawalRequest(makeAuditEntry(), makeEditInput({ paymentMode: "neft" }))).toBe(
+      false,
+    );
+    expect(
+      matchesEditWithdrawalRequest(makeAuditEntry(), makeEditInput({ referenceNumber: "REF-9" })),
+    ).toBe(false);
+    expect(
+      matchesEditWithdrawalRequest(makeAuditEntry(), makeEditInput({ notes: "different note" })),
+    ).toBe(false);
+  });
+
+  it("treats a null referenceNumber/notes on both sides as a match", () => {
+    const entry = makeAuditEntry({
+      newValue: {
+        amount: "300000",
+        transactionDate: "2026-10-06",
+        paymentMode: "upi",
+        referenceNumber: null,
+        notes: null,
+      },
+    });
+
+    expect(
+      matchesEditWithdrawalRequest(entry, makeEditInput({ referenceNumber: null, notes: null })),
+    ).toBe(true);
+  });
+
+  it("rejects a newValue that isn't a well-formed object (defense in depth against a malformed jsonb row)", () => {
+    expect(matchesEditWithdrawalRequest(makeAuditEntry({ newValue: null }), makeEditInput())).toBe(false);
+    expect(
+      matchesEditWithdrawalRequest(makeAuditEntry({ newValue: "not-an-object" }), makeEditInput()),
+    ).toBe(false);
+    expect(
+      matchesEditWithdrawalRequest(makeAuditEntry({ newValue: { amount: 300000 } }), makeEditInput()),
+    ).toBe(false);
+  });
+});
+
+describe("matchesCancelWithdrawalRequest — Story 4.11", () => {
+  it("matches when entityId equals transactionId", () => {
+    expect(matchesCancelWithdrawalRequest({ entityId: "wtx-1" }, { transactionId: "wtx-1" })).toBe(true);
+  });
+
+  it("rejects a mismatched entityId -- a genuine key collision with an unrelated request, not a replay of this cancel", () => {
+    expect(matchesCancelWithdrawalRequest({ entityId: "wtx-2" }, { transactionId: "wtx-1" })).toBe(false);
   });
 });
 

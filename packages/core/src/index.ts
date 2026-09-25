@@ -31,6 +31,7 @@ export * from "./withdrawal-destination-allocation";
 export * from "./withdrawal-destination-allocation-port";
 export * from "./money-movement-port";
 export * from "./move-withdrawal-to-project";
+export * from "./cancel-withdrawal-bundle";
 export * from "./available-balance";
 export * from "./available-balance-port";
 export * from "./spend-available-balance";

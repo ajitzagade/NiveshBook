@@ -1,20 +1,38 @@
 import { describe, it, expect } from "vitest";
-import type { Money, PartnerShare, Percent, SubPartnerShare, WithdrawalTransaction } from "@niveshbook/types";
+import type {
+  Money,
+  PartnerShare,
+  Percent,
+  SubPartnerShare,
+  WithdrawalDestinationAllocation,
+  WithdrawalTransaction,
+} from "@niveshbook/types";
 import { PartnerSharesNotFullyAllocatedError, CanTakeSubPartnerSharesOverAllocatedError } from "./can-take";
 import type {
+  CancelWithdrawalTransactionInput,
   CreateWithdrawalTransactionInput,
+  EditWithdrawalTransactionInput,
   WithdrawalTransactionPort,
 } from "./withdrawal-transaction-port";
+import type { WithdrawalDestinationAllocationPort } from "./withdrawal-destination-allocation-port";
 import {
+  assertAmountEditable,
+  assertWithdrawalNotCancelled,
   buildWithdrawalSnapshot,
+  cancelWithdrawalTransaction,
+  editWithdrawalTransaction,
   InvalidWithdrawalAmountError,
   InvalidWithdrawalDateError,
   InvalidWithdrawalPaymentModeError,
   MissingWithdrawalIdempotencyKeyError,
+  WithdrawalAlreadyCancelledError,
+  WithdrawalAmountLockedByAllocationError,
   WithdrawalShareNotFoundError,
   listWithdrawalTransactions,
   recordWithdrawalTransaction,
   WITHDRAWAL_PAYMENT_MODES,
+  type EditWithdrawalTransactionDeps,
+  type EditWithdrawalTransactionRequest,
   type RecordWithdrawalTransactionInput,
 } from "./withdrawal-transaction";
 
@@ -67,24 +85,45 @@ function makeInput(
 /**
  * A WithdrawalTransactionPort backed by a mutable in-memory array -- mirrors
  * `investment-transaction.test.ts`'s `createFakeInvestmentTransactionPort`
- * convention, one ledger over, deliberately narrower (no edit/cancel --
- * Story 4.11's job). `calls` records every `recordTransaction` input
- * verbatim, so tests can assert on exactly what `recordWithdrawalTransaction`
- * built and passed through. Always resolves `created: true` -- the
- * idempotent-replay/concurrent-race behavior is `packages/db`'s own port
- * implementation's job, verified at that layer
+ * convention, one ledger over. `calls` records every `recordTransaction`
+ * input verbatim, so tests can assert on exactly what
+ * `recordWithdrawalTransaction` built and passed through. Always resolves
+ * `created: true` -- the idempotent-replay/concurrent-race behavior is
+ * `packages/db`'s own port implementation's job, verified at that layer
  * (`packages/db/src/withdrawal-transaction-port.test.ts`) and by the
  * route-level idempotent-replay test (with this port mocked), not this
  * domain-layer test file's.
+ *
+ * Story 4.11 addition: also implements `editTransaction`/`cancelTransaction`
+ * -- mirrors `createFakeInvestmentTransactionPort`'s identical
+ * check-first-then-replay idempotency handling (via
+ * `Map<idempotencyKey, ...>`s) and already-cancelled rejection, one ledger
+ * over. Deliberately does NOT implement `cancelTransaction`'s cascade to
+ * linked `investment_transactions`/`available_balances` -- that's
+ * `cancelWithdrawalBundle()`'s own job, tested directly in
+ * `cancel-withdrawal-bundle.test.ts`; this fake proves only that
+ * `editWithdrawalTransaction`/`cancelWithdrawalTransaction` build the right
+ * port input and correctly surface the port's own result/idempotency shape.
  */
 function createFakeWithdrawalTransactionPort(): WithdrawalTransactionPort & {
   calls: CreateWithdrawalTransactionInput[];
+  editCalls: EditWithdrawalTransactionInput[];
+  cancelCalls: CancelWithdrawalTransactionInput[];
   rows: WithdrawalTransaction[];
 } {
   const calls: CreateWithdrawalTransactionInput[] = [];
+  const editCalls: EditWithdrawalTransactionInput[] = [];
+  const cancelCalls: CancelWithdrawalTransactionInput[] = [];
   const rows: WithdrawalTransaction[] = [];
+  const appliedEditsByIdempotencyKey = new Map<string, WithdrawalTransaction>();
+  const appliedCancelsByIdempotencyKey = new Map<
+    string,
+    { originalTransaction: WithdrawalTransaction; reversalTransaction: WithdrawalTransaction }
+  >();
   return {
     calls,
+    editCalls,
+    cancelCalls,
     rows,
     async recordTransaction(input) {
       calls.push(input);
@@ -100,6 +139,8 @@ function createFakeWithdrawalTransactionPort(): WithdrawalTransactionPort & {
         paymentMode: input.paymentMode,
         referenceNumber: input.referenceNumber,
         notes: input.notes,
+        status: "active",
+        reversalOfTransactionId: null,
         createdAt: new Date().toISOString(),
       };
       rows.push(transaction);
@@ -114,6 +155,107 @@ function createFakeWithdrawalTransactionPort(): WithdrawalTransactionPort & {
     async findById(id) {
       return rows.find((row) => row.id === id) ?? null;
     },
+    async editTransaction(input) {
+      editCalls.push(input);
+
+      const alreadyApplied = appliedEditsByIdempotencyKey.get(input.idempotencyKey);
+      if (alreadyApplied) {
+        return { transaction: alreadyApplied, edited: false };
+      }
+
+      const index = rows.findIndex((row) => row.id === input.transactionId);
+      const existing = rows[index];
+      if (!existing) {
+        throw new Error(`No fake row for transactionId ${input.transactionId}`);
+      }
+      const updated: WithdrawalTransaction = {
+        ...existing,
+        amount: input.amount,
+        transactionDate: input.transactionDate,
+        paymentMode: input.paymentMode,
+        referenceNumber: input.referenceNumber,
+        notes: input.notes,
+      };
+      rows[index] = updated;
+      appliedEditsByIdempotencyKey.set(input.idempotencyKey, updated);
+      return { transaction: updated, edited: true };
+    },
+    async cancelTransaction(input) {
+      cancelCalls.push(input);
+
+      const alreadyApplied = appliedCancelsByIdempotencyKey.get(input.idempotencyKey);
+      if (alreadyApplied) {
+        return { ...alreadyApplied, cancelled: false };
+      }
+
+      const index = rows.findIndex((row) => row.id === input.transactionId);
+      const existing = rows[index];
+      if (!existing) {
+        throw new Error(`No fake row for transactionId ${input.transactionId}`);
+      }
+      if (existing.status === "cancelled") {
+        throw new WithdrawalAlreadyCancelledError();
+      }
+
+      const updatedOriginal: WithdrawalTransaction = { ...existing, status: "cancelled" };
+      rows[index] = updatedOriginal;
+
+      const reversal: WithdrawalTransaction = {
+        ...existing,
+        id: `wtx-${rows.length + 1}`,
+        status: "cancelled",
+        reversalOfTransactionId: updatedOriginal.id,
+        createdAt: new Date().toISOString(),
+      };
+      rows.push(reversal);
+
+      const result = { originalTransaction: updatedOriginal, reversalTransaction: reversal };
+      appliedCancelsByIdempotencyKey.set(input.idempotencyKey, result);
+      return { ...result, cancelled: true };
+    },
+  };
+}
+
+/** A `WithdrawalDestinationAllocationPort.listByWithdrawalTransactionId`-only fake -- backs `EditWithdrawalTransactionDeps`'s narrow ISP dependency. */
+function createFakeAllocationLister(
+  legsByWithdrawalTransactionId: Record<string, WithdrawalDestinationAllocation[]> = {},
+): Pick<WithdrawalDestinationAllocationPort, "listByWithdrawalTransactionId"> {
+  return {
+    async listByWithdrawalTransactionId(withdrawalTransactionId) {
+      return legsByWithdrawalTransactionId[withdrawalTransactionId] ?? [];
+    },
+  };
+}
+
+function makeLeg(overrides: Partial<WithdrawalDestinationAllocation> = {}): WithdrawalDestinationAllocation {
+  return {
+    id: "leg-1",
+    withdrawalTransactionId: "wtx-1",
+    destinationType: "other",
+    amount: "1000" as Money,
+    destinationProjectId: null,
+    personName: null,
+    notes: "Kept as cash",
+    destinationRequirementId: null,
+    destinationShareId: null,
+    destinationPartyType: null,
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+function makeEditRequest(
+  overrides: Partial<EditWithdrawalTransactionRequest> = {},
+): EditWithdrawalTransactionRequest {
+  return {
+    amount: "300000",
+    transactionDate: "2026-10-06",
+    paymentMode: "upi",
+    referenceNumber: null,
+    notes: null,
+    idempotencyKey: "edit-key-1",
+    reason: null,
+    ...overrides,
   };
 }
 
@@ -473,5 +615,316 @@ describe("listWithdrawalTransactions", () => {
     const result = await listWithdrawalTransactions("project-1", { withdrawalTransactions: port });
 
     expect(result).toEqual([]);
+  });
+});
+
+describe("assertWithdrawalNotCancelled — Story 4.11", () => {
+  it("is a no-op for an 'active' status", () => {
+    expect(() => assertWithdrawalNotCancelled("active")).not.toThrow();
+  });
+
+  it("throws WithdrawalAlreadyCancelledError for a 'cancelled' status", () => {
+    expect(() => assertWithdrawalNotCancelled("cancelled")).toThrow(WithdrawalAlreadyCancelledError);
+  });
+});
+
+describe("assertAmountEditable — Story 4.11 (this story's Decisions #5)", () => {
+  it("is a no-op when there are no existing legs, regardless of whether the amount changed", () => {
+    expect(() => assertAmountEditable(false, true)).not.toThrow();
+    expect(() => assertAmountEditable(false, false)).not.toThrow();
+  });
+
+  it("is a no-op when legs exist but the amount didn't change", () => {
+    expect(() => assertAmountEditable(true, false)).not.toThrow();
+  });
+
+  it("throws WithdrawalAmountLockedByAllocationError only when legs exist AND the amount changed", () => {
+    expect(() => assertAmountEditable(true, true)).toThrow(WithdrawalAmountLockedByAllocationError);
+  });
+});
+
+describe("editWithdrawalTransaction — Story 4.11", () => {
+  async function seedActiveWithdrawal(
+    port: ReturnType<typeof createFakeWithdrawalTransactionPort>,
+    amount = "250000",
+  ): Promise<string> {
+    const { transaction } = await port.recordTransaction({
+      projectId: "project-1",
+      partyType: "partner",
+      shareId: "a",
+      sharePercentSnapshot: "50" as Percent,
+      canTakeSnapshot: "500000" as Money,
+      amount: amount as Money,
+      transactionDate: "2026-10-05",
+      paymentMode: "neft",
+      referenceNumber: null,
+      notes: null,
+      idempotencyKey: "create-key-1",
+      actorUserId: "actor-1",
+    });
+    return transaction.id;
+  }
+
+  it("validates amount/date/paymentMode/idempotencyKey via the same normalize helpers create uses", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+    const transactionId = await seedActiveWithdrawal(port);
+    const deps: EditWithdrawalTransactionDeps = {
+      withdrawalTransactions: port,
+      withdrawalDestinationAllocations: createFakeAllocationLister(),
+    };
+
+    await expect(
+      editWithdrawalTransaction(transactionId, makeEditRequest({ amount: "not-a-number" }), "actor-1", deps),
+    ).rejects.toThrow(InvalidWithdrawalAmountError);
+    await expect(
+      editWithdrawalTransaction(transactionId, makeEditRequest({ transactionDate: "not-a-date" }), "actor-1", deps),
+    ).rejects.toThrow(InvalidWithdrawalDateError);
+    await expect(
+      editWithdrawalTransaction(transactionId, makeEditRequest({ paymentMode: "bitcoin" }), "actor-1", deps),
+    ).rejects.toThrow(InvalidWithdrawalPaymentModeError);
+    await expect(
+      editWithdrawalTransaction(transactionId, makeEditRequest({ idempotencyKey: "  " }), "actor-1", deps),
+    ).rejects.toThrow(MissingWithdrawalIdempotencyKeyError);
+  });
+
+  it("saves a corrected amount/date/paymentMode/reference/notes in place, calling the port's editTransaction", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+    const transactionId = await seedActiveWithdrawal(port);
+    const deps: EditWithdrawalTransactionDeps = {
+      withdrawalTransactions: port,
+      withdrawalDestinationAllocations: createFakeAllocationLister(),
+    };
+
+    const result = await editWithdrawalTransaction(
+      transactionId,
+      makeEditRequest({ amount: "300000", referenceNumber: "REF-2", notes: "corrected" }),
+      "actor-1",
+      deps,
+    );
+
+    expect(result.edited).toBe(true);
+    expect(result.transaction.amount).toBe("300000");
+    expect(result.transaction.referenceNumber).toBe("REF-2");
+    expect(result.transaction.notes).toBe("corrected");
+    expect(port.editCalls).toHaveLength(1);
+  });
+
+  it("leaves sharePercentSnapshot/canTakeSnapshot/projectId/partyType/shareId untouched by an edit", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+    const transactionId = await seedActiveWithdrawal(port);
+    const before = await port.findById(transactionId);
+    const deps: EditWithdrawalTransactionDeps = {
+      withdrawalTransactions: port,
+      withdrawalDestinationAllocations: createFakeAllocationLister(),
+    };
+
+    const { transaction: after } = await editWithdrawalTransaction(
+      transactionId,
+      makeEditRequest({ amount: "250000" }),
+      "actor-1",
+      deps,
+    );
+
+    expect(after.sharePercentSnapshot).toBe(before?.sharePercentSnapshot);
+    expect(after.canTakeSnapshot).toBe(before?.canTakeSnapshot);
+    expect(after.projectId).toBe(before?.projectId);
+    expect(after.partyType).toBe(before?.partyType);
+    expect(after.shareId).toBe(before?.shareId);
+  });
+
+  it("a repeated call with the same idempotencyKey replays (edited: false), not a second edit", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+    const transactionId = await seedActiveWithdrawal(port);
+    const deps: EditWithdrawalTransactionDeps = {
+      withdrawalTransactions: port,
+      withdrawalDestinationAllocations: createFakeAllocationLister(),
+    };
+    const request = makeEditRequest({ amount: "300000", idempotencyKey: "same-key" });
+
+    const first = await editWithdrawalTransaction(transactionId, request, "actor-1", deps);
+    const second = await editWithdrawalTransaction(transactionId, request, "actor-1", deps);
+
+    expect(first.edited).toBe(true);
+    expect(second.edited).toBe(false);
+    expect(second.transaction).toEqual(first.transaction);
+    // The port's editTransaction was genuinely called twice (this function
+    // has no idempotency logic of its own) -- the replay behavior is proven
+    // at the fake port layer, mirroring `editInvestmentTransaction`'s
+    // identical test shape.
+    expect(port.editCalls).toHaveLength(2);
+  });
+
+  it("throws WithdrawalAlreadyCancelledError before any validation when the current row is already cancelled", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+    const transactionId = await seedActiveWithdrawal(port);
+    await port.cancelTransaction({
+      transactionId,
+      idempotencyKey: "cancel-key-1",
+      actorUserId: "actor-1",
+      reason: null,
+    });
+    const deps: EditWithdrawalTransactionDeps = {
+      withdrawalTransactions: port,
+      withdrawalDestinationAllocations: createFakeAllocationLister(),
+    };
+
+    // A simultaneously-invalid amount is present too -- the already-cancelled
+    // guard must still win (fail fast on the most fundamental precondition
+    // first), mirroring `editInvestmentTransaction`'s identical guarantee.
+    await expect(
+      editWithdrawalTransaction(transactionId, makeEditRequest({ amount: "not-a-number" }), "actor-1", deps),
+    ).rejects.toThrow(WithdrawalAlreadyCancelledError);
+  });
+
+  it("skips the already-cancelled guard (and the amount-locked guard) when no row is found at all", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+    const deps: EditWithdrawalTransactionDeps = {
+      withdrawalTransactions: port,
+      withdrawalDestinationAllocations: createFakeAllocationLister(),
+    };
+
+    await expect(
+      editWithdrawalTransaction("nonexistent-id", makeEditRequest(), "actor-1", deps),
+    ).rejects.toThrow(/No fake row/);
+  });
+
+  it("rejects an amount change once a destination allocation leg exists for this withdrawal (this story's Decisions #5)", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+    const transactionId = await seedActiveWithdrawal(port, "250000");
+    const deps: EditWithdrawalTransactionDeps = {
+      withdrawalTransactions: port,
+      withdrawalDestinationAllocations: createFakeAllocationLister({
+        [transactionId]: [makeLeg({ withdrawalTransactionId: transactionId })],
+      }),
+    };
+
+    await expect(
+      editWithdrawalTransaction(transactionId, makeEditRequest({ amount: "300000" }), "actor-1", deps),
+    ).rejects.toThrow(WithdrawalAmountLockedByAllocationError);
+  });
+
+  it("allows a non-amount edit even once a destination allocation leg exists (the lock only guards amount)", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+    const transactionId = await seedActiveWithdrawal(port, "250000");
+    const deps: EditWithdrawalTransactionDeps = {
+      withdrawalTransactions: port,
+      withdrawalDestinationAllocations: createFakeAllocationLister({
+        [transactionId]: [makeLeg({ withdrawalTransactionId: transactionId })],
+      }),
+    };
+
+    const result = await editWithdrawalTransaction(
+      transactionId,
+      makeEditRequest({ amount: "250000", paymentMode: "cash", notes: "same amount, new mode" }),
+      "actor-1",
+      deps,
+    );
+
+    expect(result.edited).toBe(true);
+    expect(result.transaction.paymentMode).toBe("cash");
+    expect(result.transaction.notes).toBe("same amount, new mode");
+  });
+
+  it("allows the amount edit when the submitted amount round-trips to the same value as the current row's (no real change)", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+    const transactionId = await seedActiveWithdrawal(port, "250000");
+    const deps: EditWithdrawalTransactionDeps = {
+      withdrawalTransactions: port,
+      withdrawalDestinationAllocations: createFakeAllocationLister({
+        [transactionId]: [makeLeg({ withdrawalTransactionId: transactionId })],
+      }),
+    };
+
+    // "250000" vs. the stored "250000" -- decimal-equal, not a real change,
+    // even though legs already exist.
+    await expect(
+      editWithdrawalTransaction(transactionId, makeEditRequest({ amount: "250000" }), "actor-1", deps),
+    ).resolves.toMatchObject({ edited: true });
+  });
+});
+
+describe("cancelWithdrawalTransaction — Story 4.11", () => {
+  async function seedActiveWithdrawal(
+    port: ReturnType<typeof createFakeWithdrawalTransactionPort>,
+  ): Promise<string> {
+    const { transaction } = await port.recordTransaction({
+      projectId: "project-1",
+      partyType: "partner",
+      shareId: "a",
+      sharePercentSnapshot: "50" as Percent,
+      canTakeSnapshot: "500000" as Money,
+      amount: "250000" as Money,
+      transactionDate: "2026-10-05",
+      paymentMode: "neft",
+      referenceNumber: null,
+      notes: null,
+      idempotencyKey: "create-key-1",
+      actorUserId: "actor-1",
+    });
+    return transaction.id;
+  }
+
+  it("validates idempotencyKey via the same normalizeIdempotencyKey helper", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+    const transactionId = await seedActiveWithdrawal(port);
+
+    await expect(
+      cancelWithdrawalTransaction(transactionId, { idempotencyKey: "  ", reason: null }, "actor-1", {
+        withdrawalTransactions: port,
+      }),
+    ).rejects.toThrow(MissingWithdrawalIdempotencyKeyError);
+  });
+
+  it("cancels an active withdrawal: original flips to cancelled, a reversal row is created", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+    const transactionId = await seedActiveWithdrawal(port);
+
+    const result = await cancelWithdrawalTransaction(
+      transactionId,
+      { idempotencyKey: "cancel-key-1", reason: "recorded by mistake" },
+      "actor-1",
+      { withdrawalTransactions: port },
+    );
+
+    expect(result.cancelled).toBe(true);
+    expect(result.originalTransaction.status).toBe("cancelled");
+    expect(result.reversalTransaction.status).toBe("cancelled");
+    expect(result.reversalTransaction.reversalOfTransactionId).toBe(transactionId);
+    expect(port.cancelCalls[0]?.reason).toBe("recorded by mistake");
+  });
+
+  it("a repeated call with the same idempotencyKey replays (cancelled: false), not a second cancel", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+    const transactionId = await seedActiveWithdrawal(port);
+    const input = { idempotencyKey: "same-cancel-key", reason: null };
+
+    const first = await cancelWithdrawalTransaction(transactionId, input, "actor-1", {
+      withdrawalTransactions: port,
+    });
+    const second = await cancelWithdrawalTransaction(transactionId, input, "actor-1", {
+      withdrawalTransactions: port,
+    });
+
+    expect(first.cancelled).toBe(true);
+    expect(second.cancelled).toBe(false);
+    expect(second.originalTransaction).toEqual(first.originalTransaction);
+    expect(second.reversalTransaction).toEqual(first.reversalTransaction);
+    // The port's cancelTransaction was genuinely called twice (this function
+    // has no idempotency logic of its own, mirroring `cancelInvestmentTransaction`).
+    expect(port.cancelCalls).toHaveLength(2);
+  });
+
+  it("lets WithdrawalAlreadyCancelledError propagate for a genuinely new cancel attempt on an already-cancelled withdrawal", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+    const transactionId = await seedActiveWithdrawal(port);
+    await cancelWithdrawalTransaction(transactionId, { idempotencyKey: "cancel-key-1", reason: null }, "actor-1", {
+      withdrawalTransactions: port,
+    });
+
+    await expect(
+      cancelWithdrawalTransaction(transactionId, { idempotencyKey: "cancel-key-2", reason: null }, "actor-1", {
+        withdrawalTransactions: port,
+      }),
+    ).rejects.toThrow(WithdrawalAlreadyCancelledError);
   });
 });

@@ -6,6 +6,11 @@ import {
   moneyEquals,
   subtractMoney,
   WithdrawalIdempotencyKeyConflictError,
+  WithdrawalAlreadyCancelledError,
+  WithdrawalAmountLockedByAllocationError,
+  assertWithdrawalNotCancelled,
+  assertAmountEditable,
+  cancelWithdrawalBundle,
   AlreadyAllocatedError,
   WithdrawalDestinationAllocationIdempotencyKeyConflictError,
   moveWithdrawalToProject,
@@ -28,6 +33,8 @@ import {
   type RecommendedAmountPort,
   type WithdrawalTransactionPort,
   type CreateWithdrawalTransactionInput,
+  type EditWithdrawalTransactionInput,
+  type CancelWithdrawalTransactionInput,
   type WithdrawalAdjustmentPort,
   type WithdrawalDestinationAllocationPort,
   type CreateWithdrawalDestinationAllocationLegInput,
@@ -282,6 +289,8 @@ function toWithdrawalTransaction(row: WithdrawalTransactionRow): WithdrawalTrans
     paymentMode: row.paymentMode as PaymentMode,
     referenceNumber: row.referenceNumber,
     notes: row.notes,
+    status: row.status as WithdrawalTransaction["status"],
+    reversalOfTransactionId: row.reversalOfTransactionId,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -852,6 +861,62 @@ export function matchesWithdrawalRequest(
 }
 
 /**
+ * `true` if `entry` (an `audit_log` row found by `idempotencyKey`) actually
+ * represents the *same* logical edit request as `input` -- Story 4.11's
+ * `editTransaction` analog of `matchesEditRequest` one ledger over.
+ * `entry.entityId` must match `input.transactionId`, and `entry.newValue`
+ * (the full resulting row, stored as JSON) must match every field `input` is
+ * asking to change. `amount` is compared via `moneyEquals`, mirroring
+ * `matchesEditRequest`'s identical rounding-safety rationale.
+ */
+export function matchesEditWithdrawalRequest(
+  entry: Pick<AuditLogRow, "entityId" | "newValue">,
+  input: Pick<
+    EditWithdrawalTransactionInput,
+    "transactionId" | "amount" | "transactionDate" | "paymentMode" | "referenceNumber" | "notes"
+  >,
+): boolean {
+  if (entry.entityId !== input.transactionId) {
+    return false;
+  }
+  if (typeof entry.newValue !== "object" || entry.newValue === null) {
+    return false;
+  }
+  const newValue = entry.newValue as {
+    amount?: unknown;
+    transactionDate?: unknown;
+    paymentMode?: unknown;
+    referenceNumber?: unknown;
+    notes?: unknown;
+  };
+  if (typeof newValue.amount !== "string") {
+    return false;
+  }
+  return (
+    moneyEquals(newValue.amount as Money, input.amount) &&
+    newValue.transactionDate === input.transactionDate &&
+    newValue.paymentMode === input.paymentMode &&
+    (newValue.referenceNumber ?? null) === input.referenceNumber &&
+    (newValue.notes ?? null) === input.notes
+  );
+}
+
+/**
+ * `true` if `entry` (an `audit_log` row found by `idempotencyKey`) actually
+ * represents the *same* logical cancel request as `input` -- Story 4.11's
+ * `cancelTransaction` analog of `matchesCancelRequest` one ledger over.
+ * Mirrors `matchesCancelRequest`'s identical "entityId match is the entire
+ * check" rationale -- a cancel request carries no other caller-supplied
+ * content to compare.
+ */
+export function matchesCancelWithdrawalRequest(
+  entry: Pick<AuditLogRow, "entityId">,
+  input: Pick<CancelWithdrawalTransactionInput, "transactionId">,
+): boolean {
+  return entry.entityId === input.transactionId;
+}
+
+/**
  * `true` if `existingRows` (every `withdrawal_destination_allocations` row
  * already saved for one withdrawal/idempotencyKey) represents the exact
  * same set of legs as `legs` (the current request) -- Story 4.7's
@@ -944,6 +1009,45 @@ export function createWithdrawalTransactionPort(
     return row ? toWithdrawalTransaction(row) : null;
   }
 
+  /** Shared by `findById` and `editTransaction`'s idempotent-replay paths -- mirrors `createInvestmentTransactionPort`'s identical `findTransactionById` helper one ledger over. */
+  async function findTransactionById(id: string): Promise<WithdrawalTransaction | null> {
+    const rows = await database
+      .select()
+      .from(withdrawalTransactions)
+      .where(eq(withdrawalTransactions.id, id))
+      .limit(1);
+    const row = rows[0];
+    return row ? toWithdrawalTransaction(row) : null;
+  }
+
+  /** Shared by `editTransaction`'s/`cancelTransaction`'s straightforward-replay and concurrent-race-recovery paths -- mirrors `createInvestmentTransactionPort`'s identical helper one ledger over. */
+  async function findAuditEntryByIdempotencyKey(idempotencyKey: string): Promise<AuditLogRow | null> {
+    const rows = await database
+      .select()
+      .from(auditLog)
+      .where(eq(auditLog.idempotencyKey, idempotencyKey))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  /**
+   * The reversal row linked to one original withdrawal (Story 4.11) --
+   * mirrors `createInvestmentTransactionPort`'s identical `findReversalRow`
+   * helper one ledger over, including its `executor`-accepts-either-`Database`-
+   * or-`tx` shape.
+   */
+  async function findWithdrawalReversalRow(
+    executor: Pick<Database, "select">,
+    originalTransactionId: string,
+  ): Promise<WithdrawalTransactionRow | null> {
+    const rows = await executor
+      .select()
+      .from(withdrawalTransactions)
+      .where(eq(withdrawalTransactions.reversalOfTransactionId, originalTransactionId))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
   return {
     async recordTransaction(input) {
       const existing = await findByIdempotencyKey(input.idempotencyKey);
@@ -1017,11 +1121,14 @@ export function createWithdrawalTransactionPort(
      * Story 4.9 (FR29, Can Take fix): mirrors
      * `createInvestmentTransactionPort.sumActiveAmountByProjectId`'s
      * identical DB-side `SUM(amount)` shape one ledger over -- Postgres does
-     * the addition, never application code (AD-2). No `status` filter (this
-     * table has none yet -- no cancel/reverse path exists for a withdrawal,
-     * Story 4.11's job), so every row for the Project is summed. `coalesce(...,
-     * 0)` covers the zero-withdrawals case (`SUM` over zero rows is SQL
-     * `NULL`).
+     * the addition, never application code (AD-2). Deliberately still sums
+     * EVERY row unconditionally, cancelled or not, even after Story 4.11
+     * added `status` to this table -- extending this method (and the
+     * Withdrawal Adjustment/Can Take computation it feeds) to exclude
+     * cancelled withdrawals is out of this story's own Code Map/Boundaries
+     * (see spec-4-11's Implementation Notes); left as a deliberate, explicit
+     * non-goal rather than silently changed. `coalesce(..., 0)` covers the
+     * zero-withdrawals case (`SUM` over zero rows is SQL `NULL`).
      */
     async sumActiveAmountByProjectId(projectId) {
       const [row] = await database
@@ -1034,13 +1141,318 @@ export function createWithdrawalTransactionPort(
     },
     /** Story 4.10 (FR30) -- mirrors `createInvestmentTransactionPort.findById`'s identical plain-select shape one ledger over. */
     async findById(id) {
-      const rows = await database
-        .select()
-        .from(withdrawalTransactions)
-        .where(eq(withdrawalTransactions.id, id))
-        .limit(1);
-      const row = rows[0];
-      return row ? toWithdrawalTransaction(row) : null;
+      return findTransactionById(id);
+    },
+    /**
+     * Story 4.11's `editTransaction` -- mirrors
+     * `createInvestmentTransactionPort.editTransaction`'s exact atomicity/
+     * idempotency/`SELECT ... FOR UPDATE`-concurrency-safety structure one
+     * ledger over, plus one more piece that method doesn't need: the
+     * amount-locked-by-allocation guard (this story's Decisions #5).
+     */
+    async editTransaction(input) {
+      const existingEntry = await findAuditEntryByIdempotencyKey(input.idempotencyKey);
+      if (existingEntry) {
+        if (!matchesEditWithdrawalRequest(existingEntry, input)) {
+          throw new WithdrawalIdempotencyKeyConflictError();
+        }
+        const current = await findTransactionById(input.transactionId);
+        if (!current) {
+          throw new Error("Failed to replay withdrawal transaction edit: transaction no longer exists");
+        }
+        return { transaction: current, edited: false };
+      }
+
+      try {
+        const updated = await database.transaction(async (tx) => {
+          // `.for("update")` -- load-bearing under concurrent edits of the
+          // SAME withdrawal, mirroring `createInvestmentTransactionPort.editTransaction`'s
+          // identical `.for("update")` call's own doc comment (spec-3-7's
+          // Review Triage Log, row 1): a plain `SELECT` doesn't re-check
+          // after waiting on another transaction's row lock, so two
+          // concurrent, genuinely different edits of the same row could
+          // otherwise let the second one write a stale `audit_log.oldValue`.
+          const existingRows = await tx
+            .select()
+            .from(withdrawalTransactions)
+            .where(eq(withdrawalTransactions.id, input.transactionId))
+            .for("update")
+            .limit(1);
+          const previousRow = existingRows[0];
+          if (!previousRow) {
+            throw new Error("Failed to edit withdrawal transaction: not found");
+          }
+          // The AUTHORITATIVE already-cancelled check -- must run inside
+          // this same locked transaction, immediately after acquiring the
+          // `FOR UPDATE` lock, mirroring `createInvestmentTransactionPort.editTransaction`'s
+          // identical Story 3.8 fix one ledger over. `packages/core`'s
+          // `editWithdrawalTransaction` own early guard (a separate, earlier
+          // round trip) is a fast-fail optimization only, not sufficient on
+          // its own to close the race against a concurrent `cancelTransaction`.
+          assertWithdrawalNotCancelled(previousRow.status as "active" | "cancelled");
+
+          // The AUTHORITATIVE amount-locked-by-allocation check (this
+          // story's Decisions #5, no investment-side equivalent) -- a fresh
+          // `listByWithdrawalTransactionId` read taken AFTER the lock above
+          // is acquired, so a concurrent `recordDestinationAllocation` call
+          // that commits its legs between `packages/core`'s own early guard
+          // and this point is still correctly seen here.
+          const allocationPort = createWithdrawalDestinationAllocationPort(tx);
+          const legs = await allocationPort.listByWithdrawalTransactionId(input.transactionId);
+          const amountChanged = !moneyEquals(previousRow.amount as Money, input.amount);
+          assertAmountEditable(legs.length > 0, amountChanged);
+
+          const [updatedRow] = await tx
+            .update(withdrawalTransactions)
+            .set({
+              amount: input.amount,
+              transactionDate: input.transactionDate,
+              paymentMode: input.paymentMode,
+              referenceNumber: input.referenceNumber,
+              notes: input.notes,
+            })
+            .where(eq(withdrawalTransactions.id, input.transactionId))
+            .returning();
+          if (!updatedRow) {
+            throw new Error("Failed to edit withdrawal transaction");
+          }
+
+          await tx.insert(auditLog).values({
+            id: uuidv7(),
+            entityType: "withdrawal_transaction",
+            entityId: input.transactionId,
+            action: "edit",
+            actorUserId: input.actorUserId,
+            oldValue: previousRow,
+            newValue: updatedRow,
+            reason: input.reason,
+            idempotencyKey: input.idempotencyKey,
+          });
+
+          return updatedRow;
+        });
+
+        return { transaction: toWithdrawalTransaction(updated), edited: true };
+      } catch (error) {
+        if (error instanceof WithdrawalAlreadyCancelledError || error instanceof WithdrawalAmountLockedByAllocationError) {
+          throw error;
+        }
+        if (isUniqueViolation(error)) {
+          const winner = await findAuditEntryByIdempotencyKey(input.idempotencyKey);
+          if (winner) {
+            if (!matchesEditWithdrawalRequest(winner, input)) {
+              throw new WithdrawalIdempotencyKeyConflictError();
+            }
+            const current = await findTransactionById(input.transactionId);
+            if (current) {
+              return { transaction: current, edited: false };
+            }
+          }
+        }
+        throw error;
+      }
+    },
+    /**
+     * Story 4.11's `cancelTransaction` -- mirrors
+     * `createInvestmentTransactionPort.cancelTransaction`'s exact
+     * check-first-then-write-then-recover idempotency structure, extended
+     * with the genuinely new cross-cutting concern this story adds: a
+     * cascade to every linked destination-allocation leg
+     * (`cancelWithdrawalBundle()`, packages/core, AD-9), run inside the same
+     * `database.transaction()` as the withdrawal's own status flip and
+     * reversal-row insert -- so any cascade step's failure (most notably
+     * `InsufficientAvailableBalanceError`, this story's Decisions #2) rolls
+     * back EVERYTHING, including the would-be status flip and reversal
+     * insert. No partial cancel, ever.
+     *
+     * 1. `SELECT` `audit_log` by `idempotencyKey` first -- a straightforward
+     *    replay, mirroring `editTransaction`'s identical first step.
+     * 2. Otherwise, inside one `database.transaction()`: `SELECT ... FOR
+     *    UPDATE` the withdrawal row. If its `status` is already
+     *    `"cancelled"`, either (a) a genuinely new cancel attempt on an
+     *    already-void withdrawal -- `WithdrawalAlreadyCancelledError` -- or
+     *    (b) the concurrent-double-submit race: another request carrying
+     *    this EXACT `idempotencyKey` won the lock first and already
+     *    committed. (b) is detected by finding an `audit_log` "cancel" entry
+     *    for this withdrawal with this exact `idempotencyKey` (queried
+     *    against `tx`) -- if found, resolves to the same idempotent-replay
+     *    result (`cancelled: false`) instead of throwing.
+     * 3. Otherwise (still active): fetch every destination-allocation leg
+     *    (`createWithdrawalDestinationAllocationPort(tx).listByWithdrawalTransactionId`),
+     *    build transaction-bound `createMoneyMovementPort(tx)`/
+     *    `createInvestmentTransactionPort(tx)`/`createAvailableBalancePort(tx)`,
+     *    call `cancelWithdrawalBundle()` -- any error it throws
+     *    (`InsufficientAvailableBalanceError`, or an investment-side
+     *    `AlreadyCancelledError` if a "project" leg's destination row was
+     *    somehow already independently cancelled) propagates straight out of
+     *    this whole `database.transaction()` call, rolling back every write
+     *    the cascade already made plus the withdrawal's own would-be status
+     *    flip/reversal insert -- none of them happen at all. Only once the
+     *    cascade fully succeeds: `UPDATE` the original row's `status` to
+     *    `"cancelled"`, `INSERT` the reversal row (a fresh `idempotencyKey`
+     *    of its own, mirroring the investment side's identical rationale),
+     *    `INSERT` the paired `audit_log` "cancel" entry.
+     * 4. Defense in depth, mirroring `editTransaction`'s final catch block:
+     *    if the `audit_log` insert still throws a unique-violation, catch
+     *    it, re-`SELECT` by `idempotencyKey`, and apply
+     *    `matchesCancelWithdrawalRequest`: match -> replay result; mismatch
+     *    -> `WithdrawalIdempotencyKeyConflictError`.
+     */
+    async cancelTransaction(input) {
+      const existingEntry = await findAuditEntryByIdempotencyKey(input.idempotencyKey);
+      if (existingEntry) {
+        if (!matchesCancelWithdrawalRequest(existingEntry, input)) {
+          throw new WithdrawalIdempotencyKeyConflictError();
+        }
+        const original = await findTransactionById(input.transactionId);
+        const reversal = original ? await findWithdrawalReversalRow(database, input.transactionId) : null;
+        if (!original || !reversal) {
+          throw new Error(
+            "Failed to replay withdrawal transaction cancel: original or reversal transaction no longer exists",
+          );
+        }
+        return {
+          originalTransaction: original,
+          reversalTransaction: toWithdrawalTransaction(reversal),
+          cancelled: false,
+        };
+      }
+
+      try {
+        return await database.transaction(async (tx) => {
+          const existingRows = await tx
+            .select()
+            .from(withdrawalTransactions)
+            .where(eq(withdrawalTransactions.id, input.transactionId))
+            .for("update")
+            .limit(1);
+          const originalRow = existingRows[0];
+          if (!originalRow) {
+            throw new Error("Failed to cancel withdrawal transaction: not found");
+          }
+
+          if (originalRow.status === "cancelled") {
+            const raceWinnerRows = await tx
+              .select()
+              .from(auditLog)
+              .where(
+                and(
+                  eq(auditLog.entityType, "withdrawal_transaction"),
+                  eq(auditLog.entityId, input.transactionId),
+                  eq(auditLog.idempotencyKey, input.idempotencyKey),
+                ),
+              )
+              .limit(1);
+            if (!raceWinnerRows[0]) {
+              throw new WithdrawalAlreadyCancelledError();
+            }
+            const reversalRow = await findWithdrawalReversalRow(tx, input.transactionId);
+            if (!reversalRow) {
+              throw new Error(
+                "Failed to recover withdrawal transaction cancel: reversal transaction no longer exists",
+              );
+            }
+            return {
+              originalTransaction: toWithdrawalTransaction(originalRow),
+              reversalTransaction: toWithdrawalTransaction(reversalRow),
+              cancelled: false,
+            };
+          }
+
+          const allocationPort = createWithdrawalDestinationAllocationPort(tx);
+          const legs = await allocationPort.listByWithdrawalTransactionId(input.transactionId);
+
+          const moneyMovementPort = createMoneyMovementPort(tx);
+          const investmentTransactionPort = createInvestmentTransactionPort(tx);
+          const availableBalancePort = createAvailableBalancePort(tx);
+          await cancelWithdrawalBundle(
+            toWithdrawalTransaction(originalRow),
+            legs,
+            input.idempotencyKey,
+            input.actorUserId,
+            {
+              moneyMovements: moneyMovementPort,
+              investmentTransactions: investmentTransactionPort,
+              availableBalances: availableBalancePort,
+            },
+          );
+
+          const [updatedOriginal] = await tx
+            .update(withdrawalTransactions)
+            .set({ status: "cancelled" })
+            .where(eq(withdrawalTransactions.id, input.transactionId))
+            .returning();
+          if (!updatedOriginal) {
+            throw new Error("Failed to cancel withdrawal transaction");
+          }
+
+          const [reversalRow] = await tx
+            .insert(withdrawalTransactions)
+            .values({
+              id: uuidv7(),
+              projectId: originalRow.projectId,
+              partyType: originalRow.partyType,
+              shareId: originalRow.shareId,
+              sharePercentSnapshot: originalRow.sharePercentSnapshot,
+              canTakeSnapshot: originalRow.canTakeSnapshot,
+              amount: originalRow.amount,
+              transactionDate: originalRow.transactionDate,
+              paymentMode: originalRow.paymentMode,
+              referenceNumber: originalRow.referenceNumber,
+              notes: originalRow.notes,
+              idempotencyKey: uuidv7(),
+              status: "cancelled",
+              reversalOfTransactionId: input.transactionId,
+            })
+            .returning();
+          if (!reversalRow) {
+            throw new Error("Failed to create reversal withdrawal transaction");
+          }
+
+          await tx.insert(auditLog).values({
+            id: uuidv7(),
+            entityType: "withdrawal_transaction",
+            entityId: input.transactionId,
+            action: "cancel",
+            actorUserId: input.actorUserId,
+            oldValue: originalRow,
+            newValue: updatedOriginal,
+            reason: input.reason,
+            idempotencyKey: input.idempotencyKey,
+          });
+
+          return {
+            originalTransaction: toWithdrawalTransaction(updatedOriginal),
+            reversalTransaction: toWithdrawalTransaction(reversalRow),
+            cancelled: true,
+          };
+        });
+      } catch (error) {
+        if (error instanceof WithdrawalAlreadyCancelledError) {
+          throw error;
+        }
+        if (error instanceof InsufficientAvailableBalanceError) {
+          throw error;
+        }
+        if (isUniqueViolation(error)) {
+          const winner = await findAuditEntryByIdempotencyKey(input.idempotencyKey);
+          if (winner) {
+            if (!matchesCancelWithdrawalRequest(winner, input)) {
+              throw new WithdrawalIdempotencyKeyConflictError();
+            }
+            const original = await findTransactionById(input.transactionId);
+            const reversal = original ? await findWithdrawalReversalRow(database, input.transactionId) : null;
+            if (original && reversal) {
+              return {
+                originalTransaction: original,
+                reversalTransaction: toWithdrawalTransaction(reversal),
+                cancelled: false,
+              };
+            }
+          }
+        }
+        throw error;
+      }
     },
   };
 }
