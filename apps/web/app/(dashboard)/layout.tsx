@@ -28,22 +28,26 @@ const ICON_SIZE = 14;
  * "unauthorized item" case EXPERIENCE.md forbids, that's about role, not
  * build-completeness).
  *
- * Partner Shares and Add Money's own screens are Project-scoped
- * (`/projects/[id]/shares`, `/projects/[id]/add-money`) and their epics
- * (2, 3) are done, but there's no "current project" concept yet for the
- * sidebar to jump straight into one -- so both link to the Projects list
- * (2026-09-24 decision) rather than staying permanently inert now that
- * their features exist. `SidebarNav` still highlights them correctly when
- * you're actually on a Project's own Shares/Add Money page, independent of
- * this link target. The rest render icon+label with no destination (inert,
- * not a dead link) until their epics (4, 5) land.
+ * Partner Shares, Add Money, and Withdraw Money's own screens are
+ * Project-scoped (`/projects/[id]/shares`, `/projects/[id]/add-money`,
+ * `/projects/[id]/withdraw-money`) and each already works, but there's no
+ * "current project" concept yet for the sidebar to jump straight into one --
+ * so all three link to the Projects list (2026-09-24 decision, extended
+ * 2026-09-25 to Withdraw Money once it was reachable/working, ahead of
+ * Epic 4's formal "done" -- Available Balance and edit/cancel withdrawal are
+ * still backlog, but that doesn't block linking the part that already
+ * works) rather than staying permanently inert. `SidebarNav` still
+ * highlights each correctly when you're actually on a Project's own
+ * Shares/Add Money/Withdraw Money page, independent of this link target.
+ * The rest render icon+label with no destination (inert, not a dead link)
+ * until their stories land.
  */
 const NAV_ITEMS: readonly SidebarNavItem[] = [
   { key: "home", label: "Home", icon: <Home size={ICON_SIZE} />, href: "/home" },
   { key: "projects", label: "Projects", icon: <LayoutGrid size={ICON_SIZE} />, href: "/projects" },
   { key: "partnerShares", label: "Partner Shares", icon: <Percent size={ICON_SIZE} />, href: "/projects" },
   { key: "addMoney", label: "Add Money", icon: <Plus size={ICON_SIZE} />, href: "/projects" },
-  { key: "withdrawMoney", label: "Withdraw Money", icon: <Minus size={ICON_SIZE} /> },
+  { key: "withdrawMoney", label: "Withdraw Money", icon: <Minus size={ICON_SIZE} />, href: "/projects" },
   { key: "availableBalance", label: "Available Balance", icon: <Wallet size={ICON_SIZE} /> },
   { key: "adjustNextTime", label: "Adjust Next Time", icon: <RotateCcw size={ICON_SIZE} /> },
   { key: "moneyHistory", label: "Money History", icon: <History size={ICON_SIZE} /> },
