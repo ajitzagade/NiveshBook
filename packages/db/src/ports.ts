@@ -4,10 +4,15 @@ import {
   AlreadyCancelledError,
   IdempotencyKeyConflictError,
   moneyEquals,
+  subtractMoney,
   WithdrawalIdempotencyKeyConflictError,
   AlreadyAllocatedError,
   WithdrawalDestinationAllocationIdempotencyKeyConflictError,
   moveWithdrawalToProject,
+  spendAvailableBalanceToProject,
+  assertSufficientBalance,
+  InsufficientAvailableBalanceError,
+  AvailableBalanceSpendIdempotencyKeyConflictError,
   type UserPort,
   type SessionPort,
   type CreateSessionInput,
@@ -27,6 +32,9 @@ import {
   type WithdrawalDestinationAllocationPort,
   type CreateWithdrawalDestinationAllocationLegInput,
   type MoneyMovementPort,
+  type AvailableBalancePort,
+  type AvailableBalanceSpendPort,
+  type RecordAvailableBalanceSpendInput,
 } from "@niveshbook/core";
 import type {
   User,
@@ -48,6 +56,8 @@ import type {
   PaymentMode,
   Money,
   AuditLogEntry,
+  AvailableBalance,
+  AvailableBalanceSpend,
 } from "@niveshbook/types";
 import type { Database } from "./client";
 import { getDb } from "./client";
@@ -65,6 +75,8 @@ import {
   withdrawalAdjustments,
   withdrawalDestinationAllocations,
   moneyMovements,
+  availableBalances,
+  availableBalanceSpends,
   auditLog,
   type SessionRow,
   type UserRow,
@@ -79,6 +91,8 @@ import {
   type WithdrawalAdjustmentRow,
   type WithdrawalDestinationAllocationRow,
   type MoneyMovementRow,
+  type AvailableBalanceRow,
+  type AvailableBalanceSpendRow,
   type AuditLogRow,
 } from "./schema";
 
@@ -315,10 +329,43 @@ function toMoneyMovement(row: MoneyMovementRow): MoneyMovement {
   return {
     id: row.id,
     withdrawalDestinationAllocationId: row.withdrawalDestinationAllocationId,
+    availableBalanceSpendId: row.availableBalanceSpendId,
     sourceProjectId: row.sourceProjectId,
     destinationProjectId: row.destinationProjectId,
     destinationInvestmentTransactionId: row.destinationInvestmentTransactionId,
     amount: row.amount as Money,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+/** Converts an `available_balances` row -- mirrors `toWithdrawalAdjustment`'s identical shape one ledger over. */
+function toAvailableBalance(row: AvailableBalanceRow): AvailableBalance {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    partyType: row.partyType as AvailableBalance["partyType"],
+    shareId: row.shareId,
+    balance: row.balance as Money,
+    updatedAt: row.updatedAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+/** Converts an `available_balance_spends` row -- mirrors `toWithdrawalDestinationAllocation`'s identical shape one ledger over. */
+function toAvailableBalanceSpend(row: AvailableBalanceSpendRow): AvailableBalanceSpend {
+  return {
+    id: row.id,
+    sourceProjectId: row.sourceProjectId,
+    partyType: row.partyType as AvailableBalanceSpend["partyType"],
+    shareId: row.shareId,
+    destinationType: row.destinationType as AvailableBalanceSpend["destinationType"],
+    destinationProjectId: row.destinationProjectId,
+    destinationRequirementId: row.destinationRequirementId,
+    destinationShareId: row.destinationShareId,
+    destinationPartyType: row.destinationPartyType as AvailableBalanceSpend["destinationPartyType"],
+    personName: row.personName,
+    amount: row.amount as Money,
+    notes: row.notes,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -638,19 +685,37 @@ const UNIQUE_VIOLATION_CODE = "23505";
 
 /**
  * `true` if `error` is a Postgres unique-constraint-violation error (SQL
- * state `23505`), as surfaced by the `postgres` driver on the thrown error's
- * `.code`. A pure decision helper with no DB/Drizzle dependency of its own --
- * exported so `ports.test.ts` can unit-test it directly against a variety of
- * error shapes, without needing a live Postgres connection or a
+ * state `23505`). Checks `error.code` directly (the `postgres` driver's own
+ * raw `PostgresError` shape) AND `error.cause?.code` (this drizzle-orm
+ * version's `DrizzleQueryError` wrapper around that same raw driver error,
+ * confirmed via live-Postgres debugging during Story 4.9's own concurrent-
+ * race test development -- every one of this codebase's existing concurrent-
+ * double-submit-recovery call sites, e.g.
+ * `createWithdrawalTransactionPort.recordTransaction`, silently relied on
+ * this exact same latent bug: `database.transaction(async (tx) => {...})`'s
+ * thrown error is a `DrizzleQueryError`, not the raw `PostgresError`, so the
+ * old `"code" in error` check never actually matched it -- their own
+ * concurrent-race tests were already intermittently flaky for the identical
+ * reason, just not run enough times in a row for it to surface before now).
+ * A pure decision helper with no DB/Drizzle dependency of its own -- exported
+ * so `ports.test.ts` can unit-test it directly against a variety of error
+ * shapes, without needing a live Postgres connection or a
  * Drizzle-transaction-mocking harness (this codebase has no precedent for
  * mocking Drizzle at that level).
  */
 export function isUniqueViolation(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+  const candidate = error as { code?: unknown; cause?: unknown };
+  if (candidate.code === UNIQUE_VIOLATION_CODE) {
+    return true;
+  }
+  const cause = candidate.cause;
   return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === UNIQUE_VIOLATION_CODE
+    typeof cause === "object" &&
+    cause !== null &&
+    (cause as { code?: unknown }).code === UNIQUE_VIOLATION_CODE
   );
 }
 
@@ -947,6 +1012,25 @@ export function createWithdrawalTransactionPort(
         .where(eq(withdrawalTransactions.projectId, projectId))
         .orderBy(asc(withdrawalTransactions.createdAt));
       return rows.map(toWithdrawalTransaction);
+    },
+    /**
+     * Story 4.9 (FR29, Can Take fix): mirrors
+     * `createInvestmentTransactionPort.sumActiveAmountByProjectId`'s
+     * identical DB-side `SUM(amount)` shape one ledger over -- Postgres does
+     * the addition, never application code (AD-2). No `status` filter (this
+     * table has none yet -- no cancel/reverse path exists for a withdrawal,
+     * Story 4.11's job), so every row for the Project is summed. `coalesce(...,
+     * 0)` covers the zero-withdrawals case (`SUM` over zero rows is SQL
+     * `NULL`).
+     */
+    async sumActiveAmountByProjectId(projectId) {
+      const [row] = await database
+        .select({
+          total: sql<string>`coalesce(sum(${withdrawalTransactions.amount}), 0)`,
+        })
+        .from(withdrawalTransactions)
+        .where(eq(withdrawalTransactions.projectId, projectId));
+      return (row?.total ?? "0") as Money;
     },
   };
 }
@@ -1679,7 +1763,16 @@ export function createWithdrawalDestinationAllocationPort(
     async recordAllocation(withdrawalTransactionId, legs, idempotencyKey, actorUserId) {
       return database.transaction(async (tx) => {
         const [withdrawalRow] = await tx
-          .select({ id: withdrawalTransactions.id, projectId: withdrawalTransactions.projectId })
+          .select({
+            id: withdrawalTransactions.id,
+            projectId: withdrawalTransactions.projectId,
+            // Story 4.9 (FR29): also selected so an "available_balance" leg
+            // below can credit the ledger keyed to this withdrawal's own
+            // (partyType, shareId) -- widening the existing column list, no
+            // signature change (this story's Code Map).
+            partyType: withdrawalTransactions.partyType,
+            shareId: withdrawalTransactions.shareId,
+          })
           .from(withdrawalTransactions)
           .where(eq(withdrawalTransactions.id, withdrawalTransactionId))
           .for("update");
@@ -1766,15 +1859,35 @@ export function createWithdrawalDestinationAllocationPort(
 
         // Story 4.8: for every "project" leg, auto-create the linked
         // destination investment_transactions row + money_movements row,
-        // inside this same transaction (AD-6). Sequential, not Promise.all
-        // -- a single open transaction/connection can't serve concurrent
+        // inside this same transaction (AD-6). Story 4.9 (FR29): for every
+        // "available_balance" leg, credit the Available Balance ledger the
+        // same way, one leg at a time. Sequential, not Promise.all -- a
+        // single open transaction/connection can't serve concurrent
         // queries.
         const createdMovements: MoneyMovement[] = [];
         const investmentTransactionPort = createInvestmentTransactionPort(tx);
         const moneyMovementPort = createMoneyMovementPort(tx);
+        const availableBalancePort = createAvailableBalancePort(tx);
         for (let index = 0; index < legs.length; index++) {
           const leg = legs[index];
-          if (!leg || leg.destinationType !== "project") continue;
+          if (!leg) continue;
+          if (leg.destinationType === "available_balance") {
+            // Story 4.9 (FR29, this story's Decisions #4): credited to
+            // (withdrawalRow.partyType, withdrawalRow.shareId, sourceProjectId)
+            // -- the withdrawal's OWN party/share, never a client-suppliable
+            // value -- and the withdrawal's own source Project (never the
+            // spend-time destination, this story's Decisions #1). Only
+            // reached on a genuine first write (never on replay, this
+            // story's Boundaries), same as the "project" leg branch above.
+            await availableBalancePort.creditBalance({
+              projectId: sourceProjectId,
+              partyType: withdrawalRow.partyType as "partner" | "sub_partner",
+              shareId: withdrawalRow.shareId,
+              amount: leg.amount,
+            });
+            continue;
+          }
+          if (leg.destinationType !== "project") continue;
           if (!leg.destinationProjectId || !leg.destinationShareId || !leg.destinationPartyType || !leg.destinationSnapshotInput) {
             throw new Error(
               `Failed to move withdrawal to project: leg ${index} is a "project" leg with no resolved destination snapshot`,
@@ -1850,7 +1963,8 @@ export function createMoneyMovementPort(database: Database = getDb()): MoneyMove
         .insert(moneyMovements)
         .values({
           id: uuidv7(),
-          withdrawalDestinationAllocationId: input.withdrawalDestinationAllocationId,
+          withdrawalDestinationAllocationId: input.withdrawalDestinationAllocationId ?? null,
+          availableBalanceSpendId: input.availableBalanceSpendId ?? null,
           sourceProjectId: input.sourceProjectId,
           destinationProjectId: input.destinationProjectId,
           destinationInvestmentTransactionId: input.destinationInvestmentTransactionId,
@@ -1869,6 +1983,317 @@ export function createMoneyMovementPort(database: Database = getDb()): MoneyMove
         .where(eq(moneyMovements.destinationProjectId, projectId))
         .orderBy(asc(moneyMovements.createdAt));
       return rows.map(toMoneyMovement);
+    },
+  };
+}
+
+/**
+ * Drizzle-backed implementation of `packages/core`'s `AvailableBalancePort`
+ * (Story 4.9, FR29, AD-10) -- the running Available Balance ledger.
+ *
+ * `creditBalance` is an atomic upsert (`INSERT ... ON CONFLICT (party_type,
+ * share_id, project_id) DO UPDATE SET balance = available_balances.balance +
+ * excluded.balance`) -- no explicit row lock needed, Postgres's own
+ * `ON CONFLICT` handling is atomic against concurrent writers on its own
+ * (this story's Decisions #7).
+ *
+ * `debitBalance` always runs inside its own `database.transaction(...)` call
+ * -- when `database` is already a caller-supplied transaction handle (e.g.
+ * `createAvailableBalanceSpendPort.recordSpend` constructing
+ * `createAvailableBalancePort(tx)`), this becomes a nested transaction
+ * (a savepoint), mirroring `createInvestmentTransactionPort.recordTransaction`'s
+ * identical `database.transaction(...)`-inside-a-`tx` precedent (see that
+ * method's own call from `moveWithdrawalToProject()`, itself called from
+ * inside `createWithdrawalDestinationAllocationPort.recordAllocation`'s own
+ * open transaction) -- this codebase's established transaction-binding
+ * pattern one level deeper. Sequence: `SELECT ... FOR UPDATE` on the
+ * matching `(partyType, shareId, projectId)` row (AD-10) -- a missing row is
+ * treated as a `"0"` balance -- then `assertSufficientBalance` (throws
+ * `InsufficientAvailableBalanceError`, rolling back this transaction/
+ * savepoint, writing nothing, if insufficient) -- then `UPDATE balance =
+ * subtractMoney(current, amount)` (or, in the degenerate no-existing-row-yet
+ * case, an insert of a fresh `"0"` row -- only reachable when `amount` is
+ * itself `"0"`, since `assertSufficientBalance` would otherwise have already
+ * thrown against a `"0"` current balance). The row lock is held for the
+ * whole check-then-write sequence, so two concurrent debits against the same
+ * balance are fully serialized by Postgres's own row-lock blocking (AD-10,
+ * AC4): the second to acquire the lock re-reads the first's already-applied
+ * debit (`READ COMMITTED`'s standard `SELECT ... FOR UPDATE` re-read-on-
+ * unblock behavior), never a stale pre-debit balance -- never a lost update,
+ * never negative.
+ */
+export function createAvailableBalancePort(database: Database = getDb()): AvailableBalancePort {
+  return {
+    async creditBalance(input) {
+      const [row] = await database
+        .insert(availableBalances)
+        .values({
+          id: uuidv7(),
+          projectId: input.projectId,
+          partyType: input.partyType,
+          shareId: input.shareId,
+          balance: input.amount,
+        })
+        .onConflictDoUpdate({
+          target: [availableBalances.partyType, availableBalances.shareId, availableBalances.projectId],
+          set: {
+            balance: sql`${availableBalances.balance} + ${input.amount}`,
+            updatedAt: new Date(),
+          },
+        })
+        .returning();
+      if (!row) {
+        throw new Error("Failed to credit available balance");
+      }
+      return toAvailableBalance(row);
+    },
+    async debitBalance(input) {
+      return database.transaction(async (tx) => {
+        const existing = await tx
+          .select()
+          .from(availableBalances)
+          .where(
+            and(
+              eq(availableBalances.partyType, input.partyType),
+              eq(availableBalances.shareId, input.shareId),
+              eq(availableBalances.projectId, input.projectId),
+            ),
+          )
+          .for("update");
+        const existingRow = existing[0] ?? null;
+        const currentBalance = (existingRow?.balance ?? "0") as Money;
+
+        assertSufficientBalance(currentBalance, input.amount);
+
+        const newBalance = subtractMoney(currentBalance, input.amount);
+
+        if (!existingRow) {
+          const [row] = await tx
+            .insert(availableBalances)
+            .values({
+              id: uuidv7(),
+              projectId: input.projectId,
+              partyType: input.partyType,
+              shareId: input.shareId,
+              balance: newBalance,
+            })
+            .returning();
+          if (!row) {
+            throw new Error("Failed to debit available balance");
+          }
+          return toAvailableBalance(row);
+        }
+
+        const [row] = await tx
+          .update(availableBalances)
+          .set({ balance: newBalance, updatedAt: new Date() })
+          .where(eq(availableBalances.id, existingRow.id))
+          .returning();
+        if (!row) {
+          throw new Error("Failed to debit available balance");
+        }
+        return toAvailableBalance(row);
+      });
+    },
+    async listBalancesByProjectId(projectId) {
+      const rows = await database.select().from(availableBalances).where(eq(availableBalances.projectId, projectId));
+      return rows.map(toAvailableBalance);
+    },
+  };
+}
+
+/**
+ * `true` if `existing` (an `available_balance_spends` row found by
+ * `idempotencyKey`) represents the exact same request as `input` -- mirrors
+ * `matchesWithdrawalRequest`'s identical rounding-safety/field-comparison
+ * rationale one ledger over. `?? null` on both sides of every nullable field
+ * mirrors `matchesAllocationRequest`'s identical convention.
+ */
+export function matchesAvailableBalanceSpendRequest(
+  existing: AvailableBalanceSpend,
+  input: RecordAvailableBalanceSpendInput,
+): boolean {
+  return (
+    existing.sourceProjectId === input.sourceProjectId &&
+    existing.partyType === input.partyType &&
+    existing.shareId === input.shareId &&
+    existing.destinationType === input.destinationType &&
+    moneyEquals(existing.amount, input.amount) &&
+    (existing.destinationProjectId ?? null) === (input.destinationProjectId ?? null) &&
+    (existing.destinationRequirementId ?? null) === (input.destinationRequirementId ?? null) &&
+    (existing.destinationShareId ?? null) === (input.destinationShareId ?? null) &&
+    (existing.destinationPartyType ?? null) === (input.destinationPartyType ?? null) &&
+    (existing.personName ?? null) === (input.personName ?? null) &&
+    (existing.notes ?? null) === (input.notes ?? null)
+  );
+}
+
+/**
+ * Drizzle-backed implementation of `packages/core`'s `AvailableBalanceSpendPort`
+ * (Story 4.9, FR29, AD-5/AD-6/AD-10) -- mirrors
+ * `createWithdrawalTransactionPort.recordTransaction`'s exact
+ * check-first-then-transact idempotency structure one ledger over
+ * (`available_balance_spends.idempotencyKey` is table-wide UNIQUE, unlike
+ * `withdrawal_destination_allocations`' deliberately-non-unique column, so
+ * there IS a UNIQUE-constraint-violation signal a concurrent double-submit
+ * can race against and recover from, unlike that port's own
+ * lock-the-parent-row shape), extended with an `AvailableBalancePort.debitBalance`
+ * call (AD-10's row lock) and, for a `"project"` spend,
+ * `spendAvailableBalanceToProject()` (AD-6), all inside the one
+ * `database.transaction()` this method opens.
+ */
+export function createAvailableBalanceSpendPort(
+  database: Database = getDb(),
+): AvailableBalanceSpendPort {
+  async function findSpendByIdempotencyKey(idempotencyKey: string): Promise<AvailableBalanceSpend | null> {
+    const rows = await database
+      .select()
+      .from(availableBalanceSpends)
+      .where(eq(availableBalanceSpends.idempotencyKey, idempotencyKey))
+      .limit(1);
+    const row = rows[0];
+    return row ? toAvailableBalanceSpend(row) : null;
+  }
+
+  /** The linked `money_movements`/`investment_transactions` rows for an already-saved `"project"` spend, if any -- read back (never re-created) on a replay, mirroring `recordAllocation`'s identical replay-reads-back-the-linked-movement precedent. */
+  async function findLinkedMovementAndTransaction(
+    spendId: string,
+  ): Promise<{ moneyMovement: MoneyMovement | null; investmentTransaction: InvestmentTransaction | null }> {
+    const movementRows = await database
+      .select()
+      .from(moneyMovements)
+      .where(eq(moneyMovements.availableBalanceSpendId, spendId))
+      .limit(1);
+    const movementRow = movementRows[0];
+    if (!movementRow) {
+      return { moneyMovement: null, investmentTransaction: null };
+    }
+    const transactionRows = await database
+      .select()
+      .from(investmentTransactions)
+      .where(eq(investmentTransactions.id, movementRow.destinationInvestmentTransactionId))
+      .limit(1);
+    const transactionRow = transactionRows[0];
+    return {
+      moneyMovement: toMoneyMovement(movementRow),
+      investmentTransaction: transactionRow ? toInvestmentTransaction(transactionRow) : null,
+    };
+  }
+
+  return {
+    async recordSpend(input, idempotencyKey, actorUserId) {
+      const existing = await findSpendByIdempotencyKey(idempotencyKey);
+      if (existing) {
+        if (!matchesAvailableBalanceSpendRequest(existing, input)) {
+          throw new AvailableBalanceSpendIdempotencyKeyConflictError();
+        }
+        const linked = await findLinkedMovementAndTransaction(existing.id);
+        return { spend: existing, ...linked, created: false };
+      }
+
+      try {
+        const result = await database.transaction(async (tx) => {
+          const availableBalancePort = createAvailableBalancePort(tx);
+          await availableBalancePort.debitBalance({
+            projectId: input.sourceProjectId,
+            partyType: input.partyType,
+            shareId: input.shareId,
+            amount: input.amount,
+          });
+
+          const spendId = uuidv7();
+          const [spendRow] = await tx
+            .insert(availableBalanceSpends)
+            .values({
+              id: spendId,
+              sourceProjectId: input.sourceProjectId,
+              partyType: input.partyType,
+              shareId: input.shareId,
+              destinationType: input.destinationType,
+              destinationProjectId: input.destinationProjectId,
+              destinationRequirementId: input.destinationRequirementId,
+              destinationShareId: input.destinationShareId,
+              destinationPartyType: input.destinationPartyType,
+              personName: input.personName,
+              amount: input.amount,
+              notes: input.notes,
+              idempotencyKey,
+              actorUserId,
+            })
+            .returning();
+          if (!spendRow) {
+            throw new Error("Failed to record available balance spend");
+          }
+
+          let investmentTransaction: InvestmentTransaction | null = null;
+          let moneyMovement: MoneyMovement | null = null;
+          if (input.destinationType === "project") {
+            if (
+              !input.destinationProjectId ||
+              !input.destinationRequirementId ||
+              !input.destinationShareId ||
+              !input.destinationPartyType ||
+              !input.destinationSnapshotInput
+            ) {
+              throw new Error(
+                "Failed to spend available balance to project: no resolved destination snapshot",
+              );
+            }
+            const investmentTransactionPort = createInvestmentTransactionPort(tx);
+            const moneyMovementPort = createMoneyMovementPort(tx);
+            const spendResult = await spendAvailableBalanceToProject(
+              spendId,
+              input.sourceProjectId,
+              input.destinationProjectId,
+              input.destinationSnapshotInput.requirement,
+              input.destinationSnapshotInput.partnerShares,
+              input.destinationSnapshotInput.subPartnerSharesByPartnerId,
+              input.destinationPartyType,
+              input.destinationShareId,
+              input.amount,
+              `${idempotencyKey}:spend`,
+              actorUserId,
+              { investmentTransactions: investmentTransactionPort, moneyMovements: moneyMovementPort },
+            );
+            investmentTransaction = spendResult.investmentTransaction;
+            moneyMovement = spendResult.moneyMovement;
+          }
+
+          await tx.insert(auditLog).values({
+            id: uuidv7(),
+            entityType: "available_balance_spend",
+            entityId: spendId,
+            action: "create",
+            actorUserId,
+            oldValue: null,
+            newValue: spendRow,
+            reason: null,
+          });
+
+          return {
+            spend: toAvailableBalanceSpend(spendRow),
+            investmentTransaction,
+            moneyMovement,
+            created: true as const,
+          };
+        });
+        return result;
+      } catch (error) {
+        if (error instanceof InsufficientAvailableBalanceError) {
+          throw error;
+        }
+        if (isUniqueViolation(error)) {
+          const winner = await findSpendByIdempotencyKey(idempotencyKey);
+          if (winner) {
+            if (!matchesAvailableBalanceSpendRequest(winner, input)) {
+              throw new AvailableBalanceSpendIdempotencyKeyConflictError();
+            }
+            const linked = await findLinkedMovementAndTransaction(winner.id);
+            return { spend: winner, ...linked, created: false };
+          }
+        }
+        throw error;
+      }
     },
   };
 }

@@ -10,6 +10,7 @@ const findProjectById = vi.fn();
 const listPartnerSharesByProjectId = vi.fn();
 const listSubPartnerSharesByProjectId = vi.fn();
 const sumActiveAmountByProjectId = vi.fn();
+const sumActiveWithdrawnAmountByProjectId = vi.fn();
 
 vi.mock("@niveshbook/db", () => ({
   createSessionPort: () => ({
@@ -51,6 +52,11 @@ vi.mock("@niveshbook/db", () => ({
     findAuditLogByTransactionId: vi.fn(),
     cancelTransaction: vi.fn(),
     sumActiveAmountByProjectId,
+  }),
+  createWithdrawalTransactionPort: () => ({
+    recordTransaction: vi.fn(),
+    listByProjectId: vi.fn(),
+    sumActiveAmountByProjectId: sumActiveWithdrawnAmountByProjectId,
   }),
 }));
 
@@ -152,6 +158,12 @@ function resetMocks() {
   listSubPartnerSharesByProjectId.mockResolvedValue([]);
   sumActiveAmountByProjectId.mockReset();
   sumActiveAmountByProjectId.mockResolvedValue("500000");
+  sumActiveWithdrawnAmountByProjectId.mockReset();
+  // Story 4.9 (FR29, Can Take fix): defaults to "0" so pre-existing test
+  // expectations (availableToWithdraw = the raw invested total) stay
+  // unchanged unless a test explicitly overrides it -- a dedicated test
+  // below exercises the actual subtraction.
+  sumActiveWithdrawnAmountByProjectId.mockResolvedValue("0");
 }
 
 describe("GET /api/projects/[id]/can-take", () => {
@@ -306,6 +318,36 @@ describe("GET /api/projects/[id]/can-take", () => {
     expect(response.status).toBe(409);
     const body = await response.json();
     expect(body.code).toBe("shares_not_fully_allocated");
+  });
+
+  it("Story 4.9 (FR29): availableToWithdraw shrinks by the amount already withdrawn (₹10,00,000 invested, ₹2,00,000 withdrawn -> ₹8,00,000)", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    sumActiveAmountByProjectId.mockResolvedValue("1000000");
+    sumActiveWithdrawnAmountByProjectId.mockResolvedValue("200000");
+
+    const response = await GET(makeRequest(`${SESSION_COOKIE_NAME}=some-token`), makeContext());
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.availableToWithdraw).toBe("800000");
+  });
+
+  it("review finding: returns 200 with availableToWithdraw = '0' (not a 500) when active-withdrawn exceeds active-invested (invest 10,00,000, withdraw 8,00,000, then cancel 5,00,000 of the original investment -- Story 3.8's cancel path has no withdrawal-side counterpart yet)", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    // Active-invested dropped below active-withdrawn after the cancel.
+    sumActiveAmountByProjectId.mockResolvedValue("500000");
+    sumActiveWithdrawnAmountByProjectId.mockResolvedValue("800000");
+
+    const response = await GET(makeRequest(`${SESSION_COOKIE_NAME}=some-token`), makeContext());
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.availableToWithdraw).toBe("0");
+    for (const partner of body.partners) {
+      expect(partner.canTake).toBe("0");
+    }
   });
 
   it("returns 409 sub_partner_shares_over_allocated when a Partner's Sub-partners exceed their own share", async () => {

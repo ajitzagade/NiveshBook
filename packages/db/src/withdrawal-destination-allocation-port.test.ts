@@ -12,7 +12,11 @@ import {
 } from "@niveshbook/core";
 import type { InvestmentRequirement, Money, Percent } from "@niveshbook/types";
 import { getDb } from "./client";
-import { createWithdrawalDestinationAllocationPort, createWithdrawalTransactionPort } from "./ports";
+import {
+  createAvailableBalancePort,
+  createWithdrawalDestinationAllocationPort,
+  createWithdrawalTransactionPort,
+} from "./ports";
 import {
   auditLog,
   investmentRequirements,
@@ -307,6 +311,35 @@ describe("createWithdrawalDestinationAllocationPort.recordAllocation (live Postg
     expect(entry?.oldValue).toBeNull();
     expect(Array.isArray(entry?.newValue)).toBe(true);
     expect((entry?.newValue as unknown[]).length).toBe(3);
+
+    // Story 4.9 (FR29, AC1): the "available_balance" leg credits the
+    // Available Balance ledger for the withdrawal's own (partyType, shareId)
+    // at its own source Project -- never the leg's destination (there is
+    // none for this leg type).
+    const balancePort = createAvailableBalancePort();
+    const balances = await balancePort.listBalancesByProjectId(sourceProjectId);
+    expect(balances).toHaveLength(1);
+    expect(balances[0]?.balance).toBe("50000.00");
+    expect(balances[0]?.partyType).toBe("partner");
+  });
+
+  it("Story 4.9 (FR29): an 'available_balance' leg credits the ledger exactly once, never again on an idempotent replay", async () => {
+    const port = createWithdrawalDestinationAllocationPort();
+    const balancePort = createAvailableBalancePort();
+    const sourceProjectId = await seedProject();
+    const actorUserId = await seedActor();
+    const withdrawalTransactionId = await seedWithdrawal(sourceProjectId, actorUserId, "250000");
+    const idempotencyKey = uuidv7();
+    const input = legs([{ destinationType: "available_balance", amount: "250000" as Money, notes: null }]);
+
+    await port.recordAllocation(withdrawalTransactionId, input, idempotencyKey, actorUserId);
+    await port.recordAllocation(withdrawalTransactionId, input, idempotencyKey, actorUserId);
+
+    const balances = await balancePort.listBalancesByProjectId(sourceProjectId);
+    expect(balances).toHaveLength(1);
+    // Credited exactly once -- a replay of the same allocation batch never
+    // credits the ledger a second time (this story's Boundaries).
+    expect(balances[0]?.balance).toBe("250000.00");
   });
 
   it("writes two 'project' legs to two DIFFERENT destination Projects in one call -- both get their own correct investment_transactions/money_movements rows (I/O matrix row 5, review finding)", async () => {

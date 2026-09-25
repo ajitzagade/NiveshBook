@@ -28,19 +28,20 @@ const ICON_SIZE = 14;
  * "unauthorized item" case EXPERIENCE.md forbids, that's about role, not
  * build-completeness).
  *
- * Partner Shares, Add Money, and Withdraw Money's own screens are
- * Project-scoped (`/projects/[id]/shares`, `/projects/[id]/add-money`,
- * `/projects/[id]/withdraw-money`) and each already works, but there's no
+ * Partner Shares, Add Money, Withdraw Money, and Available Balance's own
+ * screens are Project-scoped (`/projects/[id]/shares`,
+ * `/projects/[id]/add-money`, `/projects/[id]/withdraw-money`,
+ * `/projects/[id]/available-balance`) and each already works, but there's no
  * "current project" concept yet for the sidebar to jump straight into one --
- * so all three link to the Projects list (2026-09-24 decision, extended
- * 2026-09-25 to Withdraw Money once it was reachable/working, ahead of
- * Epic 4's formal "done" -- Available Balance and edit/cancel withdrawal are
- * still backlog, but that doesn't block linking the part that already
- * works) rather than staying permanently inert. `SidebarNav` still
+ * so all four link to the Projects list (2026-09-24 decision, extended
+ * 2026-09-25 to Withdraw Money, then again to Available Balance once it was
+ * reachable/working, ahead of Epic 4's formal "done" -- edit/cancel
+ * withdrawal is still backlog, but that doesn't block linking the part that
+ * already works) rather than staying permanently inert. `SidebarNav` still
  * highlights each correctly when you're actually on a Project's own
- * Shares/Add Money/Withdraw Money page, independent of this link target.
- * The rest render icon+label with no destination (inert, not a dead link)
- * until their stories land.
+ * Shares/Add Money/Withdraw Money/Available Balance page, independent of
+ * this link target. The rest render icon+label with no destination (inert,
+ * not a dead link) until their stories land.
  */
 const NAV_ITEMS: readonly SidebarNavItem[] = [
   { key: "home", label: "Home", icon: <Home size={ICON_SIZE} />, href: "/home" },
@@ -48,7 +49,7 @@ const NAV_ITEMS: readonly SidebarNavItem[] = [
   { key: "partnerShares", label: "Partner Shares", icon: <Percent size={ICON_SIZE} />, href: "/projects" },
   { key: "addMoney", label: "Add Money", icon: <Plus size={ICON_SIZE} />, href: "/projects" },
   { key: "withdrawMoney", label: "Withdraw Money", icon: <Minus size={ICON_SIZE} />, href: "/projects" },
-  { key: "availableBalance", label: "Available Balance", icon: <Wallet size={ICON_SIZE} /> },
+  { key: "availableBalance", label: "Available Balance", icon: <Wallet size={ICON_SIZE} />, href: "/projects" },
   { key: "adjustNextTime", label: "Adjust Next Time", icon: <RotateCcw size={ICON_SIZE} /> },
   { key: "moneyHistory", label: "Money History", icon: <History size={ICON_SIZE} /> },
   { key: "reports", label: "Reports", icon: <BarChart3 size={ICON_SIZE} /> },

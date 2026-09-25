@@ -90,6 +90,38 @@ describe("isUniqueViolation", () => {
     expect(isUniqueViolation({ code: "23505 " })).toBe(false);
     expect(isUniqueViolation({ code: "123505" })).toBe(false);
   });
+
+  // Story 4.9 (FR29): this drizzle-orm version wraps a query error thrown
+  // inside `database.transaction(async (tx) => {...})` in a
+  // `DrizzleQueryError`, whose own `.code` is `undefined` -- the raw
+  // `PostgresError`'s `.code` lives one level down, at `.cause.code`
+  // (confirmed via live-Postgres debugging while developing this story's
+  // own concurrent-race test). Every pre-existing concurrent-double-submit-
+  // recovery call site in this file relies on `isUniqueViolation` seeing
+  // through this wrapper -- these cases close the gap the plain top-level
+  // `.code` check above missed.
+  it("returns true when '.code' is on '.cause' (DrizzleQueryError's own wrapping shape) rather than the error itself", () => {
+    const wrapped = Object.assign(new Error("Failed query: insert into ..."), {
+      cause: Object.assign(new Error('duplicate key value violates unique constraint "x"'), {
+        code: "23505",
+      }),
+    });
+
+    expect(isUniqueViolation(wrapped)).toBe(true);
+  });
+
+  it("returns false when '.cause' exists but carries an unrelated code", () => {
+    const wrapped = Object.assign(new Error("Failed query"), {
+      cause: Object.assign(new Error("not-null violation"), { code: "23502" }),
+    });
+
+    expect(isUniqueViolation(wrapped)).toBe(false);
+  });
+
+  it("returns false when '.cause' is not an object (e.g. a string or missing)", () => {
+    expect(isUniqueViolation(Object.assign(new Error("x"), { cause: "not-an-object" }))).toBe(false);
+    expect(isUniqueViolation(new Error("x"))).toBe(false);
+  });
 });
 
 /**

@@ -595,12 +595,19 @@ describe("withdrawal_destination_allocations table schema (Story 4.7, FR27)", ()
 });
 
 describe("money_movements table schema (Story 4.8, FR28, AD-6)", () => {
-  it("marks withdrawalDestinationAllocationId/sourceProjectId/destinationProjectId/destinationInvestmentTransactionId/amount NOT NULL", () => {
-    expect(moneyMovements.withdrawalDestinationAllocationId.notNull).toBe(true);
+  it("marks sourceProjectId/destinationProjectId/destinationInvestmentTransactionId/amount NOT NULL", () => {
     expect(moneyMovements.sourceProjectId.notNull).toBe(true);
     expect(moneyMovements.destinationProjectId.notNull).toBe(true);
     expect(moneyMovements.destinationInvestmentTransactionId.notNull).toBe(true);
     expect(moneyMovements.amount.notNull).toBe(true);
+  });
+
+  // Story 4.9 (FR29): widened to nullable -- an "available_balance" spend's
+  // own linked movement sets availableBalanceSpendId instead, and vice
+  // versa (this story's Decisions #6, non-breaking).
+  it("Story 4.9: withdrawalDestinationAllocationId/availableBalanceSpendId are BOTH nullable -- exactly one is set per row, never both, never neither", () => {
+    expect(moneyMovements.withdrawalDestinationAllocationId.notNull).toBe(false);
+    expect(moneyMovements.availableBalanceSpendId.notNull).toBe(false);
   });
 
   it("gives id no implicit default -- application code (uuidv7) always supplies one", () => {

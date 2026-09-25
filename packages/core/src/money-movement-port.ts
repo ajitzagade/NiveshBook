@@ -1,7 +1,17 @@
 import type { Money, MoneyMovement } from "@niveshbook/types";
 
+/**
+ * Story 4.9 (FR29) widens this input: `withdrawalDestinationAllocationId`/
+ * `availableBalanceSpendId` are both optional, exactly one expected to be
+ * set per call -- non-breaking (existing `moveWithdrawalToProject()` callers
+ * keep passing only `withdrawalDestinationAllocationId`, never touch the new
+ * field; `spendAvailableBalanceToProject()` is the new, additive caller that
+ * passes only `availableBalanceSpendId`). Mirrors `MoneyMovement`'s own
+ * widened shape (`packages/types`).
+ */
 export interface CreateMoneyMovementInput {
-  withdrawalDestinationAllocationId: string;
+  withdrawalDestinationAllocationId?: string | null;
+  availableBalanceSpendId?: string | null;
   sourceProjectId: string;
   destinationProjectId: string;
   destinationInvestmentTransactionId: string;

@@ -1,5 +1,7 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   date,
   index,
   jsonb,
@@ -639,6 +641,98 @@ export const withdrawalDestinationAllocations = pgTable(
 export type WithdrawalDestinationAllocationRow = typeof withdrawalDestinationAllocations.$inferSelect;
 
 /**
+ * Story 4.9 (Epic 4, FR29): the running "Available Balance" ledger a
+ * withdrawal's `"available_balance"` destination-allocation leg credits
+ * (`createWithdrawalDestinationAllocationPort.recordAllocation`, extended)
+ * and a spend (`createAvailableBalanceSpendPort.recordSpend`) debits -- ONE
+ * current row per `(partyType, shareId, projectId)`, `projectId` being the
+ * *source* Project the withdrawal came from (this story's Decisions #1:
+ * mirrors `withdrawal_adjustments`' exact single-current-row-per-source-
+ * Project shape, never a cross-Project aggregate, never `users.id`-keyed --
+ * AD-4). `shareId` is not a FK, mirroring `withdrawalAdjustments.shareId`'s
+ * identical precedent (neither share table has a uniqueness constraint on
+ * that stable id to reference). `CHECK (balance >= 0)` (AD-10's backstop,
+ * the first CHECK constraint in this schema) -- defense in depth alongside
+ * `createAvailableBalancePort.debitBalance`'s own `SELECT ... FOR UPDATE` +
+ * `assertSufficientBalance` guard, never a substitute for it.
+ */
+export const availableBalances = pgTable(
+  "available_balances",
+  {
+    id: uuid("id").primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    partyType: text("party_type").notNull(),
+    shareId: uuid("share_id").notNull(),
+    balance: numeric("balance", { precision: 14, scale: 2 }).notNull().default("0"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("available_balances_party_share_project_unique").on(
+      table.partyType,
+      table.shareId,
+      table.projectId,
+    ),
+    check("available_balances_balance_non_negative", sql`${table.balance} >= 0`),
+  ],
+);
+
+export type AvailableBalanceRow = typeof availableBalances.$inferSelect;
+
+/**
+ * Story 4.9 (Epic 4, FR29): one row per "Use Balance" spend
+ * (`createAvailableBalanceSpendPort.recordSpend`) -- either `"project"`
+ * (re-invests part/all of the balance into another Project's funding
+ * requirement, via `spendAvailableBalanceToProject()`, mirroring
+ * `withdrawal_destination_allocations`' `"project"`-leg column shape exactly)
+ * or `"person"` ("Give to a Person", free-text `personName` only -- mirrors
+ * Story 4.7's `"person"` leg, no Person/contact entity exists in this schema
+ * yet). `sourceProjectId`/`partyType`/`shareId` identify which
+ * `available_balances` row this spend debited. `idempotencyKey` is UNIQUE
+ * (unlike `withdrawal_destination_allocations.idempotencyKey`) -- a single
+ * spend request writes exactly one row here, never several siblings sharing
+ * one key.
+ */
+export const availableBalanceSpends = pgTable(
+  "available_balance_spends",
+  {
+    id: uuid("id").primaryKey(),
+    sourceProjectId: uuid("source_project_id")
+      .notNull()
+      .references(() => projects.id),
+    partyType: text("party_type").notNull(),
+    shareId: uuid("share_id").notNull(),
+    destinationType: text("destination_type").notNull(),
+    destinationProjectId: uuid("destination_project_id").references(() => projects.id),
+    destinationRequirementId: uuid("destination_requirement_id").references(
+      () => investmentRequirements.id,
+    ),
+    destinationShareId: uuid("destination_share_id"),
+    destinationPartyType: text("destination_party_type"),
+    personName: text("person_name"),
+    amount: numeric("amount", { precision: 14, scale: 2 }).notNull(),
+    notes: text("notes"),
+    idempotencyKey: text("idempotency_key").notNull().unique(),
+    actorUserId: uuid("actor_user_id")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // `recordSpend`'s straightforward-replay/concurrent-race-recovery lookup
+    // filters on idempotencyKey -- indexed (on top of its own UNIQUE
+    // constraint, which already implies an index) purely for documentation
+    // symmetry with this schema's other idempotency-keyed tables; harmless
+    // either way since UNIQUE already creates the index Postgres uses here.
+    index("available_balance_spends_source_project_id_idx").on(table.sourceProjectId),
+  ],
+);
+
+export type AvailableBalanceSpendRow = typeof availableBalanceSpends.$inferSelect;
+
+/**
  * Story 4.8 (Epic 4, FR28, AD-6): one row per `"project"` destination-
  * allocation leg's auto-created linked movement -- the middle link in the
  * `withdrawal_destination_allocations` leg -> `money_movements` ->
@@ -666,14 +760,29 @@ export type WithdrawalDestinationAllocationRow = typeof withdrawalDestinationAll
  * existing atomicity contract, unchanged) and on the parent
  * `withdrawal_destination_allocation`'s own "create" `audit_log` entry
  * (Story 4.7, unchanged) -- a third would be redundant.
+ *
+ * Story 4.9 (FR29) widens this table to also link an `"available_balance"`
+ * spend's own auto-created movement (`spendAvailableBalanceToProject()`,
+ * mirroring `moveWithdrawalToProject()`'s identical call shape one story
+ * over): `withdrawalDestinationAllocationId` becomes nullable, and a new
+ * nullable `availableBalanceSpendId` is added -- non-breaking (spec-4-9's
+ * Decisions #6), existing `moveWithdrawalToProject()` callers keep passing
+ * `withdrawalDestinationAllocationId` and never touch the new column.
+ * `CHECK` enforces exactly one of the two is set per row -- a row is either
+ * allocation-sourced or spend-sourced, never both, never neither.
  */
 export const moneyMovements = pgTable(
   "money_movements",
   {
     id: uuid("id").primaryKey(),
-    withdrawalDestinationAllocationId: uuid("withdrawal_destination_allocation_id")
-      .notNull()
-      .references(() => withdrawalDestinationAllocations.id, { onDelete: "cascade" }),
+    withdrawalDestinationAllocationId: uuid("withdrawal_destination_allocation_id").references(
+      () => withdrawalDestinationAllocations.id,
+      { onDelete: "cascade" },
+    ),
+    availableBalanceSpendId: uuid("available_balance_spend_id").references(
+      () => availableBalanceSpends.id,
+      { onDelete: "cascade" },
+    ),
     sourceProjectId: uuid("source_project_id")
       .notNull()
       .references(() => projects.id),
@@ -692,9 +801,18 @@ export const moneyMovements = pgTable(
     index("money_movements_withdrawal_destination_allocation_id_idx").on(
       table.withdrawalDestinationAllocationId,
     ),
+    // Story 4.9: `recordSpend`'s own replay path, mirroring the index above
+    // one column over.
+    index("money_movements_available_balance_spend_id_idx").on(table.availableBalanceSpendId),
     // The Add Money page's "Moved from Project A" indicator (Story 4.8's Code
     // Map) looks up every movement landing at one destination Project.
     index("money_movements_destination_project_id_idx").on(table.destinationProjectId),
+    // Story 4.9 (AD-6): a money_movements row is either allocation-sourced
+    // or spend-sourced, never both, never neither.
+    check(
+      "money_movements_exactly_one_source_check",
+      sql`(${table.withdrawalDestinationAllocationId} is null) <> (${table.availableBalanceSpendId} is null)`,
+    ),
   ],
 );
 

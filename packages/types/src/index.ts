@@ -475,16 +475,86 @@ export interface WithdrawalDestinationAllocation {
  * since one withdrawal can have multiple `"project"` legs to different
  * destinations). Never edited/cancelled directly -- it lives and dies with
  * its parent allocation leg (`onDelete: "cascade"`, schema.ts).
+ *
+ * Story 4.9 (FR29) widens this to also link an `"available_balance"` spend's
+ * own auto-created movement (`spendAvailableBalanceToProject()`, mirroring
+ * `moveWithdrawalToProject()`'s identical shape one story over):
+ * `withdrawalDestinationAllocationId` becomes nullable, and a new nullable
+ * `availableBalanceSpendId` is added -- exactly one of the two is ever set on
+ * a given row (this story's Decisions #6, non-breaking: every pre-4.9 row
+ * keeps its non-null `withdrawalDestinationAllocationId` and a null
+ * `availableBalanceSpendId`).
  */
 export interface MoneyMovement {
   id: string;
-  /** The `WithdrawalDestinationAllocation.id` (a single `"project"` leg) this movement links. */
-  withdrawalDestinationAllocationId: string;
+  /** The `WithdrawalDestinationAllocation.id` (a single `"project"` leg) this movement links -- non-null only for an allocation-sourced movement, mutually exclusive with `availableBalanceSpendId`. */
+  withdrawalDestinationAllocationId: string | null;
+  /** Story 4.9: the `AvailableBalanceSpend.id` this movement links -- non-null only for a spend-sourced movement, mutually exclusive with `withdrawalDestinationAllocationId`. */
+  availableBalanceSpendId: string | null;
   sourceProjectId: string;
   destinationProjectId: string;
   /** The auto-created `investment_transactions` row at the destination Project -- the same snapshot `buildTransactionSnapshot` would produce for a manual Add Money entry. */
   destinationInvestmentTransactionId: string;
   amount: Money;
+  /** ISO 8601 timestamp */
+  createdAt: string;
+}
+
+/**
+ * Story 4.9 (Epic 4, FR29): the running "Available Balance" ledger for one
+ * `(partyType, shareId, projectId)` -- `projectId` being the *source* Project
+ * a withdrawal's `"available_balance"` destination-allocation leg came from
+ * (this story's Decisions #1: mirrors `WithdrawalAdjustment`'s exact
+ * single-current-row-per-source-Project scoping, never a cross-Project
+ * aggregate, never `User.id`-keyed -- AD-4). Credited by
+ * `createWithdrawalDestinationAllocationPort.recordAllocation`'s
+ * `"available_balance"` leg branch (atomic upsert, no explicit row lock
+ * needed); debited by `createAvailableBalancePort.debitBalance` (`SELECT
+ * ... FOR UPDATE` + `assertSufficientBalance`, AD-10). `balance` is always
+ * `>= 0` (`CHECK` constraint, schema.ts, backstop only).
+ */
+export interface AvailableBalance {
+  id: string;
+  projectId: string;
+  partyType: "partner" | "sub_partner";
+  /** The stable `partnerId`/`subPartnerId` this balance is keyed to -- never `User.id` (AD-4). */
+  shareId: string;
+  balance: Money;
+  /** ISO 8601 timestamp -- when this row was last credited/debited. */
+  updatedAt: string;
+  /** ISO 8601 timestamp -- when this row was first created (first credit). */
+  createdAt: string;
+}
+
+/**
+ * Story 4.9 (Epic 4, FR29): one row per "Use Balance" spend
+ * (`createAvailableBalanceSpendPort.recordSpend`) -- either `"project"`
+ * ("Invest in a Project", via `spendAvailableBalanceToProject()`, mirroring
+ * `WithdrawalDestinationAllocation`'s `"project"`-leg fields exactly) or
+ * `"person"` ("Give to a Person", free-text `personName` only -- mirrors
+ * Story 4.7's `"person"` leg, no Person/contact entity exists yet). Only the
+ * field(s) matching `destinationType` are ever non-null, mirroring
+ * `WithdrawalDestinationAllocation`'s identical convention.
+ */
+export interface AvailableBalanceSpend {
+  id: string;
+  /** The `AvailableBalance` row (via `(partyType, shareId, sourceProjectId)`) this spend debited. */
+  sourceProjectId: string;
+  partyType: "partner" | "sub_partner";
+  shareId: string;
+  destinationType: "project" | "person";
+  /** Populated only when `destinationType === "project"`. */
+  destinationProjectId: string | null;
+  /** Populated only when `destinationType === "project"` -- the destination Project's funding requirement chosen at spend time. */
+  destinationRequirementId: string | null;
+  /** Populated only when `destinationType === "project"` -- the stable `partnerId`/`subPartnerId` (disambiguated by `destinationPartyType`) chosen at the destination Project, never `User.id` (AD-4). */
+  destinationShareId: string | null;
+  /** Populated only when `destinationType === "project"`. */
+  destinationPartyType: "partner" | "sub_partner" | null;
+  /** Populated only when `destinationType === "person"` -- free-text, no Person/contact entity exists yet. */
+  personName: string | null;
+  amount: Money;
+  notes: string | null;
   /** ISO 8601 timestamp */
   createdAt: string;
 }

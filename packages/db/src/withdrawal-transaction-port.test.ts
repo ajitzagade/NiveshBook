@@ -303,3 +303,87 @@ describe("createWithdrawalTransactionPort.recordTransaction (live Postgres)", ()
     expect(listed).toEqual([]);
   });
 });
+
+/**
+ * Live-Postgres coverage for `sumActiveAmountByProjectId` (Story 4.9, FR29,
+ * review finding -- this SQL directly feeds the Can Take fix and, before
+ * this test, was only ever exercised via a fully-mocked port in
+ * `can-take/route.test.ts`, so the actual Drizzle-generated `coalesce(sum(...),
+ * 0)` query had zero real coverage). Mirrors
+ * `investment-transaction-port.test.ts`'s `sumActiveAmountByProjectId`
+ * describe block one ledger over -- multiple rows summed, the zero-case,
+ * and strict Project-scoping -- minus a `status` filter, since
+ * `withdrawal_transactions` has no `status` column yet (no withdrawal-
+ * cancel path exists -- Story 4.11's job).
+ */
+describe("createWithdrawalTransactionPort.sumActiveAmountByProjectId (live Postgres)", () => {
+  const seededProjectIds: string[] = [];
+
+  afterEach(async () => {
+    const db = getDb();
+    for (const id of seededProjectIds.splice(0)) {
+      await db.delete(projects).where(eq(projects.id, id));
+    }
+  });
+
+  async function seedProject(): Promise<string> {
+    const db = getDb();
+    const projectId = uuidv7();
+    await db.insert(projects).values({ id: projectId, name: `sum-withdrawn-test-${projectId}` });
+    seededProjectIds.push(projectId);
+    return projectId;
+  }
+
+  async function seedWithdrawal(projectId: string, amount: string): Promise<void> {
+    const db = getDb();
+    await db.insert(withdrawalTransactions).values({
+      id: uuidv7(),
+      projectId,
+      partyType: "partner",
+      shareId: uuidv7(),
+      sharePercentSnapshot: "50",
+      canTakeSnapshot: amount,
+      amount,
+      transactionDate: "2026-10-05",
+      paymentMode: "cash",
+      referenceNumber: null,
+      notes: null,
+      idempotencyKey: uuidv7(),
+    });
+  }
+
+  it("sums multiple withdrawal rows for the same project", async () => {
+    const port = createWithdrawalTransactionPort();
+    const projectId = await seedProject();
+
+    await seedWithdrawal(projectId, "200000");
+    await seedWithdrawal(projectId, "50000");
+    await seedWithdrawal(projectId, "30000");
+
+    const total = await port.sumActiveAmountByProjectId(projectId);
+
+    expect(total).toBe("280000.00");
+  });
+
+  it("returns \"0\" for a project with zero withdrawals", async () => {
+    const port = createWithdrawalTransactionPort();
+    const projectId = await seedProject();
+
+    const total = await port.sumActiveAmountByProjectId(projectId);
+
+    expect(total).toBe("0");
+  });
+
+  it("scopes strictly to the given projectId -- a withdrawal on a different project is never counted", async () => {
+    const port = createWithdrawalTransactionPort();
+    const projectA = await seedProject();
+    const projectB = await seedProject();
+
+    await seedWithdrawal(projectA, "100000");
+    await seedWithdrawal(projectB, "999999");
+
+    const total = await port.sumActiveAmountByProjectId(projectA);
+
+    expect(total).toBe("100000.00");
+  });
+});

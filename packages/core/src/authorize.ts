@@ -42,7 +42,9 @@ export type Action =
   | "withdrawal_adjustments:view"
   | "withdrawal_status:view"
   | "withdrawal_destination_allocations:create"
-  | "money_movements:list";
+  | "money_movements:list"
+  | "available_balances:view"
+  | "available_balances:spend";
 
 /**
  * Role -> allowed-actions permission table. All actions here are
@@ -222,6 +224,13 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // so this introduces no new privacy surface. No `SELF_ACCESS_ACTIONS`/
   // `SCOPE_SELF_ACCESS_ACTIONS` entry.
   "money_movements:list": new Set(["owner_admin"]),
+  // Story 4.9 (FR29): viewing/spending a Project's Available Balance ledger
+  // is Owner/Admin-only, no self-access -- mirrors
+  // `withdrawal_destination_allocations:create`'s identical all-or-nothing-
+  // for-the-role shape (this story's Decisions: matching every other Epic 4
+  // Owner/Admin-facing action to date, no self-service UI exists yet).
+  "available_balances:view": new Set(["owner_admin"]),
+  "available_balances:spend": new Set(["owner_admin"]),
 };
 
 /**

@@ -1,11 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
-import type { SubPartnerShare } from "@niveshbook/types";
+import type { Money, SubPartnerShare } from "@niveshbook/types";
 import {
   getSession,
   authorizeScope,
   listCurrentPartnerShares,
   listCurrentSubPartnerSharesForProject,
   computeCanTake,
+  compareMoney,
+  subtractMoney,
   PartnerSharesNotFullyAllocatedError,
   CanTakeSubPartnerSharesOverAllocatedError,
 } from "@niveshbook/core";
@@ -16,6 +18,7 @@ import {
   createPartnerSharePort,
   createSubPartnerSharePort,
   createInvestmentTransactionPort,
+  createWithdrawalTransactionPort,
 } from "@niveshbook/db";
 import { readSessionToken } from "@/lib/session";
 import { UNAUTHENTICATED_MESSAGE, FORBIDDEN_MESSAGE } from "@/lib/users";
@@ -63,10 +66,28 @@ function groupByPartnerId(shares: readonly SubPartnerShare[]): Record<string, Su
  * "The Project's available-to-withdraw amount" (this story's Decisions) is
  * resolved via `InvestmentTransactionPort.sumActiveAmountByProjectId` -- the
  * sum of every non-cancelled `investment_transactions.amount` row for the
- * Project, across all its funding requirements, computed live. Nothing is
- * subtracted for withdrawals yet (no `withdrawal_transactions`/
- * `available_balances` ledger exists until Stories 4.2/4.9) -- a later story
- * extends only this resolution step, never `computeCanTake`'s pure signature.
+ * Project, across all its funding requirements, computed live.
+ *
+ * Story 4.9 (FR29, the Can Take fix this spec's Intent names): now
+ * additionally subtracts `WithdrawalTransactionPort.sumActiveAmountByProjectId`
+ * -- every withdrawal already recorded against this Project -- via
+ * `subtractMoney` (AD-2), so `availableToWithdraw` correctly shrinks after a
+ * withdrawal instead of staying pinned to the raw invested total forever.
+ * Only this resolution step changes; `computeCanTake`'s own pure signature
+ * is untouched, exactly as this story's Boundaries require.
+ *
+ * Review finding: `totalActiveWithdrawn` can exceed `totalActiveInvested`
+ * once Story 3.8's investment cancel/reverse path removes a previously-
+ * active investment from the numerator while a withdrawal already taken
+ * against it stays recorded (no withdrawal-cancel path exists yet, per this
+ * story's own Implementation Notes) -- e.g. invest ₹10,00,000, withdraw
+ * ₹8,00,000, then cancel ₹5,00,000 of the original investment: active-
+ * invested drops to ₹5,00,000 while active-withdrawn stays ₹8,00,000. A
+ * raw `subtractMoney` would throw `NegativeMoneyResultError` uncaught here.
+ * Domain-wise that's not an error state -- it just means nothing further is
+ * available to withdraw -- so `compareMoney` (AD-2) decides the direction
+ * first, and the negative case resolves to `"0"` (Money) instead of ever
+ * letting the subtraction itself throw.
  *
  * `computeCanTake`'s two precondition errors (Partner Shares not totaling
  * 100%, or a Partner's Sub-partner Shares over-allocated) are caught here and
@@ -108,11 +129,17 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
   const partnerSharePort = createPartnerSharePort();
   const subPartnerSharePort = createSubPartnerSharePort();
   const investmentTransactionPort = createInvestmentTransactionPort();
-  const [partnerShares, subPartnerShares, availableToWithdraw] = await Promise.all([
+  const withdrawalTransactionPort = createWithdrawalTransactionPort();
+  const [partnerShares, subPartnerShares, totalActiveInvested, totalActiveWithdrawn] = await Promise.all([
     listCurrentPartnerShares(projectId, { partnerShares: partnerSharePort }),
     listCurrentSubPartnerSharesForProject(projectId, { subPartnerShares: subPartnerSharePort }),
     investmentTransactionPort.sumActiveAmountByProjectId(projectId),
+    withdrawalTransactionPort.sumActiveAmountByProjectId(projectId),
   ]);
+  const availableToWithdraw =
+    compareMoney(totalActiveInvested, totalActiveWithdrawn) >= 0
+      ? subtractMoney(totalActiveInvested, totalActiveWithdrawn)
+      : ("0" as Money);
 
   try {
     const partners = computeCanTake(availableToWithdraw, partnerShares, groupByPartnerId(subPartnerShares));

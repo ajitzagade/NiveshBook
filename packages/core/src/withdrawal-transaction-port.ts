@@ -76,4 +76,15 @@ export interface WithdrawalTransactionPort {
   recordTransaction(input: CreateWithdrawalTransactionInput): Promise<RecordWithdrawalTransactionResult>;
   /** Every withdrawal recorded against one Project, chronological (`createdAt` ascending) -- mirrors `InvestmentTransactionPort.listByRequirementId`'s identical shape one ledger over. */
   listByProjectId(projectId: string): Promise<WithdrawalTransaction[]>;
+  /**
+   * Story 4.9 (FR29, Can Take fix): the DB-side `SUM(amount)` of every
+   * `withdrawal_transactions` row for `projectId` -- mirrors
+   * `InvestmentTransactionPort.sumActiveAmountByProjectId`'s identical
+   * shape/rationale one ledger over (Postgres does the addition, never
+   * application code -- AD-2). Unlike that method, this table has no
+   * `status` column to filter on yet (no cancel/reverse path exists for a
+   * withdrawal -- Story 4.11's job), so this sums every row unconditionally.
+   * `"0"` when the Project has no withdrawals yet.
+   */
+  sumActiveAmountByProjectId(projectId: string): Promise<Money>;
 }

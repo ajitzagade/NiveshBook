@@ -10,10 +10,17 @@ import type {
 } from "@niveshbook/types";
 import type { CreateInvestmentTransactionInput, InvestmentTransactionPort } from "./investment-transaction-port";
 import type { CreateMoneyMovementInput, MoneyMovementPort } from "./money-movement-port";
-import { moveWithdrawalToProject } from "./move-withdrawal-to-project";
+import { spendAvailableBalanceToProject } from "./spend-available-balance";
 import { ShareNotFoundError } from "./investment-transaction";
 import { SharesNotFullyAllocatedError, SubPartnerSharesOverAllocatedError } from "./should-pay";
 
+/**
+ * Mirrors `move-withdrawal-to-project.test.ts`'s identical fixtures/fakes --
+ * `spendAvailableBalanceToProject()` is this story's new, additive sibling
+ * of `moveWithdrawalToProject()`, exercising the exact same
+ * `buildTransactionSnapshot` -> `recordTransaction` -> `moneyMovements.record`
+ * shape one story over.
+ */
 function makeRequirement(overrides: Partial<InvestmentRequirement> = {}): InvestmentRequirement {
   return {
     id: "req-2",
@@ -40,14 +47,6 @@ function makePartner(overrides: Partial<PartnerShare> = {}): PartnerShare {
   };
 }
 
-/**
- * A minimal in-memory `InvestmentTransactionPort` fake -- mirrors
- * `investment-transaction.test.ts`'s `createFakeInvestmentTransactionPort`,
- * narrowed to only the methods `moveWithdrawalToProject`'s single call site
- * (`recordTransaction`) actually exercises; every other method throws if
- * ever called, so an accidental extra call fails loudly rather than
- * returning a silently-wrong default.
- */
 function createFakeInvestmentTransactionPort(): InvestmentTransactionPort & {
   calls: CreateInvestmentTransactionInput[];
 } {
@@ -76,22 +75,22 @@ function createFakeInvestmentTransactionPort(): InvestmentTransactionPort & {
       return { transaction, created: true };
     },
     async listByRequirementId() {
-      throw new Error("not exercised by moveWithdrawalToProject");
+      throw new Error("not exercised by spendAvailableBalanceToProject");
     },
     async findById() {
-      throw new Error("not exercised by moveWithdrawalToProject");
+      throw new Error("not exercised by spendAvailableBalanceToProject");
     },
     async editTransaction() {
-      throw new Error("not exercised by moveWithdrawalToProject");
+      throw new Error("not exercised by spendAvailableBalanceToProject");
     },
     async findAuditLogByTransactionId() {
-      throw new Error("not exercised by moveWithdrawalToProject");
+      throw new Error("not exercised by spendAvailableBalanceToProject");
     },
     async cancelTransaction() {
-      throw new Error("not exercised by moveWithdrawalToProject");
+      throw new Error("not exercised by spendAvailableBalanceToProject");
     },
     async sumActiveAmountByProjectId() {
-      throw new Error("not exercised by moveWithdrawalToProject");
+      throw new Error("not exercised by spendAvailableBalanceToProject");
     },
   };
 }
@@ -115,20 +114,20 @@ function createFakeMoneyMovementPort(): MoneyMovementPort & { calls: CreateMoney
       return movement;
     },
     async listByDestinationProjectId() {
-      throw new Error("not exercised by moveWithdrawalToProject");
+      throw new Error("not exercised by spendAvailableBalanceToProject");
     },
   };
 }
 
-describe("moveWithdrawalToProject (Story 4.8, FR28, AD-6)", () => {
-  it("builds the snapshot via buildTransactionSnapshot, records the investment transaction, and links a money movement (AC1's worked example)", async () => {
+describe("spendAvailableBalanceToProject (Story 4.9, FR29, AD-6)", () => {
+  it("builds the snapshot via buildTransactionSnapshot, records the investment transaction, and links a money movement via availableBalanceSpendId (AC2's worked example)", async () => {
     const investmentTransactions = createFakeInvestmentTransactionPort();
     const moneyMovements = createFakeMoneyMovementPort();
     const requirement = makeRequirement({ amount: "1000000" as Money });
     const partnerShares = [makePartner({ partnerId: "partner-2", sharePercent: "100" as Percent })];
 
-    const result = await moveWithdrawalToProject(
-      "leg-1",
+    const result = await spendAvailableBalanceToProject(
+      "spend-1",
       "project-1",
       "project-2",
       requirement,
@@ -136,8 +135,8 @@ describe("moveWithdrawalToProject (Story 4.8, FR28, AD-6)", () => {
       {},
       "partner",
       "partner-2",
-      "150000" as Money,
-      "idem-1:move:0",
+      "30000" as Money,
+      "idem-1:spend",
       "actor-1",
       { investmentTransactions, moneyMovements },
     );
@@ -148,13 +147,13 @@ describe("moveWithdrawalToProject (Story 4.8, FR28, AD-6)", () => {
     expect(call?.projectId).toBe("project-2");
     expect(call?.partyType).toBe("partner");
     expect(call?.shareId).toBe("partner-2");
-    expect(call?.amount).toBe("150000");
+    expect(call?.amount).toBe("30000");
     // buildTransactionSnapshot's own live computation -- never a client-
     // supplied value: 100% share of a ₹10,00,000 requirement is ₹10,00,000
     // Should Pay, snapshotted exactly as a manual Add Money entry would get.
     expect(call?.sharePercentSnapshot).toBe("100");
     expect(call?.shouldPaySnapshot).toBe("1000000");
-    expect(call?.idempotencyKey).toBe("idem-1:move:0");
+    expect(call?.idempotencyKey).toBe("idem-1:spend");
     expect(call?.actorUserId).toBe("actor-1");
     expect(call?.referenceNumber).toBeNull();
     expect(call?.notes).toBeNull();
@@ -163,14 +162,17 @@ describe("moveWithdrawalToProject (Story 4.8, FR28, AD-6)", () => {
     expect(moneyMovements.calls).toHaveLength(1);
     const movementCall = moneyMovements.calls[0];
     expect(movementCall).toEqual({
-      withdrawalDestinationAllocationId: "leg-1",
+      withdrawalDestinationAllocationId: null,
+      availableBalanceSpendId: "spend-1",
       sourceProjectId: "project-1",
       destinationProjectId: "project-2",
       destinationInvestmentTransactionId: result.investmentTransaction.id,
-      amount: "150000",
+      amount: "30000",
     });
 
     expect(result.investmentTransaction.id).toBe(result.moneyMovement.destinationInvestmentTransactionId);
+    expect(result.moneyMovement.availableBalanceSpendId).toBe("spend-1");
+    expect(result.moneyMovement.withdrawalDestinationAllocationId).toBeNull();
   });
 
   it("resolves a sub_partner target via buildTransactionSnapshot exactly as a manual Add Money entry would", async () => {
@@ -194,8 +196,8 @@ describe("moveWithdrawalToProject (Story 4.8, FR28, AD-6)", () => {
       ],
     };
 
-    await moveWithdrawalToProject(
-      "leg-2",
+    await spendAvailableBalanceToProject(
+      "spend-2",
       "project-1",
       "project-2",
       requirement,
@@ -203,8 +205,8 @@ describe("moveWithdrawalToProject (Story 4.8, FR28, AD-6)", () => {
       subPartnerSharesByPartnerId,
       "sub_partner",
       "sub-2",
-      "50000" as Money,
-      "idem-2:move:1",
+      "10000" as Money,
+      "idem-2:spend",
       "actor-1",
       { investmentTransactions, moneyMovements },
     );
@@ -223,8 +225,8 @@ describe("moveWithdrawalToProject (Story 4.8, FR28, AD-6)", () => {
     const partnerShares = [makePartner({ partnerId: "partner-2" })];
 
     await expect(
-      moveWithdrawalToProject(
-        "leg-3",
+      spendAvailableBalanceToProject(
+        "spend-3",
         "project-1",
         "project-2",
         requirement,
@@ -232,8 +234,8 @@ describe("moveWithdrawalToProject (Story 4.8, FR28, AD-6)", () => {
         {},
         "partner",
         "no-such-partner",
-        "50000" as Money,
-        "idem-3:move:0",
+        "10000" as Money,
+        "idem-3:spend",
         "actor-1",
         { investmentTransactions, moneyMovements },
       ),
@@ -243,16 +245,15 @@ describe("moveWithdrawalToProject (Story 4.8, FR28, AD-6)", () => {
     expect(moneyMovements.calls).toHaveLength(0);
   });
 
-  it("lets computeShouldPay's SharesNotFullyAllocatedError propagate unchanged (the 409 precondition path, this story's I/O matrix)", async () => {
+  it("lets computeShouldPay's SharesNotFullyAllocatedError propagate unchanged", async () => {
     const investmentTransactions = createFakeInvestmentTransactionPort();
     const moneyMovements = createFakeMoneyMovementPort();
     const requirement = makeRequirement({ amount: "1000000" as Money });
-    // Partner Shares total only 60% -- not fully allocated.
     const partnerShares = [makePartner({ partnerId: "partner-2", sharePercent: "60" as Percent })];
 
     await expect(
-      moveWithdrawalToProject(
-        "leg-4",
+      spendAvailableBalanceToProject(
+        "spend-4",
         "project-1",
         "project-2",
         requirement,
@@ -260,8 +261,8 @@ describe("moveWithdrawalToProject (Story 4.8, FR28, AD-6)", () => {
         {},
         "partner",
         "partner-2",
-        "50000" as Money,
-        "idem-4:move:0",
+        "10000" as Money,
+        "idem-4:spend",
         "actor-1",
         { investmentTransactions, moneyMovements },
       ),
@@ -271,15 +272,11 @@ describe("moveWithdrawalToProject (Story 4.8, FR28, AD-6)", () => {
     expect(moneyMovements.calls).toHaveLength(0);
   });
 
-  it("lets computeShouldPay's SubPartnerSharesOverAllocatedError propagate unchanged (review finding -- the third precondition buildTransactionSnapshot can throw, previously unexercised here)", async () => {
+  it("lets computeShouldPay's SubPartnerSharesOverAllocatedError propagate unchanged", async () => {
     const investmentTransactions = createFakeInvestmentTransactionPort();
     const moneyMovements = createFakeMoneyMovementPort();
     const requirement = makeRequirement({ amount: "1000000" as Money });
-    // Partner Shares fully allocated (100%) -- SharesNotFullyAllocatedError
-    // does NOT fire here, so this precondition check is genuinely reached.
     const partnerShares = [makePartner({ partnerId: "partner-2", sharePercent: "100" as Percent })];
-    // This Partner's own current Sub-partner Shares total 120% -- more than
-    // the Partner's own 100% sharePercent.
     const subPartnerSharesByPartnerId: Record<string, SubPartnerShare[]> = {
       "partner-2": [
         {
@@ -308,8 +305,8 @@ describe("moveWithdrawalToProject (Story 4.8, FR28, AD-6)", () => {
     };
 
     await expect(
-      moveWithdrawalToProject(
-        "leg-5",
+      spendAvailableBalanceToProject(
+        "spend-5",
         "project-1",
         "project-2",
         requirement,
@@ -317,8 +314,8 @@ describe("moveWithdrawalToProject (Story 4.8, FR28, AD-6)", () => {
         subPartnerSharesByPartnerId,
         "partner",
         "partner-2",
-        "50000" as Money,
-        "idem-5:move:0",
+        "10000" as Money,
+        "idem-5:spend",
         "actor-1",
         { investmentTransactions, moneyMovements },
       ),

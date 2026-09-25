@@ -36,6 +36,8 @@ function isActive(key: SidebarNavItem["key"], pathname: string): boolean {
       return /^\/projects\/[^/]+\/add-money$/.test(pathname);
     case "withdrawMoney":
       return /^\/projects\/[^/]+\/withdraw-money$/.test(pathname);
+    case "availableBalance":
+      return /^\/projects\/[^/]+\/available-balance$/.test(pathname);
     default:
       return false;
   }
