@@ -13,7 +13,8 @@ import {
 } from "lucide-react";
 import { requireOwnerAdminSession } from "@/lib/session-guard";
 import { getClientConfig } from "@/lib/client-config";
-import { SidebarNav, type SidebarNavItem } from "./SidebarNav";
+import type { SidebarNavItem } from "./SidebarNav";
+import { SidebarShell } from "./SidebarShell";
 
 // Guards every route in this group with a live, owner_admin session (via
 // `requireOwnerAdminSession()`) on every request — never statically cached.
@@ -31,14 +32,13 @@ const ICON_SIZE = 14;
  * Partner Shares, Add Money, Withdraw Money, and Available Balance's own
  * screens are Project-scoped (`/projects/[id]/shares`,
  * `/projects/[id]/add-money`, `/projects/[id]/withdraw-money`,
- * `/projects/[id]/available-balance`) and each already works, but there's no
- * "current project" concept yet for the sidebar to jump straight into one --
- * so all four link to the Projects list (2026-09-24 decision, extended
- * 2026-09-25 to Withdraw Money, then again to Available Balance once it was
- * reachable/working, ahead of Epic 4's formal "done" -- edit/cancel
- * withdrawal is still backlog, but that doesn't block linking the part that
- * already works) rather than staying permanently inert. `SidebarNav` still
- * highlights each correctly when you're actually on a Project's own
+ * `/projects/[id]/available-balance`). Their `href` below is only the
+ * fallback for "no active Project chosen yet" -- `SidebarShell` (2026-09-25)
+ * now owns an "active Project" concept (a Projects-list dropdown, plus
+ * treating any `/projects/[id]/...` URL you're already on as that Project)
+ * and rewrites these 4 items' `href` to point straight at it once one is
+ * known, entirely client-side (never persisted server-side). `SidebarNav`
+ * still highlights each correctly when you're actually on a Project's own
  * Shares/Add Money/Withdraw Money/Available Balance page, independent of
  * this link target. Adjust Next Time (Story 5.3) and Money History (Story
  * 5.1) are both deliberately NOT Project-scoped, so each links straight to
@@ -99,7 +99,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
           <Logo />
           <span className="text-[15px] font-bold tracking-tight text-ink">{appName}</span>
         </div>
-        <SidebarNav items={NAV_ITEMS} />
+        <SidebarShell items={NAV_ITEMS} />
       </aside>
       <main className="max-w-[1020px] px-9 py-7 pb-16 max-[860px]:px-4 max-[860px]:py-5">
         {children}
