@@ -242,13 +242,13 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // Owner/Admin-facing action to date, no self-service UI exists yet).
   "available_balances:view": new Set(["owner_admin"]),
   "available_balances:spend": new Set(["owner_admin"]),
-  // Story 4.10 (FR30): the End-to-End Money Trail is Owner/Admin-only, no
-  // self-access -- mirrors `money_movements:list`'s identical all-or-
-  // nothing-for-the-role shape (spec-4-10's Decisions #2): every table this
-  // reads is already Owner/Admin-only today, with no `SELF_ACCESS_ACTIONS`
-  // entry; epics.md's "any authorized viewer" phrasing is read as
-  // forward-looking language for a later Epic 5 broadening, not a mandate to
-  // build self-access now.
+  // Story 4.10 (FR30) shipped the End-to-End Money Trail Owner/Admin-only,
+  // no self-access -- deliberately deferred (spec-4-10's Decisions #2) to
+  // "a later Epic 5 broadening". Story 5.2 (FR32) is that broadening: the
+  // role-table entry itself stays `owner_admin`-only (an Owner/Admin acting
+  // for anyone still goes through this normal role check) -- self-access is
+  // admitted below via `SCOPE_SELF_ACCESS_ACTIONS`, not by widening this Set,
+  // mirroring `partner_shares:list`'s exact shape (spec-5-2's Decisions #4).
   "money_trail:view": new Set(["owner_admin"]),
   // Story 5.1 (FR31, Epic 5): Money History is this codebase's first
   // genuine, built-now self-access list -- unlike every prior Epic 3/4
@@ -371,10 +371,25 @@ const SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set([
  * this Partner's own Sub-partners" -- the route separately checks
  * `partner.subPartnerVisibilityGrant` before admitting the caller, since the
  * grant is a business-rule condition this gate itself never sees.
+ *
+ * Story 5.2 (FR32) adds `money_trail:view`: a Partner/Sub-partner may start a
+ * trail from an entry that's genuinely their own (spec-5-2's Decisions #3/#4)
+ * -- `scopeOwnerIds` is the single-element (or empty) `[ownerId]` the route
+ * resolves for the trail's *starting* node only, via the same
+ * `listAllCurrentPartnerShares()`/`listAllCurrentSubPartnerShares()` lookup
+ * Story 5.1 built (`apps/web/app/api/money-trail/route.ts`, reused
+ * unchanged), before calling `authorizeScope()` -- mirrors this narrow
+ * identity-resolution-before-authorization shape, not a new AD-1 violation
+ * (spec-5-2's Boundaries). Once authorized at the starting point, the
+ * assembled trail itself shows every connected node regardless of which
+ * other parties it involves -- no per-node redaction, matching
+ * `partner_shares:view_grant`'s "prove linkage, then show the whole linked
+ * structure" precedent one level over.
  */
 const SCOPE_SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set([
   "partner_shares:list",
   "partner_shares:view_grant",
+  "money_trail:view",
 ]);
 
 export interface AuthorizeDeps {

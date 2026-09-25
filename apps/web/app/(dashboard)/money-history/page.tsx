@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
-import { History, Search } from "lucide-react";
-import type { MoneyHistoryEntry, MoneyHistoryEntryType, Project } from "@niveshbook/types";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ArrowLeft, History, Search } from "lucide-react";
+import type { MoneyHistoryEntry, MoneyTrailNode, MoneyTrailNodeType, Project } from "@niveshbook/types";
 import {
   Amount,
   Button,
@@ -19,8 +20,13 @@ import {
   TableRow,
   Th,
   Td,
+  Trail,
+  TrailItem,
+  TraceBanner,
 } from "@niveshbook/ui";
-import { getMoneyHistory, type MoneyHistoryFiltersInput } from "@/lib/money-history";
+import { getMoneyHistory, getTrailStartFromEntry, type MoneyHistoryFiltersInput } from "@/lib/money-history";
+import { getMoneyTrail } from "@/lib/money-trail";
+import { ENTRY_TYPE_LABELS, describeTrailNode, flattenTrail } from "@/lib/money-trail-view";
 import { listProjects } from "@/lib/projects";
 
 type ListState =
@@ -28,21 +34,10 @@ type ListState =
   | { status: "error"; message: string }
   | { status: "loaded"; entries: MoneyHistoryEntry[] };
 
-/**
- * "What Happened" plain-language label per `MoneyHistoryEntryType`
- * (`epic-5-context`'s AC list, spec-5-1's I/O matrix) -- the
- * `Record<MoneyHistoryEntryType, string>` forces this to stay exhaustive
- * against `packages/types`'s union at compile time, mirroring the Add Money
- * page's `PAYMENT_MODE_LABELS` precedent.
- */
-const ENTRY_TYPE_LABELS: Record<MoneyHistoryEntryType, string> = {
-  money_added: "Money Added",
-  money_withdrawn: "Money Withdrawn",
-  moved_to_project: "Moved to Project",
-  given_to_person: "Given to Person",
-  added_to_available_balance: "Added to Available Balance",
-  used_from_available_balance: "Used from Available Balance",
-};
+type TraceState =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "loaded"; trail: MoneyTrailNode };
 
 const PAYMENT_MODE_LABELS: Record<string, string> = {
   cash: "Cash",
@@ -65,25 +60,45 @@ interface FilterFormState {
 const EMPTY_FILTERS: FilterFormState = { dateFrom: "", dateTo: "", projectId: "", personName: "" };
 
 /**
- * Money History (Story 5.1, FR31): the unified, plain-language, filterable
- * transaction log spanning Add Money, Withdraw Money, Movement, and
- * Available Balance activity -- reads `GET /api/money-history`, which is
- * already correctly scoped for all three roles (`authorizeScope`'s grant,
- * `resolveMoneyHistoryScope`'s per-row scoping). This page itself is only
- * reachable today via the Owner/Admin-gated dashboard shell
- * (`requireOwnerAdminSession()`) -- a Partner/Sub-partner's own reachable
- * self-service view of this same, already-scoped API is Story 5.4-5.6's job
- * (spec-5-1's Decisions #1), not this one's.
+ * Money History (Story 5.1, FR31; trail navigation Story 5.2, FR32): the
+ * unified, plain-language, filterable transaction log spanning Add Money,
+ * Withdraw Money, Movement, and Available Balance activity -- reads
+ * `GET /api/money-history`, which is already correctly scoped for all three
+ * roles (`authorizeScope`'s grant, `resolveMoneyHistoryScope`'s per-row
+ * scoping). This page itself is only reachable today via the Owner/Admin-
+ * gated dashboard shell (`requireOwnerAdminSession()`) -- a Partner/
+ * Sub-partner's own reachable self-service view of this same, already-scoped
+ * API is Story 5.4-5.6's job (spec-5-1's Decisions #1), not this one's.
  *
  * Not Project-scoped (mirrors the API's own design) -- a Project `<select>`
  * filter narrows the list instead, the established precedent for a Project
  * picker on a non-Project-scoped screen (spec-5-1's Code Map).
+ *
+ * Trace mode (Story 5.2): `?traceType=X&traceId=Y` in the URL swaps this
+ * page's content area from the flat list/filters to `TraceBanner` + `Trail`
+ * (spec-5-2's Decisions #1 -- an in-place swap, not a dedicated route/page).
+ * Clicking any row sets those params (every Money History entry type maps to
+ * exactly one startable `MoneyTrailNodeType`, `apps/web/lib/money-history.ts`'s
+ * `getTrailStartFromEntry`); "Back to list" clears them, preserving every
+ * other query param untouched. The flat-list filters themselves stay local
+ * component state (this page's existing, unchanged Story 5.1 pattern, not
+ * URL-driven) -- since entering/leaving trace mode is a same-route
+ * client-side navigation, that state survives the round trip on its own,
+ * with no extra plumbing needed to satisfy "existing filters preserved".
  */
 export default function MoneyHistoryPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
   const [state, setState] = useState<ListState>({ status: "loading" });
   const [projects, setProjects] = useState<Project[]>([]);
   const [formFilters, setFormFilters] = useState<FilterFormState>(EMPTY_FILTERS);
   const [appliedFilters, setAppliedFilters] = useState<FilterFormState>(EMPTY_FILTERS);
+  const [traceState, setTraceState] = useState<TraceState>({ status: "loading" });
+
+  const traceType = searchParams.get("traceType");
+  const traceId = searchParams.get("traceId");
+  const isTracing = Boolean(traceType && traceId);
 
   useEffect(() => {
     let cancelled = false;
@@ -131,6 +146,33 @@ export default function MoneyHistoryPage() {
     })();
   }, [appliedFilters]);
 
+  async function fetchTrail(type: string, id: string) {
+    setTraceState({ status: "loading" });
+    try {
+      const result = await getMoneyTrail(type as MoneyTrailNodeType, id);
+      setTraceState({ status: "loaded", trail: result.trail });
+    } catch (error) {
+      setTraceState({
+        status: "error",
+        message: error instanceof Error ? error.message : "Something went wrong.",
+      });
+    }
+  }
+
+  useEffect(() => {
+    if (!isTracing || !traceType || !traceId) {
+      return;
+    }
+    // `fetchTrail` is a component-scoped function whose body sets state --
+    // nesting the call inside an async IIFE satisfies
+    // `react-hooks/set-state-in-effect`, mirroring this same page's own
+    // `refresh`/`appliedFilters` effect immediately above.
+    void (async () => {
+      await fetchTrail(traceType, traceId);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `isTracing` is derived from `traceType`/`traceId`, re-running on either is enough.
+  }, [traceType, traceId]);
+
   function handleFilterSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setAppliedFilters(formFilters);
@@ -139,6 +181,68 @@ export default function MoneyHistoryPage() {
   function handleClearFilters() {
     setFormFilters(EMPTY_FILTERS);
     setAppliedFilters(EMPTY_FILTERS);
+  }
+
+  function handleTraceEntry(entry: MoneyHistoryEntry) {
+    const start = getTrailStartFromEntry(entry);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("traceType", start.type);
+    params.set("traceId", start.id);
+    router.push(`/money-history?${params.toString()}`);
+  }
+
+  function handleBackToList() {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("traceType");
+    params.delete("traceId");
+    const query = params.toString();
+    router.push(query ? `/money-history?${query}` : "/money-history");
+  }
+
+  if (isTracing) {
+    return (
+      <div>
+        <PageHeader
+          title="Money History"
+          description="Every Add Money, Withdraw Money, Movement, and Available Balance event, in one plain-language list."
+        />
+
+        <TraceBanner
+          action={
+            <Button variant="ghost" icon={<ArrowLeft size={14} />} onClick={handleBackToList}>
+              Back to list
+            </Button>
+          }
+        >
+          Trace: {traceType} · {traceId}
+        </TraceBanner>
+
+        <Card className="mt-3.5">
+          {traceState.status === "loading" ? (
+            <p className="text-[13.4px] text-ink-soft">Loading trail…</p>
+          ) : traceState.status === "error" ? (
+            <p role="alert" className="text-[13.4px] text-danger">
+              {traceState.message}
+            </p>
+          ) : (
+            <Trail>
+              {flattenTrail(traceState.trail).map((node) => {
+                const { dotColor, what, meta } = describeTrailNode(node);
+                return (
+                  <TrailItem
+                    key={`${node.type}:${node.id}`}
+                    dotColor={dotColor}
+                    what={what}
+                    meta={meta}
+                    amount={node.amount}
+                  />
+                );
+              })}
+            </Trail>
+          )}
+        </Card>
+      </div>
+    );
   }
 
   return (
@@ -234,7 +338,12 @@ export default function MoneyHistoryPage() {
             </TableHead>
             <TableBody>
               {state.entries.map((entry) => (
-                <TableRow key={entry.id}>
+                <TableRow
+                  key={entry.id}
+                  className="cursor-pointer hover:bg-surface-alt"
+                  onClick={() => handleTraceEntry(entry)}
+                  title="View this entry's money trail"
+                >
                   <Td className="!text-left text-ink-soft">{entry.date}</Td>
                   <Td className="!text-left">
                     <span className="inline-flex items-center gap-1.5">
