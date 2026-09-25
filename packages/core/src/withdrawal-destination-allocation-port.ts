@@ -153,4 +153,13 @@ export interface WithdrawalDestinationAllocationPort {
   hasConflictingAllocation(withdrawalTransactionId: string, idempotencyKey: string): Promise<boolean>;
   /** The destination-allocation leg with this id, or `null` if it doesn't exist (Story 4.10, FR30) -- mirrors `InvestmentTransactionPort.findById`'s identical shape. */
   findById(id: string): Promise<WithdrawalDestinationAllocation | null>;
+  /**
+   * Every destination-allocation leg across every withdrawal, unfiltered, no
+   * pagination (Story 5.1, FR31) -- mirrors `InvestmentTransactionPort.listAll()`'s
+   * identical shape. Money History's `assembleMoneyHistory()` is the sole
+   * consumer -- one entry per leg, per this story's I/O matrix (`"project"`
+   * -> `"moved_to_project"`, `"person"`/`"other"` -> `"given_to_person"`,
+   * `"available_balance"` -> `"added_to_available_balance"`).
+   */
+  listAll(): Promise<WithdrawalDestinationAllocation[]>;
 }

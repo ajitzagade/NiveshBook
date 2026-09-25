@@ -1535,3 +1535,40 @@ describe("authorize — withdrawal_status:view (Story 4.6, self-access override,
     expect(result).toEqual({ allowed: false });
   });
 });
+
+describe("authorizeScope — money_history:list (Story 5.1, plain multi-role grant, no self/scope override)", () => {
+  it("allows owner_admin", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("owner-1", "money_history:list", deps)).toEqual({ allowed: true });
+  });
+
+  it("allows partner", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("partner-1", "money_history:list", deps)).toEqual({ allowed: true });
+  });
+
+  it("allows sub_partner", async () => {
+    const users = createFakeUserPort([makeUser({ id: "sub-1", role: "sub_partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("sub-1", "money_history:list", deps)).toEqual({ allowed: true });
+  });
+
+  it("denies project_admin -- FR6's role exists but is granted nothing yet", async () => {
+    const users = createFakeUserPort([makeUser({ id: "pa-1", role: "project_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("pa-1", "money_history:list", deps)).toEqual({ allowed: false });
+  });
+
+  it("denies a nonexistent actor", async () => {
+    const users = createFakeUserPort([]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("ghost", "money_history:list", deps)).toEqual({ allowed: false });
+  });
+});

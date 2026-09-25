@@ -202,6 +202,22 @@ export async function listCurrentSubPartnerSharesForProject(
 }
 
 /**
+ * Reduces every version row *across every Project* down to the latest
+ * `effectiveFrom` per `subPartnerId` -- the *current* Sub-partner Shares,
+ * globally (Story 5.1, FR31). Mirrors `listAllCurrentPartnerShares`'s exact
+ * Story 2.7 shape one level down, sourced from `deps.subPartnerShares.listAll()`
+ * instead of `listByPartnerId(partnerId)`/`listByProjectId(projectId)`. Order
+ * of the returned array is not guaranteed to match `deps.subPartnerShares.listAll()`'s
+ * order.
+ */
+export async function listAllCurrentSubPartnerShares(
+  deps: SubPartnerShareDeps,
+): Promise<SubPartnerShare[]> {
+  const allVersions = await deps.subPartnerShares.listAll();
+  return reduceToLatestPerSubPartnerId(allVersions);
+}
+
+/**
  * The running total across a set of Sub-partner Shares (typically the
  * output of `listCurrentSubPartnerShares`) -- delegates entirely to
  * `decimal-math.ts`'s `sumPercents` (AD-2's fixed-point addition), never raw

@@ -213,6 +213,9 @@ function createFakeWithdrawalTransactionPort(): WithdrawalTransactionPort & {
       appliedCancelsByIdempotencyKey.set(input.idempotencyKey, result);
       return { ...result, cancelled: true };
     },
+    async listAll() {
+      return [...rows];
+    },
   };
 }
 

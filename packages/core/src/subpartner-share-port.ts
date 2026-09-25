@@ -36,4 +36,11 @@ export interface SubPartnerSharePort {
    * latest-per-`subPartnerId` themselves, same as `listByPartnerId`.
    */
   listByProjectId(projectId: string): Promise<SubPartnerShare[]>;
+  /**
+   * Every version row across every Project (all Sub-partners, all versions)
+   * -- mirrors `PartnerSharePort.listAll()`'s exact Story 2.7 shape one level
+   * down (Story 5.1, FR31). Callers reduce to latest-per-`subPartnerId`
+   * themselves, same as `listByPartnerId`/`listByProjectId`.
+   */
+  listAll(): Promise<SubPartnerShare[]>;
 }

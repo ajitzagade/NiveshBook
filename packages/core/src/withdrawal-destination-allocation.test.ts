@@ -135,6 +135,9 @@ function createFakePort(): WithdrawalDestinationAllocationPort & {
     async findById() {
       return null;
     },
+    async listAll() {
+      return [];
+    },
   };
 }
 
@@ -386,6 +389,9 @@ describe("recordDestinationAllocation", () => {
       async findById() {
         return null;
       },
+      async listAll() {
+        return [];
+      },
     };
     await expect(
       recordDestinationAllocation(withdrawal, [makeLeg({ amount: "250000" })], "project-1", "actor-1", "idem-10", {
@@ -405,6 +411,9 @@ describe("recordDestinationAllocation", () => {
       },
       async findById() {
         return null;
+      },
+      async listAll() {
+        return [];
       },
     };
     await expect(
@@ -427,6 +436,9 @@ describe("recordDestinationAllocation", () => {
       },
       async findById() {
         return null;
+      },
+      async listAll() {
+        return [];
       },
     };
 

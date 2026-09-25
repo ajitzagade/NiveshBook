@@ -648,3 +648,85 @@ export interface MoneyTrailReconciliationResult {
   reconciled: boolean;
   discrepancies: MoneyTrailDiscrepancy[];
 }
+
+/**
+ * Story 5.1 (FR31): the 6 plain-language kinds `assembleMoneyHistory()`
+ * produces, one per source-row shape in the I/O matrix (spec-5-1). No
+ * `"adjustment"` member -- `investment_adjustments`/`withdrawal_adjustments`
+ * are single-current-row upserts, not append-only history, so they're
+ * omitted entirely this story (spec-5-1's Decisions #3); the real AD-4
+ * audited netting-transaction type this label refers to is Story 5.3's job.
+ * `"other"`-destination legs/spends are labeled `"given_to_person"` too (no
+ * 7th type invented) -- disambiguated by `to`/`notes` instead.
+ */
+export type MoneyHistoryEntryType =
+  | "money_added"
+  | "money_withdrawn"
+  | "moved_to_project"
+  | "given_to_person"
+  | "added_to_available_balance"
+  | "used_from_available_balance";
+
+/**
+ * One row of the unified Money History list (Story 5.1, FR31) -- the plain-
+ * language shape `assembleMoneyHistory()` (packages/core) produces from
+ * every one of the 6 source tables it reads, per spec-5-1's I/O matrix.
+ * `id` is the originating row's own id (never a synthetic composite key --
+ * unlike `MoneyTrailNode`'s pool-reference nodes, every Money History entry
+ * traces back to one real row). `shareId`/`partyType` identify whose money
+ * this entry is about (AD-4: the stable `partnerId`/`subPartnerId`, never
+ * `User.id`) -- used by `resolveMoneyHistoryScope()`'s scoping, not just
+ * display. `from`/`to` are plain-language, already-resolved display strings
+ * (a Project name, a person's name, or `"Available Balance"`) -- never a raw
+ * id, so the UI never needs a second lookup to render them.
+ */
+export interface MoneyHistoryEntry {
+  id: string;
+  type: MoneyHistoryEntryType;
+  /** Plain date, `YYYY-MM-DD` -- no time component, matching every source row's own `transactionDate`/`createdAt`-derived date. */
+  date: string;
+  projectId: string;
+  projectName: string;
+  partyType: "partner" | "sub_partner";
+  /** The stable `partnerId`/`subPartnerId` this entry is about -- never `User.id` (AD-4). */
+  shareId: string;
+  /** Resolved display name for `(partyType, shareId)`, or `null` if the entry has no single Partner/Sub-partner owner (this story's I/O matrix has none such, but kept nullable to mirror `MoneyMovement`'s own conservative shape). */
+  personName: string | null;
+  amount: Money;
+  paymentMode: PaymentMode | null;
+  /** Plain-language source, e.g. a Project name or `"Available Balance"` -- `null` when the entry has no distinct "from" (e.g. a manual Add Money entry). */
+  from: string | null;
+  /** Plain-language destination, e.g. a Project name, a person's name, or `"Available Balance"` -- `null` when the entry has no distinct "to" (e.g. a plain Add Money/Withdraw entry). */
+  to: string | null;
+  notes: string | null;
+  /**
+   * Review round 2 (spec-5-1's Implementation Notes): `"active"`/`"cancelled"`,
+   * threaded through from the underlying row's own `InvestmentTransaction.status`/
+   * `WithdrawalTransaction.status` (Story 3.8/4.11) -- without this, a
+   * cancelled transaction and its linked reversal render as pixel-identical,
+   * unmarked duplicate rows (the same amount/date/paymentMode/shareId, only
+   * `id`/`reversalOfTransactionId`/`idempotencyKey` differ, none of which
+   * were otherwise exposed here). For a leg-derived entry
+   * (`moved_to_project`/`given_to_person`/`added_to_available_balance`/the
+   * `"other"`-shaped `given_to_person`), this is the PARENT withdrawal's own
+   * `status` -- a cancel never touches `withdrawal_destination_allocations`/
+   * `money_movements` rows directly (`WithdrawalTransactionPort.cancelTransaction`'s
+   * own doc comment), so there is no separate "leg reversal," only "this
+   * leg's parent withdrawal was voided." Always `"active"` for an
+   * `available_balance_spends`-derived entry -- that table has no cancel
+   * capability built anywhere in this codebase yet (a real, separately-logged
+   * gap, not fixed by this field).
+   */
+  status: "active" | "cancelled";
+  /**
+   * Present only when this entry's own underlying row (or, for a leg-derived
+   * entry, its PARENT withdrawal) is itself a reversal row -- mirrors
+   * `InvestmentTransaction.reversalOfTransactionId`/`WithdrawalTransaction.reversalOfTransactionId`'s
+   * one-directional "the reversal points at the original, never the reverse"
+   * convention. Drives the established `StatusChip` "Cancelled (reversal)"
+   * label (`RecordedPayments`/`RecordedWithdrawals`, Story 3.7/3.8/4.11) --
+   * this story reuses that exact visual convention rather than inventing a
+   * new one. Always `null` for an `available_balance_spends`-derived entry.
+   */
+  reversalOfTransactionId: string | null;
+}

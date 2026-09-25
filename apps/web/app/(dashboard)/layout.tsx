@@ -51,7 +51,16 @@ const NAV_ITEMS: readonly SidebarNavItem[] = [
   { key: "withdrawMoney", label: "Withdraw Money", icon: <Minus size={ICON_SIZE} />, href: "/projects" },
   { key: "availableBalance", label: "Available Balance", icon: <Wallet size={ICON_SIZE} />, href: "/projects" },
   { key: "adjustNextTime", label: "Adjust Next Time", icon: <RotateCcw size={ICON_SIZE} /> },
-  { key: "moneyHistory", label: "Money History", icon: <History size={ICON_SIZE} /> },
+  // Story 5.1 (FR31): activated -- unlike Partner Shares/Add Money/Withdraw
+  // Money/Available Balance's own "no current Project to jump into yet"
+  // rationale above, Money History is deliberately NOT Project-scoped (it
+  // spans every Project a viewer is linked to), so it links straight to its
+  // own page rather than to `/projects`. `SidebarNav.isActive` highlights it
+  // on that exact route. Reachable via THIS shell only for Owner/Admin today
+  // (`requireOwnerAdminSession()` below, unchanged) -- the API itself is
+  // already correctly scoped for all three roles (spec-5-1's Decisions #1);
+  // a Partner/Sub-partner's own reachable path to it is Story 5.4-5.6's job.
+  { key: "moneyHistory", label: "Money History", icon: <History size={ICON_SIZE} />, href: "/money-history" },
   { key: "reports", label: "Reports", icon: <BarChart3 size={ICON_SIZE} /> },
 ];
 

@@ -243,4 +243,11 @@ export interface WithdrawalTransactionPort {
    * `WithdrawalAlreadyCancelledError`.
    */
   cancelTransaction(input: CancelWithdrawalTransactionInput): Promise<CancelWithdrawalTransactionResult>;
+  /**
+   * Every `withdrawal_transactions` row across every Project, unfiltered, no
+   * pagination (Story 5.1, FR31) -- mirrors `InvestmentTransactionPort.listAll()`'s
+   * identical shape one ledger over. Money History's `assembleMoneyHistory()`
+   * is the sole consumer.
+   */
+  listAll(): Promise<WithdrawalTransaction[]>;
 }

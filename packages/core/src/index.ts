@@ -37,3 +37,4 @@ export * from "./available-balance-port";
 export * from "./spend-available-balance";
 export * from "./money-trail";
 export * from "./money-trail-reconciliation";
+export * from "./money-history";

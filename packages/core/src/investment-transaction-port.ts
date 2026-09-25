@@ -257,4 +257,14 @@ export interface InvestmentTransactionPort {
    * a Project with zero active transactions -- the zero-investment I/O case.
    */
   sumActiveAmountByProjectId(projectId: string): Promise<Money>;
+  /**
+   * Every `investment_transactions` row across every requirement/Project,
+   * unfiltered, no pagination (Story 5.1, FR31) -- mirrors
+   * `PartnerSharePort.listAll()`'s exact Story 2.7 shape. Money History's
+   * `assembleMoneyHistory()` is the sole consumer -- it classifies each row
+   * as a plain `"money_added"` entry or a cross-Project movement destination
+   * itself, via `MoneyMovementPort.listAll()`'s own rows, never a per-row
+   * DB lookup.
+   */
+  listAll(): Promise<InvestmentTransaction[]>;
 }

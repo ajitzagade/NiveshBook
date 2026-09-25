@@ -304,6 +304,13 @@ function createFakeInvestmentTransactionPort(): InvestmentTransactionPort & {
           .map((row) => row.amount),
       );
     },
+    // Story 5.1 (FR31): a plain, unfiltered read of every row -- mirrors
+    // `packages/db`'s own `listAll` shape. This file's tests never exercise
+    // Money History (`money-history.test.ts`'s job), so this is a minimal,
+    // correct implementation only.
+    async listAll() {
+      return [...rows];
+    },
   };
 }
 

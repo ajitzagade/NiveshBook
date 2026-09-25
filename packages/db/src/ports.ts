@@ -636,6 +636,10 @@ export function createSubPartnerSharePort(database: Database = getDb()): SubPart
         .where(eq(subpartnerShares.projectId, projectId));
       return rows.map(toSubPartnerShare);
     },
+    async listAll() {
+      const rows = await database.select().from(subpartnerShares);
+      return rows.map(toSubPartnerShare);
+    },
   };
 }
 
@@ -1142,6 +1146,11 @@ export function createWithdrawalTransactionPort(
     /** Story 4.10 (FR30) -- mirrors `createInvestmentTransactionPort.findById`'s identical plain-select shape one ledger over. */
     async findById(id) {
       return findTransactionById(id);
+    },
+    /** Story 5.1 (FR31) -- mirrors `createInvestmentTransactionPort.listAll`'s identical shape one ledger over. */
+    async listAll() {
+      const rows = await database.select().from(withdrawalTransactions);
+      return rows.map(toWithdrawalTransaction);
     },
     /**
      * Story 4.11's `editTransaction` -- mirrors
@@ -1671,6 +1680,11 @@ export function createInvestmentTransactionPort(
     },
     async findById(id) {
       return findTransactionById(id);
+    },
+    /** Story 5.1 (FR31) -- mirrors `createPartnerSharePort.listAll`'s plain, unfiltered shape. */
+    async listAll() {
+      const rows = await database.select().from(investmentTransactions);
+      return rows.map(toInvestmentTransaction);
     },
     /**
      * Story 3.7's `editTransaction` -- mirrors `recordTransaction`'s
@@ -2373,6 +2387,11 @@ export function createWithdrawalDestinationAllocationPort(
       const row = rows[0];
       return row ? toWithdrawalDestinationAllocation(row) : null;
     },
+    /** Story 5.1 (FR31) -- mirrors `createInvestmentTransactionPort.listAll`'s identical shape. */
+    async listAll() {
+      const rows = await database.select().from(withdrawalDestinationAllocations);
+      return rows.map(toWithdrawalDestinationAllocation);
+    },
   };
 }
 
@@ -2445,6 +2464,11 @@ export function createMoneyMovementPort(database: Database = getDb()): MoneyMove
         .limit(1);
       const row = rows[0];
       return row ? toMoneyMovement(row) : null;
+    },
+    /** Story 5.1 (FR31) -- mirrors `createInvestmentTransactionPort.listAll`'s identical shape. */
+    async listAll() {
+      const rows = await database.select().from(moneyMovements);
+      return rows.map(toMoneyMovement);
     },
   };
 }
@@ -2782,6 +2806,11 @@ export function createAvailableBalanceSpendPort(
         .limit(1);
       const row = rows[0];
       return row ? toAvailableBalanceSpend(row) : null;
+    },
+    /** Story 5.1 (FR31) -- mirrors `createInvestmentTransactionPort.listAll`'s identical shape. */
+    async listAll() {
+      const rows = await database.select().from(availableBalanceSpends);
+      return rows.map(toAvailableBalanceSpend);
     },
   };
 }

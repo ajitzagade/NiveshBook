@@ -47,7 +47,8 @@ export type Action =
   | "money_movements:list"
   | "available_balances:view"
   | "available_balances:spend"
-  | "money_trail:view";
+  | "money_trail:view"
+  | "money_history:list";
 
 /**
  * Role -> allowed-actions permission table. All actions here are
@@ -249,6 +250,26 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // forward-looking language for a later Epic 5 broadening, not a mandate to
   // build self-access now.
   "money_trail:view": new Set(["owner_admin"]),
+  // Story 5.1 (FR31, Epic 5): Money History is this codebase's first
+  // genuine, built-now self-access list -- unlike every prior Epic 3/4
+  // "Epic 5 will open this later" comment above, this story IS that
+  // opening. All three roles are granted here directly (a plain
+  // multi-role Set, not a single-owner_admin-only Set with a
+  // `SELF_ACCESS_ACTIONS`/`SCOPE_SELF_ACCESS_ACTIONS` override) because
+  // neither existing override mechanism fits: both are shaped for "does
+  // actor own *this one* target resource," not "what's actor's own scope
+  // across a whole list assembly spanning every Project." The actual
+  // per-row scoping (an Owner/Admin sees everything; a Partner/Sub-partner
+  // sees only entries matching their own current Share triples) is
+  // computed by a separate, new pure function the route calls after this
+  // gate passes -- `resolveMoneyHistoryScope()` (`money-history.ts`), never
+  // by this permission table or by `SELF_ACCESS_ACTIONS`/
+  // `SCOPE_SELF_ACCESS_ACTIONS` (spec-5-1's Decisions #1). The dashboard
+  // shell itself (`requireOwnerAdminSession()`) stays Owner/Admin-gated
+  // regardless -- reachability via UI for `partner`/`sub_partner` is
+  // Story 5.4-5.6's job, not this one's; granting the role here only means
+  // the API itself is correctly scoped starting now.
+  "money_history:list": new Set(["owner_admin", "partner", "sub_partner"]),
 };
 
 /**

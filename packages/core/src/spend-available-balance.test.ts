@@ -92,6 +92,9 @@ function createFakeInvestmentTransactionPort(): InvestmentTransactionPort & {
     async sumActiveAmountByProjectId() {
       throw new Error("not exercised by spendAvailableBalanceToProject");
     },
+    async listAll() {
+      throw new Error("not exercised by spendAvailableBalanceToProject");
+    },
   };
 }
 
@@ -123,6 +126,9 @@ function createFakeMoneyMovementPort(): MoneyMovementPort & { calls: CreateMoney
       throw new Error("not exercised by spendAvailableBalanceToProject");
     },
     async findByAvailableBalanceSpendId() {
+      throw new Error("not exercised by spendAvailableBalanceToProject");
+    },
+    async listAll() {
       throw new Error("not exercised by spendAvailableBalanceToProject");
     },
   };

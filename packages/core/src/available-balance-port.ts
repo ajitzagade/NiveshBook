@@ -176,4 +176,12 @@ export interface AvailableBalanceSpendPort {
   ): Promise<RecordAvailableBalanceSpendResult>;
   /** The spend with this id, or `null` if it doesn't exist (Story 4.10, FR30) -- mirrors `InvestmentTransactionPort.findById`'s identical shape. */
   findById(id: string): Promise<AvailableBalanceSpend | null>;
+  /**
+   * Every Available Balance spend across every Project, unfiltered, no
+   * pagination (Story 5.1, FR31) -- mirrors `InvestmentTransactionPort.listAll()`'s
+   * identical shape. Money History's `assembleMoneyHistory()` is the sole
+   * consumer -- one `"used_from_available_balance"` entry per row, per this
+   * story's I/O matrix.
+   */
+  listAll(): Promise<AvailableBalanceSpend[]>;
 }

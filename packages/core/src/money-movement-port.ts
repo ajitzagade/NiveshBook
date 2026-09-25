@@ -69,4 +69,14 @@ export interface MoneyMovementPort {
    * `available_balance_spend` to its linked movement.
    */
   findByAvailableBalanceSpendId(spendId: string): Promise<MoneyMovement | null>;
+  /**
+   * Every money movement across every Project, unfiltered, no pagination
+   * (Story 5.1, FR31) -- mirrors `InvestmentTransactionPort.listAll()`'s
+   * identical shape. Money History's `assembleMoneyHistory()` uses this to
+   * build the `destinationInvestmentTransactionId` lookup Set once, up
+   * front, classifying each `investment_transactions` row as a plain add vs.
+   * a cross-Project movement destination -- mirrors the Add Money page's
+   * existing "Moved from Project A" lookup (Story 4.8), one level over.
+   */
+  listAll(): Promise<MoneyMovement[]>;
 }
