@@ -72,6 +72,17 @@ export interface AvailableBalancePort {
     shareId: string,
     projectId: string,
   ): Promise<AvailableBalance | null>;
+  /**
+   * Every `available_balances` row across every Project, unfiltered, no
+   * pagination (Story 5.4) -- mirrors `AvailableBalanceSpendPort.listAll()`'s
+   * exact Story 5.1 shape one ledger over (plain, unfiltered, no row lock --
+   * unlike `debitBalance`'s own `SELECT ... FOR UPDATE`, this is a read-only
+   * bulk read). `owner-admin-dashboard.ts`'s `assembleOwnerAdminDashboard()`
+   * is the first consumer -- the system-wide Available Balance stat card and
+   * each partner-wise overview row's own Available Balance total, both
+   * summed from this same single fetch.
+   */
+  listAll(): Promise<AvailableBalance[]>;
 }
 
 /**

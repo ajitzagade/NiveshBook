@@ -298,6 +298,38 @@ describe("createAvailableBalancePort (live Postgres)", () => {
     });
   });
 
+  /** Story 5.4: the Owner/Admin Dashboard's own bulk read -- mirrors `listBalancesByProjectId`'s tests one level up (unfiltered, across every Project). */
+  describe("listAll", () => {
+    // Review finding (2026-09-25): a prior version of this suite had a
+    // `"returns [] when no balances have ever been credited"` test here that
+    // didn't actually assert `listAll()` returns `[]` -- `listAll()` is
+    // global/unfiltered, so nothing can isolate "no balances at all" from
+    // other tests' leftover rows in the same live database; the test only
+    // checked a freshly-seeded, untouched `projectId` was absent from
+    // whatever came back, which would pass even if `listAll()` were badly
+    // broken (e.g. returning `[]` unconditionally), so it proved nothing.
+    // Removed -- the test below already provides the real positive-coverage
+    // evidence (that `listAll()` genuinely returns rows this suite itself
+    // just credited), which is the only thing a global, unfiltered read can
+    // meaningfully assert in a shared live database.
+    it("returns every balance row across every Project, unfiltered", async () => {
+      const port = createAvailableBalancePort();
+      const projectIdA = await seedProject();
+      const projectIdB = await seedProject();
+      const shareIdA = uuidv7();
+      const shareIdB = uuidv7();
+      await port.creditBalance({ projectId: projectIdA, partyType: "partner", shareId: shareIdA, amount: "10000" as Money });
+      await port.creditBalance({ projectId: projectIdB, partyType: "sub_partner", shareId: shareIdB, amount: "20000" as Money });
+
+      const all = await port.listAll();
+
+      const rowA = all.find((b) => b.projectId === projectIdA && b.shareId === shareIdA);
+      const rowB = all.find((b) => b.projectId === projectIdB && b.shareId === shareIdB);
+      expect(rowA?.balance).toBe("10000.00");
+      expect(rowB?.balance).toBe("20000.00");
+    });
+  });
+
   /**
    * Review finding: `debitBalance`'s application-level `assertSufficientBalance`
    * guard is what normally prevents a negative balance (AD-10) -- these

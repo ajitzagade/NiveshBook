@@ -2632,6 +2632,11 @@ export function createAvailableBalancePort(database: Database = getDb()): Availa
       const row = rows[0];
       return row ? toAvailableBalance(row) : null;
     },
+    /** Story 5.4 -- plain, unfiltered read, mirrors every other port's identical `listAll()` shape (e.g. `createInvestmentTransactionPort.listAll`). */
+    async listAll() {
+      const rows = await database.select().from(availableBalances);
+      return rows.map(toAvailableBalance);
+    },
   };
 }
 
