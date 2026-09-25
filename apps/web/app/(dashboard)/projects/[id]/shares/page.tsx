@@ -202,6 +202,45 @@ export default function PartnerSharesPage() {
     };
   }, [projectId]);
 
+  // Eagerly prefetches every Partner's Sub-partner count as soon as the
+  // Partner Shares list itself loads (or changes, e.g. after adding a new
+  // Partner) -- so the "Sub-partners" button can show a count (e.g.
+  // "Sub-partners (2)") without the Owner/Admin needing to click into each
+  // Partner one at a time to find out whether any exist. `toggleExpanded`'s
+  // own on-click fetch (`refreshSubShares`) still runs unchanged as a
+  // fallback/retry path (e.g. if this prefetch failed for a given Partner);
+  // it's a no-op here whenever this prefetch already populated the entry.
+  // `subSharesByPartner` is intentionally excluded from the dependency array
+  // (read only to skip already-known Partners) -- including it would re-run
+  // this effect every time it's the one updating that same state.
+  useEffect(() => {
+    if (state.status !== "loaded") return;
+    let cancelled = false;
+
+    for (const share of state.shares) {
+      if (subSharesByPartner[share.partnerId]) continue;
+      listSubPartnerShares(projectId, share.partnerId)
+        .then((result) => {
+          if (cancelled) return;
+          setSubSharesByPartner((prev) =>
+            prev[share.partnerId]
+              ? prev
+              : { ...prev, [share.partnerId]: { status: "loaded", shares: result.shares, total: result.total } },
+          );
+        })
+        .catch(() => {
+          // Best-effort prefetch only -- the count badge simply stays hidden
+          // for this Partner; clicking "Sub-partners" still retries via
+          // `toggleExpanded`/`refreshSubShares` and surfaces the real error.
+        });
+    }
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, projectId]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -448,7 +487,11 @@ export default function PartnerSharesPage() {
                           onClick={() => toggleExpanded(share.partnerId)}
                           icon={expanded ? <ChevronUp size={14} /> : <Users size={14} />}
                         >
-                          {expanded ? "Hide" : "Sub-partners"}
+                          {expanded
+                            ? "Hide"
+                            : subState?.status === "loaded" && subState.shares.length > 0
+                              ? `Sub-partners (${subState.shares.length})`
+                              : "Sub-partners"}
                         </Button>
                       </div>
                     }
