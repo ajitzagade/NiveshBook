@@ -41,3 +41,4 @@ export * from "./money-history";
 export * from "./adjustment-netting-port";
 export * from "./adjust-next-time";
 export * from "./owner-admin-dashboard";
+export * from "./partner-dashboard";

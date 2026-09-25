@@ -1,0 +1,101 @@
+---
+title: 'Partner Dashboard'
+type: 'feature'
+created: '2026-09-25'
+status: 'done'
+route: 'dispatch'
+review_loop_iteration: 0
+context: []
+baseline_commit: 'e975835e6271865ed0f523d1c31655030fb12a79'
+---
+
+<frozen-after-approval reason="human-owned intent — do not modify unless human renegotiates">
+
+## Intent
+
+**Problem:** FR-36 asks for a Partner's own scoped dashboard — My Projects, My Share %, Money Added, Money Withdrawn, Available Balance, Pending, Extra Paid, Withdrawal Keep for Later, My Sub-partners, Money History. This is the first story where a non-Owner/Admin role needs to actually reach a real page — every page built across Epics 1-5 so far sits behind `requireOwnerAdminSession()`, which redirects any other role away. `requireSession()` (a role-agnostic sibling) already exists, unused, apparently built in anticipation of exactly this moment.
+
+**Approach:** Confirmed with the user 2026-09-25:
+1. **The shell opens to `partner` now** — a new `requireOwnerAdminOrPartnerSession()` (mirrors `requireOwnerAdminSession()`'s exact shape) replaces the layout's gate. This is scoped precisely to what this story needs: `sub_partner` stays excluded until Story 5.6 does its own equivalent widening.
+2. **Nav items are filtered per role, not all made visible.** Only `Home`, `Money History` (Story 5.1, already self-access), and `Adjust Next Time` (Story 5.3, already self-access) show for `partner` — every other item (Projects, Partner Shares, Add Money, Withdraw Money, Available Balance's own page, Reports, Users, Permissions, Audit History) stays hidden, mirroring this exact codebase's own established "inert until ready" convention (already used for Reports today) — extended from "story not done" to also cover "role not ready." Matches EXPERIENCE.md's own rule: a nav item renders only when the role is genuinely authorized, never shown-but-blocked.
+3. **"My Sub-partners" is NOT gated by the Story 2.6/2.7 visibility grant** — that grant (`subPartnerVisibilityGrant`/`partner_shares:view_grant`) governs the opposite direction (whether a Sub-partner sees their parent Partner's context), not whether a Partner sees their own Sub-partners. A Partner's own view of their own Sub-partner structure is already unconditional self-access (`subpartner_shares:list`, Story 2.4, `SELF_ACCESS_ACTIONS`) — epics.md's AC parenthetical is corrected here as a documented spec finding, not followed literally.
+4. **This dashboard is a server component calling ports directly**, exactly mirroring Story 5.4's Owner/Admin dashboard precedent — no new `authorize.ts` actions needed. The page-level role gate (this story's #1) is what protects the data; `listAll()`-shaped port calls have no per-call `authorizeScope()` of their own, matching the established pattern.
+5. **"My Projects, My Share %" is a per-Project breakdown list** (mirrors Story 5.4's per-partner-row precedent one level down — `partnerId` is minted fresh per Project, so a Partner linked to 3 Projects has 3 separate current Partner Share rows). **Money Added/Money Withdrawn/Available Balance/Pending/Extra Paid/Withdrawal Keep for Later are aggregate totals across all of the Partner's own Projects** (mirrors Story 5.4's top-level stat-card totals, scoped to self instead of system-wide) — Pending/Extra Paid are summed separately by `adjustmentType` (never netted against each other, AD-4), same for Keep for Later on the withdrawal side.
+6. **"Money History" in the AC means the nav item is now reachable, not embedded dashboard content** — mirrors Story 5.4's own precedent (the Owner/Admin dashboard didn't embed a Money History table either); this dashboard page doesn't duplicate Money History's own dedicated screen.
+
+## Boundaries & Constraints
+
+**Always:** Every sum uses `sumMoney`/`subtractMoney`/`compareMoney` (AD-2). Only `status: "active"` investment/withdrawal transactions count (mirrors every existing active-only sum). Only CURRENT Partner/Sub-partner Shares are considered (via the existing `listAllCurrentPartnerShares()`/`listAllCurrentSubPartnerShares()`, unchanged). Pending and Extra Paid (and Keep for Later / Extra Taken) are always summed separately by `adjustmentType`, never netted against each other (AD-4, unchanged from every prior story's identical constraint).
+
+**Never:** No new `authorize.ts` action. No change to `assembleMoneyHistory()`, `assembleOwnerAdminDashboard()`, `resolveMoneyHistoryScope()`, or any existing port method's behavior. No widening of the shell to `sub_partner` (Story 5.6's own job). No nav item shown for a role whose underlying page would 403 on click (EXPERIENCE.md's explicit rule, unchanged). No embedding of Money History's own list/filter UI on this page (Decisions #6).
+
+## I/O & Edge-Case Matrix
+
+| Scenario | Input / State | Expected Output / Behavior | Error Handling |
+|----------|--------------|---------------------------|----------------|
+| Partner with activity in one Project (AC) | One current Partner Share, various transactions | All 9 data points shown, scoped to that Partner only | N/A |
+| Partner linked to multiple Projects | 3 current Partner Shares (3 Projects) | "My Projects" shows 3 rows (project name + share %); the 6 aggregate totals sum across all 3 | N/A |
+| Partner with no activity yet | Current Partner Share exists, zero transactions | All aggregate totals show `"0"`; "My Projects" still shows the Project(s) they're linked to | N/A |
+| Partner with Sub-partners | 2 current Sub-partner Shares under this Partner | "My Sub-partners" lists both, regardless of `subPartnerVisibilityGrant` (Decisions #3) | N/A |
+| Partner with no Sub-partners | Zero Sub-partner Shares under this Partner | "My Sub-partners" section omitted or shows an empty state, not a crash | N/A |
+| Nav visibility for `partner` role | Any Partner session | Sidebar shows Home/Money History/Adjust Next Time only | N/A |
+| Nav visibility for `owner_admin` role | Any Owner/Admin session | Unchanged — all 9 items, exactly as today | N/A |
+| A Partner navigates directly to a hidden page's URL | e.g. `/projects` | Rejected — the underlying page/API's own existing Owner/Admin-only gate still applies unchanged; this story only hides the NAV LINK, it does not widen any other page's own access | `403`/redirect (pre-existing, unchanged) |
+| Sub-partner or unauthenticated session | Any other actor | Still redirected away from the whole shell — unchanged, this story only admits `partner` | N/A (pre-existing) |
+
+</frozen-after-approval>
+
+## Code Map
+
+- `apps/web/lib/session-guard.ts` — add `requireOwnerAdminOrPartnerSession(): Promise<Session>`, mirroring `requireOwnerAdminSession()`'s exact shape (`requireSession()` + a role check), admitting `owner_admin` OR `partner`.
+- `apps/web/app/(dashboard)/layout.tsx` — swap `requireOwnerAdminSession()` for the new guard. Resolve the actor's role (a second `createUserPort().findUserById()` call, mirroring this codebase's established "each layer independently re-verifies" pattern, e.g. Story 5.2's Implementation Notes). Add `roles?: readonly ("owner_admin" | "partner")[]` to `SidebarNavItem` (`SidebarNav.tsx`); every existing `NAV_ITEMS` entry gets `roles: ["owner_admin"]` EXCEPT `home`/`moneyHistory`/`adjustNextTime`, which get `roles: ["owner_admin", "partner"]`. Filter `NAV_ITEMS` by the resolved role before passing to `SidebarShell`.
+- `packages/core/src/partner-dashboard.ts` (new) — pure `assemblePartnerDashboard(actorUserId, raw: { investmentTransactions, withdrawalTransactions, availableBalances, investmentAdjustments, withdrawalAdjustments, currentPartnerShares, currentSubPartnerShares, projectNamesById }): PartnerDashboardSummary`. Filters `currentPartnerShares` to `userId === actorUserId` → `myProjects: { projectId, projectName, partnerId, sharePercent }[]`. For the resulting set of `partnerId`s: sums active investment/withdrawal/balance rows into `totalMoneyAdded`/`totalMoneyWithdrawn`/`totalAvailableBalance` (mirrors `assembleOwnerAdminDashboard()`'s per-partner sum logic, aggregated across this Partner's own `partnerId`s instead of shown per-row). Sums `investmentAdjustments`/`withdrawalAdjustments` (filtered to the same `partnerId`s) separately by `adjustmentType` into `totalPending`/`totalExtraPaid`/`totalKeepForLater`/`totalExtraTaken`. Filters `currentSubPartnerShares` to `partnerId` in the actor's own set → `mySubPartners: { name, sharePercent, projectName }[]`.
+- `packages/core/src/index.ts` — barrel-export the new module.
+- `apps/web/app/(dashboard)/home/page.tsx` (existing, extend) — resolve the actor's role (`requireSession()` + `findUserById()`, mirroring the layout's own new resolution); branch: `owner_admin` → existing Story 5.4 rendering unchanged; `partner` → new rendering using `assemblePartnerDashboard()` (constructs the same ports Story 5.4 already uses, plus `createInvestmentAdjustmentPort`/`createWithdrawalAdjustmentPort`'s existing `listAll()`s from Story 5.3) — a `StatCard` row for the 6 aggregate totals, a `myProjects` list (reuses `AdjustPersonCard` or a simpler row, implementer's call on which existing `packages/ui` component fits best without hand-rolling a new one), a `mySubPartners` list with an `EmptyState` when empty.
+
+## Tasks & Acceptance
+
+**Execution:**
+- [ ] `apps/web/lib/session-guard.ts` — `requireOwnerAdminOrPartnerSession()` + test
+- [ ] `apps/web/app/(dashboard)/layout.tsx` + `SidebarNav.tsx` — role resolution, `roles` field, filtering + test
+- [ ] `packages/core/src/partner-dashboard.ts` + tests — every I/O matrix row, multi-Project aggregation, Pending/Extra Paid/Keep for Later/Extra Taken summed separately, Sub-partners list, zero-activity/zero-Sub-partner cases
+- [ ] `apps/web/app/(dashboard)/home/page.tsx` + test — role branching, Partner rendering, Owner/Admin rendering unchanged
+- [ ] Live verification: a real Partner login reaching `/home`, seeing only the 3 permitted nav items, correct numbers
+
+**Acceptance Criteria (from epics.md Story 5.5):** see the frozen I/O matrix above — the single epics.md AC ("Given a Partner with activity in one or more projects, when they open their dashboard, then they see My Projects, My Share %, Money Added, Money Withdrawn, Available Balance, Pending, Extra Paid, Withdrawal Keep for Later, My Sub-partners, and Money History — scoped to themselves only") is represented by matrix rows 1-5, with rows 6-9 covering the shell/nav mechanics this spec had to define.
+
+## Implementation Notes
+
+**Critical finding, fixed in-story: widening the shell's own gate silently opened up every owner_admin-only PAGE SHELL, not just the 3 intended pages.** `requireOwnerAdminSession()` was previously the ONLY protection `/projects/**` (Projects list/new/edit, Partner Shares, Add Money, Withdraw Money, Available Balance) had — none of those pages call any guard of their own; they're all `"use client"` components that only fetch from REST APIs already Owner/Admin-gated via `authorizeScope()`. Swapping the top-level `(dashboard)/layout.tsx` gate to `requireOwnerAdminOrPartnerSession()` (this story's Decision #1) meant a `partner` session could now reach the FULL PAGE SHELL of every one of those pages directly by URL (e.g. `/projects` rendered its title + "New Project" button, with only the underlying data fetch silently 403ing) — verified live against a real Postgres-backed Partner login before this fix; no real data leaked, but this directly violated the frozen I/O matrix's row 8 ("A Partner navigates directly to a hidden page's URL ... Rejected ... `403`/redirect (pre-existing, unchanged)"). Fixed by adding one new nested layout, `apps/web/app/(dashboard)/projects/layout.tsx`, which calls the EXISTING, byte-for-byte-unchanged `requireOwnerAdminSession()` — covers the entire `/projects/**` subtree (all 5 owner_admin-only nav items resolve under it) in one place, with no changes to any individual page and no changes to the guard itself (Open/Closed, this story's own explicit constraint). Covered by `apps/web/app/(dashboard)/projects/layout.test.tsx`. Re-verified live afterward: `/projects`, `/projects/new`, `/projects/[id]/shares`, `/projects/[id]/add-money` all now return `307` to `/` for a Partner session, while `/home`, `/money-history`, `/adjust-next-time` stay `200`.
+
+**`assemblePartnerDashboard()` does NOT roll a Partner's Sub-partners' own money into the Partner's own aggregate totals**, unlike `assembleOwnerAdminDashboard()`'s Story 5.4 "Sub-partner rolls into parent Partner" rollup. That rollup was Story 5.4's own separately-frozen decision for the system-wide partner-wise overview, not a system-wide default — this story's own frozen Decisions #3/#5 treat "My Sub-partners" as a structural list only (name/share %/Project), never a financial rollup; a Sub-partner's own recorded money stays attributed to that Sub-partner's own `shareId`. `partner-dashboard.test.ts` has an explicit regression test locking this in (`"scoping: a Sub-partner's own transactions ... are NEVER rolled into the actor's totals"`).
+
+**`totalExtraTaken` is computed by `assemblePartnerDashboard()` but not rendered as its own stat card.** The Code Map asked for it (mirrors `totalKeepForLater`'s three-way `adjustmentType` split, AD-4 completeness), but the frozen AC's own literal 9 named data points don't include it (only "Withdrawal Keep for Later" is named). Computed and unit-tested at the core layer for correctness/completeness; `apps/web`'s page deliberately doesn't surface it as a 7th stat card, staying literal to the frozen AC. Flagging this explicitly in case review disagrees and wants it surfaced too — trivial one-line addition if so.
+
+**`PartnerDashboardSubPartnerRow` widens the Code Map's stated shape** (`{ name, sharePercent, projectName }`) by adding `subPartnerId`, mirroring `OwnerAdminDashboardRawData`'s own precedent of a documented, harmless Code Map widening (Story 5.4's Implementation Notes) — needed for a stable React list key; the Code Map's shape had no natural unique field.
+
+**"My Projects"/"My Sub-partners" rows reuse `ShareRow`/`ShareList` (`packages/ui`)**, not `AdjustPersonCard` — `AdjustPersonCard`'s `resolution` slot is a required prop with no natural content for a 2-field (name + share %) read-only row, whereas `ShareRow` is `shares/page.tsx`'s own existing "name + share % badge, optional action" component, used here with no `action` (this page has no edit affordance, matching this story's Boundaries: no new `authorize.ts` action).
+
+**Test-harness gotcha:** this codebase's page tests call server component functions directly and structurally walk the RETURNED tree (never a real React render pass) — so `home/page.tsx`'s Partner branch must `await PartnerDashboard(...)` and return the RESOLVED tree, not `<PartnerDashboard .../>` (an un-invoked element referencing an async function is structurally invisible to that walk). Similarly, list rows must render `ShareRow` DIRECTLY inline rather than through an intermediate wrapper component, or the tree-walker (which only expands `.props.children`) can't see it.
+
+**`vi.mock()` factory TDZ gotcha (new in this story, not previously hit in this codebase):** referencing an outer `const x = vi.fn()` DIRECTLY inside a `vi.mock(...)` factory's returned object (e.g. `vi.mock("@/lib/session-guard", () => ({ requireSession }))`) throws "Cannot access before initialization" — the mocked module's hoisted `import` resolves before that `const` initializes. Existing `@niveshbook/db` mocks in this codebase never hit this because their references sit inside a NESTED closure (`createUserPort: () => ({ findUserById })`), deferred until actually called at test-run time. Fixed via `vi.hoisted()` for the directly-referenced identifiers (`session-guard.test.ts`-adjacent files: `layout.test.tsx`, `home/page.test.tsx`, `projects/layout.test.tsx`).
+
+**Live verification (2026-09-25):** ran against local Postgres via colima/Docker Compose (already running). Seeded a real `partner`-role user linked via a current Partner Share's `userId` to a fresh Project (ad hoc script, deleted after use — not committed). Confirmed: sidebar shows exactly Home/Money History/Adjust Next Time for the Partner login; `/home` renders 6 correct `₹0` stat cards plus the linked Project's row (name + share %) with zero activity seeded; direct navigation to `/projects` and 3 other owner_admin-only URLs all `307` to `/` (after the fix above); Owner/Admin's own login shows all 9 nav items and the unchanged Story 5.4 dashboard content.
+
+## Spec Change Log
+
+## Review Triage Log
+
+3-layer review (blind-hunter, edge-case-hunter, verification-gap), 2026-09-25 -- no functional/security bugs found. All three independently re-verified the implementer's own mid-implementation finding (widening the top-level `(dashboard)` layout's gate to admit `partner` silently opened the full page shell of every owner_admin-only page under `/projects/**`, since none of those pages call any guard of their own) and confirmed its fix (`apps/web/app/(dashboard)/projects/layout.tsx`, a new nested layout reapplying the existing, byte-for-byte-unchanged `requireOwnerAdminSession()`) is complete: blind-hunter confirmed the guard function itself is untouched; both blind-hunter and edge-case-hunter independently enumerated every real `/projects/**` route (via Glob and `find` respectively) and confirmed all 7 pages are covered. AD-2 (`sumMoney()`-only math), AD-9 (no Drizzle import in `packages/core`), and Open/Closed (guard reused unmodified) all confirmed clean. Three real findings, all test-coverage/labeling gaps, all applied:
+
+1. **[Applied]** `apps/web/app/(dashboard)/projects/layout.test.tsx`'s one test claimed to prove "a partner session is rejected" but fully mocked `requireOwnerAdminSession()`, so it only proved the layout propagates whatever the guard decides -- not that the guard itself rejects `partner` (that proof lives entirely in the separate, unmodified `apps/web/lib/session-guard.test.ts`). Renamed the test to state precisely what it proves in isolation, and rewrote the file's doc comment to point at `session-guard.test.ts` for the actual role-rejection coverage. No behavior changed.
+2. **[Applied]** "My Share %" -- one of the 9 frozen AC data points -- had zero coverage of its actual rendered/formatted output; `home/page.test.tsx`'s Partner-dashboard tests asserted on `ShareRow`'s `name` prop repeatedly but never its `input` prop. Exported `formatSharePercent()` from `home/page.tsx`, added a standalone unit suite covering the `numeric(7,4)` trailing-zero trim (`"25.0000"` → `"25"`, `"12.5000"` → `"12.5"`), and added a `shareRowInputText()` helper plus assertions in the populated-case test proving the trim is wired end-to-end (fixtures now use Postgres's real round-trip shape, e.g. `"70.0000"` → rendered `"70%"`).
+3. **[Deferred, not patched]** edge-case-hunter also flagged `apps/web/app/(dashboard)/SidebarShell.tsx` unconditionally calling `listProjects()` for a `partner` session -- a guaranteed 403 (silently swallowed), rendering a pointless "Select a Project" control since none of the 4 project-scoped nav items it serves are visible to `partner`. Low severity, not a security/data issue, and `SidebarShell.tsx`/`ProjectSwitcher.tsx` are outside this story's own Code Map (built by a separate, concurrently-running build session). Logged to `deferred-work.md` instead of patched here, to avoid scope creep into another session's in-flight work.
+
+## Verification
+
+**Commands:**
+- `pnpm --filter @niveshbook/core test` — expected: `partner-dashboard.test.ts` covers every I/O matrix row
+- `pnpm --filter @niveshbook/web test` — expected: layout/nav test covers role-based filtering for both roles; page test covers both the Partner and unchanged Owner/Admin branches; session-guard test covers the new guard function
+- `pnpm lint` / `pnpm typecheck` / `pnpm build` / `pnpm lint:boundaries` — expected: clean
+- **Live verification:** log in as a real Partner user, confirm the sidebar shows only Home/Money History/Adjust Next Time, confirm the dashboard's numbers match manually-computed totals across their own Projects, confirm navigating directly to `/projects` (or another hidden page) still redirects/403s exactly as before this story; confirm Owner/Admin's own dashboard/nav is completely unchanged.

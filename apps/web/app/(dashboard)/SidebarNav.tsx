@@ -9,6 +9,15 @@ export interface SidebarNavItem {
   label: string;
   icon: ReactNode;
   href?: string;
+  /**
+   * Which role(s) may see this item (Story 5.5) -- `layout.tsx` filters
+   * `NAV_ITEMS` against the actor's resolved role before ever passing them
+   * to `SidebarShell`, so `SidebarNav` itself never receives a hidden item
+   * to render. Optional so a future, not-yet-role-aware item list doesn't
+   * have to set it; `layout.tsx`'s own filter treats a missing `roles` as
+   * "visible to nobody" (fail closed), never "visible to everybody."
+   */
+  roles?: readonly ("owner_admin" | "partner")[];
 }
 
 /**

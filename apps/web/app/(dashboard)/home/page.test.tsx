@@ -1,25 +1,37 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import type { ReactElement, ReactNode } from "react";
+import { redirect } from "next/navigation";
 import type { PartnerOverviewRow } from "@niveshbook/core";
 import type {
   AvailableBalance,
+  InvestmentAdjustment,
   InvestmentTransaction,
   Money,
   PartnerShare,
   Percent,
   Project,
   SubPartnerShare,
+  WithdrawalAdjustment,
   WithdrawalTransaction,
 } from "@niveshbook/types";
-import { AdjustPersonCard, EmptyState, StatCard } from "@niveshbook/ui";
-import DashboardHomePage, { PartnerOverviewCard } from "./page";
+import { AdjustPersonCard, EmptyState, ShareRow, StatCard } from "@niveshbook/ui";
+import DashboardHomePage, { formatSharePercent, PartnerOverviewCard } from "./page";
 
 const investmentListAll = vi.fn();
 const withdrawalListAll = vi.fn();
 const availableBalanceListAll = vi.fn();
+const investmentAdjustmentListAll = vi.fn();
+const withdrawalAdjustmentListAll = vi.fn();
 const partnerShareListAll = vi.fn();
 const subPartnerShareListAll = vi.fn();
 const listProjects = vi.fn();
+const findUserById = vi.fn();
+// `requireSession` is referenced directly in the "@/lib/session-guard" mock
+// factory below, evaluated eagerly the moment that factory runs (unlike
+// `findUserById` above, only read inside a nested `() => (...)` closure) --
+// `vi.hoisted()` genuinely runs before every `vi.mock()` factory, unlike a
+// plain top-level `const` (mirrors `layout.test.tsx`'s identical fix).
+const { requireSession } = vi.hoisted(() => ({ requireSession: vi.fn() }));
 
 vi.mock("@niveshbook/db", () => ({
   createInvestmentTransactionPort: () => ({
@@ -48,6 +60,16 @@ vi.mock("@niveshbook/db", () => ({
     findBalance: vi.fn(),
     listAll: availableBalanceListAll,
   }),
+  createInvestmentAdjustmentPort: () => ({
+    upsert: vi.fn(),
+    listByProjectId: vi.fn(),
+    listAll: investmentAdjustmentListAll,
+  }),
+  createWithdrawalAdjustmentPort: () => ({
+    upsert: vi.fn(),
+    listByProjectId: vi.fn(),
+    listAll: withdrawalAdjustmentListAll,
+  }),
   createPartnerSharePort: () => ({
     createPartnerShare: vi.fn(),
     findLatestByPartnerId: vi.fn(),
@@ -66,6 +88,21 @@ vi.mock("@niveshbook/db", () => ({
     updateProject: vi.fn(),
     findProjectById: vi.fn(),
     listProjects,
+  }),
+  createUserPort: () => ({
+    findUserByEmail: vi.fn(),
+    findUserById,
+    listAllUsers: vi.fn(),
+  }),
+}));
+
+vi.mock("@/lib/session-guard", () => ({
+  requireSession,
+}));
+
+vi.mock("next/navigation", () => ({
+  redirect: vi.fn(() => {
+    throw new Error("REDIRECT");
   }),
 }));
 
@@ -95,6 +132,20 @@ function findAllComponents(node: ReactNode, type: unknown): ReactElement[] {
 
 function containsComponent(node: ReactNode, type: unknown): boolean {
   return findAllComponents(node, type).length > 0;
+}
+
+/**
+ * Flattens a `ShareRow`'s own `input` prop (a small JSX tree, e.g.
+ * `<span>{formatSharePercent(...)}%</span>`) down to its plain rendered
+ * text -- review finding (2026-09-25): every prior Partner-dashboard test
+ * asserted on `ShareRow`'s `name` prop but never on `input`, so "My Share
+ * %" (one of the frozen AC's 9 named data points) had zero coverage of its
+ * actual rendered/formatted output.
+ */
+function shareRowInputText(row: ReactElement): string {
+  const input = (row.props as { input: ReactElement<{ children: ReactNode }> }).input;
+  const children = input.props.children;
+  return (Array.isArray(children) ? children : [children]).join("");
 }
 
 function makeInvestmentTransaction(overrides: Partial<InvestmentTransaction> = {}): InvestmentTransaction {
@@ -191,15 +242,55 @@ function makePartnerOverviewRow(overrides: Partial<PartnerOverviewRow> = {}): Pa
   };
 }
 
-describe("DashboardHomePage (Owner/Admin Dashboard, Story 5.4)", () => {
-  beforeEach(() => {
-    investmentListAll.mockReset().mockResolvedValue([]);
-    withdrawalListAll.mockReset().mockResolvedValue([]);
-    availableBalanceListAll.mockReset().mockResolvedValue([]);
-    partnerShareListAll.mockReset().mockResolvedValue([]);
-    subPartnerShareListAll.mockReset().mockResolvedValue([]);
-    listProjects.mockReset().mockResolvedValue([]);
-  });
+function makeInvestmentAdjustment(overrides: Partial<InvestmentAdjustment> = {}): InvestmentAdjustment {
+  return {
+    id: "adj-1",
+    projectId: "project-a",
+    partyType: "partner",
+    shareId: "partner-1",
+    requirementId: "req-1",
+    shouldPay: "100000" as Money,
+    actualPaid: "60000" as Money,
+    adjustmentType: "pending",
+    adjustmentAmount: "40000" as Money,
+    updatedAt: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+function makeWithdrawalAdjustment(overrides: Partial<WithdrawalAdjustment> = {}): WithdrawalAdjustment {
+  return {
+    id: "wadj-1",
+    projectId: "project-a",
+    partyType: "partner",
+    shareId: "partner-1",
+    canTake: "100000" as Money,
+    taken: "60000" as Money,
+    adjustmentType: "keep_for_later",
+    adjustmentAmount: "40000" as Money,
+    updatedAt: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+/** Every port's fetch defaults to empty, and the actor resolves to `owner_admin` by default -- individual tests override `findUserById` to switch role. */
+beforeEach(() => {
+  investmentListAll.mockReset().mockResolvedValue([]);
+  withdrawalListAll.mockReset().mockResolvedValue([]);
+  availableBalanceListAll.mockReset().mockResolvedValue([]);
+  investmentAdjustmentListAll.mockReset().mockResolvedValue([]);
+  withdrawalAdjustmentListAll.mockReset().mockResolvedValue([]);
+  partnerShareListAll.mockReset().mockResolvedValue([]);
+  subPartnerShareListAll.mockReset().mockResolvedValue([]);
+  listProjects.mockReset().mockResolvedValue([]);
+  requireSession.mockReset().mockResolvedValue({ id: "session-1", userId: "user-1" });
+  findUserById.mockReset().mockResolvedValue({ id: "user-1", role: "owner_admin", active: true });
+  (redirect as unknown as Mock).mockClear();
+});
+
+describe("DashboardHomePage (Owner/Admin Dashboard, Story 5.4, unchanged by Story 5.5)", () => {
 
   /**
    * Review finding (2026-09-25): `PartnerOverviewCard` was previously only
@@ -359,5 +450,173 @@ describe("DashboardHomePage (Owner/Admin Dashboard, Story 5.4)", () => {
       statCards.map((card) => [(card.props as { label: string }).label, (card.props as { value: unknown }).value]),
     );
     expect(byLabel["Total Project Money"]).toBe("0");
+  });
+});
+
+describe("DashboardHomePage (Partner Dashboard, Story 5.5)", () => {
+  beforeEach(() => {
+    findUserById.mockResolvedValue({ id: "user-1", role: "partner", active: true });
+  });
+
+  it("empty case: zero linked Partner Shares -- all 6 stat cards at '0', both EmptyStates render, not a crash", async () => {
+    const result = await DashboardHomePage();
+
+    const statCards = findAllComponents(result, StatCard);
+    expect(statCards).toHaveLength(6);
+    for (const card of statCards) {
+      expect((card.props as { value: unknown }).value).toBe("0");
+    }
+
+    expect(findAllComponents(result, EmptyState)).toHaveLength(2);
+    expect(findAllComponents(result, ShareRow)).toHaveLength(0);
+  });
+
+  it("populated case: one linked Partner Share with activity -- correct numbers, scoped to this actor only", async () => {
+    partnerShareListAll.mockResolvedValue([
+      // "70.0000" (not the bare "70" a hand-typed fixture would use)
+      // deliberately mirrors Postgres's own `numeric(7,4)` round-trip shape,
+      // so this test proves `formatSharePercent()`'s trailing-zero trim is
+      // actually wired into the rendered "My Share %" badge, not just
+      // passing an already-clean value straight through untouched.
+      makePartnerShare({ partnerId: "partner-1", userId: "user-1", sharePercent: "70.0000" as Percent }),
+      // A different Partner (different userId) at the same Project -- must never leak into this actor's totals.
+      makePartnerShare({
+        id: "share-other",
+        partnerId: "partner-other",
+        userId: "someone-else",
+        name: "Deepa",
+      }),
+    ]);
+    investmentListAll.mockResolvedValue([
+      makeInvestmentTransaction({ id: "inv-1", partyType: "partner", shareId: "partner-1", amount: "700000" as Money }),
+      makeInvestmentTransaction({ id: "inv-other", partyType: "partner", shareId: "partner-other", amount: "999999" as Money }),
+    ]);
+    withdrawalListAll.mockResolvedValue([
+      makeWithdrawalTransaction({ id: "wd-1", partyType: "partner", shareId: "partner-1", amount: "200000" as Money }),
+    ]);
+    availableBalanceListAll.mockResolvedValue([
+      makeAvailableBalance({ id: "bal-1", partyType: "partner", shareId: "partner-1", balance: "50000" as Money }),
+    ]);
+    investmentAdjustmentListAll.mockResolvedValue([
+      makeInvestmentAdjustment({ id: "adj-1", shareId: "partner-1", adjustmentType: "pending", adjustmentAmount: "30000" as Money }),
+      makeInvestmentAdjustment({ id: "adj-2", shareId: "partner-1", requirementId: "req-2", adjustmentType: "extra_paid", adjustmentAmount: "5000" as Money }),
+    ]);
+    withdrawalAdjustmentListAll.mockResolvedValue([
+      makeWithdrawalAdjustment({ id: "wadj-1", shareId: "partner-1", adjustmentType: "keep_for_later", adjustmentAmount: "15000" as Money }),
+    ]);
+    subPartnerShareListAll.mockResolvedValue([
+      {
+        id: "sub-share-1",
+        subPartnerId: "sub-1",
+        partnerId: "partner-1",
+        projectId: "project-a",
+        name: "Bala",
+        sharePercent: "50.0000" as Percent,
+        userId: null,
+        effectiveFrom: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      } satisfies SubPartnerShare,
+    ]);
+    listProjects.mockResolvedValue([makeProject({ id: "project-a", name: "Project A" })]);
+
+    const result = await DashboardHomePage();
+
+    const statCards = findAllComponents(result, StatCard);
+    expect(statCards).toHaveLength(6);
+    const byLabel = Object.fromEntries(
+      statCards.map((card) => [(card.props as { label: string }).label, (card.props as { value: unknown }).value]),
+    );
+    expect(byLabel["Money Added"]).toBe("700000");
+    expect(byLabel["Money Withdrawn"]).toBe("200000");
+    expect(byLabel["Available Balance"]).toBe("50000");
+    expect(byLabel["Pending"]).toBe("30000");
+    expect(byLabel["Extra Paid"]).toBe("5000");
+    expect(byLabel["Withdrawal Keep for Later"]).toBe("15000");
+    // Extra Taken is deliberately not one of the rendered stat cards (this story's Implementation Notes).
+    expect(Object.keys(byLabel)).not.toContain("Extra Taken");
+
+    const shareRows = findAllComponents(result, ShareRow);
+    expect(shareRows).toHaveLength(2); // 1 "My Projects" row + 1 "My Sub-partners" row
+    const names = shareRows.map((row) => (row.props as { name: string }).name);
+    expect(names).toContain("Project A");
+    expect(names).toContain("Bala — Project A");
+
+    // "My Share %" (one of the frozen AC's 9 named data points): proves the
+    // ACTUAL rendered badge text, not just that a ShareRow exists -- both
+    // fixtures above used Postgres's own `numeric(7,4)` round-trip shape
+    // ("70.0000"/"50.0000"), so this locks in `formatSharePercent()`'s
+    // trailing-zero trim end-to-end, not just at the unit level.
+    const myProjectsRow = shareRows.find((row) => (row.props as { name: string }).name === "Project A");
+    const mySubPartnerRow = shareRows.find((row) => (row.props as { name: string }).name === "Bala — Project A");
+    expect(myProjectsRow && shareRowInputText(myProjectsRow)).toBe("70%");
+    expect(mySubPartnerRow && shareRowInputText(mySubPartnerRow)).toBe("50%");
+
+    expect(findAllComponents(result, EmptyState)).toHaveLength(0);
+  });
+
+  it("multi-Project case: myProjects shows one row per linked Project; the 6 aggregate totals sum across all of them", async () => {
+    partnerShareListAll.mockResolvedValue([
+      makePartnerShare({ id: "s1", partnerId: "partner-1", projectId: "project-a", userId: "user-1" }),
+      makePartnerShare({ id: "s2", partnerId: "partner-2", projectId: "project-b", userId: "user-1" }),
+    ]);
+    investmentListAll.mockResolvedValue([
+      makeInvestmentTransaction({ id: "inv-1", projectId: "project-a", shareId: "partner-1", amount: "100000" as Money }),
+      makeInvestmentTransaction({ id: "inv-2", projectId: "project-b", shareId: "partner-2", amount: "250000" as Money }),
+    ]);
+    listProjects.mockResolvedValue([
+      makeProject({ id: "project-a", name: "Project A" }),
+      makeProject({ id: "project-b", name: "Project B" }),
+    ]);
+
+    const result = await DashboardHomePage();
+
+    const shareRows = findAllComponents(result, ShareRow);
+    const projectRowNames = shareRows.map((row) => (row.props as { name: string }).name);
+    expect(projectRowNames).toEqual(expect.arrayContaining(["Project A", "Project B"]));
+
+    const statCards = findAllComponents(result, StatCard);
+    const byLabel = Object.fromEntries(
+      statCards.map((card) => [(card.props as { label: string }).label, (card.props as { value: unknown }).value]),
+    );
+    expect(byLabel["Money Added"]).toBe("350000");
+  });
+});
+
+describe("DashboardHomePage role resolution (Story 5.5)", () => {
+  it("redirects to / when the actor can no longer be found (defense-in-depth; the layout's own guard should already have caught this)", async () => {
+    findUserById.mockResolvedValue(null);
+
+    await expect(DashboardHomePage()).rejects.toThrow("REDIRECT");
+    expect(redirect).toHaveBeenCalledWith("/");
+  });
+
+  it("redirects to / for a resolvable but unauthorized role (e.g. sub_partner) rather than silently rendering the Owner/Admin dashboard", async () => {
+    findUserById.mockResolvedValue({ id: "user-1", role: "sub_partner", active: true });
+
+    await expect(DashboardHomePage()).rejects.toThrow("REDIRECT");
+    expect(redirect).toHaveBeenCalledWith("/");
+  });
+});
+
+/**
+ * Review finding (2026-09-25): "My Share %" -- one of the frozen AC's 9
+ * named data points -- previously had zero assertions on its actual
+ * formatted output anywhere; `ShareRow`'s `input` prop was never inspected.
+ * Direct unit coverage of `formatSharePercent()` itself, plus
+ * `shareRowInputText()`-based assertions in the Partner-dashboard tests
+ * above, close that gap. Postgres's `numeric(7,4)` column always
+ * round-trips at its full declared scale (a stored `"33.33"` reads back as
+ * `"33.3300"`) -- these cases exercise that exact trailing-zero trim.
+ */
+describe("formatSharePercent", () => {
+  it("trims trailing fractional zeros, and the trailing decimal point if every fractional digit was zero", () => {
+    expect(formatSharePercent("33.3300")).toBe("33.33");
+    expect(formatSharePercent("25.0000")).toBe("25");
+    expect(formatSharePercent("12.5000")).toBe("12.5");
+  });
+
+  it("leaves a whole-number value with no decimal point untouched", () => {
+    expect(formatSharePercent("70")).toBe("70");
+    expect(formatSharePercent("100")).toBe("100");
   });
 });

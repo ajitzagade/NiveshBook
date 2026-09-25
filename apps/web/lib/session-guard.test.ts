@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { requireSession, requireOwnerAdminSession } from "./session-guard";
+import { requireSession, requireOwnerAdminSession, requireOwnerAdminOrPartnerSession } from "./session-guard";
 import { SESSION_COOKIE_NAME } from "./session";
 
 const findSessionByTokenHash = vi.fn();
@@ -108,6 +108,60 @@ describe("requireOwnerAdminSession", () => {
     findUserById.mockResolvedValue(null);
 
     await expect(requireOwnerAdminSession()).rejects.toThrow("REDIRECT");
+
+    expect(redirect).toHaveBeenCalledWith("/");
+  });
+});
+
+describe("requireOwnerAdminOrPartnerSession", () => {
+  beforeEach(() => {
+    findSessionByTokenHash.mockReset();
+    touchSession.mockReset();
+    touchSession.mockResolvedValue(1);
+    findUserById.mockReset();
+    (redirect as unknown as Mock).mockClear();
+    mockCookies("a-valid-token");
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+  });
+
+  it("resolves the session normally for an owner_admin", async () => {
+    findUserById.mockResolvedValue({ id: "user-1", role: "owner_admin", active: true });
+
+    const session = await requireOwnerAdminOrPartnerSession();
+
+    expect(session.id).toBe(LIVE_SESSION.id);
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("resolves the session normally for a partner", async () => {
+    findUserById.mockResolvedValue({ id: "user-1", role: "partner", active: true });
+
+    const session = await requireOwnerAdminOrPartnerSession();
+
+    expect(session.id).toBe(LIVE_SESSION.id);
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("redirects to / for an authenticated sub_partner (deliberately still excluded, Story 5.6's own job)", async () => {
+    findUserById.mockResolvedValue({ id: "user-1", role: "sub_partner", active: true });
+
+    await expect(requireOwnerAdminOrPartnerSession()).rejects.toThrow("REDIRECT");
+
+    expect(redirect).toHaveBeenCalledWith("/");
+  });
+
+  it("redirects to / for an authenticated project_admin", async () => {
+    findUserById.mockResolvedValue({ id: "user-1", role: "project_admin", active: true });
+
+    await expect(requireOwnerAdminOrPartnerSession()).rejects.toThrow("REDIRECT");
+
+    expect(redirect).toHaveBeenCalledWith("/");
+  });
+
+  it("redirects to / when the session's user can no longer be found", async () => {
+    findUserById.mockResolvedValue(null);
+
+    await expect(requireOwnerAdminOrPartnerSession()).rejects.toThrow("REDIRECT");
 
     expect(redirect).toHaveBeenCalledWith("/");
   });
