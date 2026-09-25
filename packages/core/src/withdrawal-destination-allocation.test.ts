@@ -130,6 +130,9 @@ function createFakePort(): WithdrawalDestinationAllocationPort & {
     async hasConflictingAllocation() {
       return false;
     },
+    async findById() {
+      return null;
+    },
   };
 }
 
@@ -378,6 +381,9 @@ describe("recordDestinationAllocation", () => {
       async hasConflictingAllocation() {
         return false;
       },
+      async findById() {
+        return null;
+      },
     };
     await expect(
       recordDestinationAllocation(withdrawal, [makeLeg({ amount: "250000" })], "project-1", "actor-1", "idem-10", {
@@ -394,6 +400,9 @@ describe("recordDestinationAllocation", () => {
       },
       async hasConflictingAllocation() {
         return false;
+      },
+      async findById() {
+        return null;
       },
     };
     await expect(
@@ -413,6 +422,9 @@ describe("recordDestinationAllocation", () => {
       },
       async hasConflictingAllocation() {
         return true;
+      },
+      async findById() {
+        return null;
       },
     };
 

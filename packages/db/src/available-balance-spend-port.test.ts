@@ -463,6 +463,39 @@ describe("createAvailableBalanceSpendPort.recordSpend (live Postgres)", () => {
     // Only one 20,000 debit applied -- not two.
     expect(balances[0]?.balance).toBe("30000.00");
   });
+
+  /** Story 4.10 (FR30): the trail assembly's own lookup for an `available_balance_spend` node. */
+  describe("findById", () => {
+    it("returns the spend with the given id", async () => {
+      const balancePort = createAvailableBalancePort();
+      const spendPort = createAvailableBalanceSpendPort();
+      const sourceProjectId = await seedProject();
+      const actorUserId = await seedActor();
+      const shareId = uuidv7();
+      await balancePort.creditBalance({
+        projectId: sourceProjectId,
+        partyType: "partner",
+        shareId,
+        amount: "50000" as Money,
+      });
+      const { spend } = await spendPort.recordSpend(
+        personSpendInput({ sourceProjectId, shareId, amount: "20000" as Money }),
+        uuidv7(),
+        actorUserId,
+      );
+
+      const found = await spendPort.findById(spend.id);
+
+      expect(found?.id).toBe(spend.id);
+      expect(found?.amount).toBe("20000.00");
+    });
+
+    it("returns null for a nonexistent id", async () => {
+      const spendPort = createAvailableBalanceSpendPort();
+
+      expect(await spendPort.findById(uuidv7())).toBeNull();
+    });
+  });
 });
 
 /**

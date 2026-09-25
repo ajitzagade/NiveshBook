@@ -1032,6 +1032,16 @@ export function createWithdrawalTransactionPort(
         .where(eq(withdrawalTransactions.projectId, projectId));
       return (row?.total ?? "0") as Money;
     },
+    /** Story 4.10 (FR30) -- mirrors `createInvestmentTransactionPort.findById`'s identical plain-select shape one ledger over. */
+    async findById(id) {
+      const rows = await database
+        .select()
+        .from(withdrawalTransactions)
+        .where(eq(withdrawalTransactions.id, id))
+        .limit(1);
+      const row = rows[0];
+      return row ? toWithdrawalTransaction(row) : null;
+    },
   };
 }
 
@@ -1941,6 +1951,16 @@ export function createWithdrawalDestinationAllocationPort(
       const existing = rows[0];
       return existing !== undefined && existing.idempotencyKey !== idempotencyKey;
     },
+    /** Story 4.10 (FR30) -- mirrors `createInvestmentTransactionPort.findById`'s identical plain-select shape one ledger over. */
+    async findById(id) {
+      const rows = await database
+        .select()
+        .from(withdrawalDestinationAllocations)
+        .where(eq(withdrawalDestinationAllocations.id, id))
+        .limit(1);
+      const row = rows[0];
+      return row ? toWithdrawalDestinationAllocation(row) : null;
+    },
   };
 }
 
@@ -1983,6 +2003,36 @@ export function createMoneyMovementPort(database: Database = getDb()): MoneyMove
         .where(eq(moneyMovements.destinationProjectId, projectId))
         .orderBy(asc(moneyMovements.createdAt));
       return rows.map(toMoneyMovement);
+    },
+    /** Story 4.10 (FR30) -- at most one row by construction (this port's own doc comment). */
+    async findByDestinationInvestmentTransactionId(investmentTransactionId) {
+      const rows = await database
+        .select()
+        .from(moneyMovements)
+        .where(eq(moneyMovements.destinationInvestmentTransactionId, investmentTransactionId))
+        .limit(1);
+      const row = rows[0];
+      return row ? toMoneyMovement(row) : null;
+    },
+    /** Story 4.10 (FR30) -- at most one row by construction (this port's own doc comment). */
+    async findByWithdrawalDestinationAllocationId(allocationId) {
+      const rows = await database
+        .select()
+        .from(moneyMovements)
+        .where(eq(moneyMovements.withdrawalDestinationAllocationId, allocationId))
+        .limit(1);
+      const row = rows[0];
+      return row ? toMoneyMovement(row) : null;
+    },
+    /** Story 4.10 (FR30) -- at most one row by construction (this port's own doc comment). */
+    async findByAvailableBalanceSpendId(spendId) {
+      const rows = await database
+        .select()
+        .from(moneyMovements)
+        .where(eq(moneyMovements.availableBalanceSpendId, spendId))
+        .limit(1);
+      const row = rows[0];
+      return row ? toMoneyMovement(row) : null;
     },
   };
 }
@@ -2098,6 +2148,22 @@ export function createAvailableBalancePort(database: Database = getDb()): Availa
     async listBalancesByProjectId(projectId) {
       const rows = await database.select().from(availableBalances).where(eq(availableBalances.projectId, projectId));
       return rows.map(toAvailableBalance);
+    },
+    /** Story 4.10 (FR30) -- plain read, no row lock (unlike `debitBalance`'s own `SELECT ... FOR UPDATE`; this port method's own doc comment). */
+    async findBalance(partyType, shareId, projectId) {
+      const rows = await database
+        .select()
+        .from(availableBalances)
+        .where(
+          and(
+            eq(availableBalances.partyType, partyType),
+            eq(availableBalances.shareId, shareId),
+            eq(availableBalances.projectId, projectId),
+          ),
+        )
+        .limit(1);
+      const row = rows[0];
+      return row ? toAvailableBalance(row) : null;
     },
   };
 }
@@ -2294,6 +2360,16 @@ export function createAvailableBalanceSpendPort(
         }
         throw error;
       }
+    },
+    /** Story 4.10 (FR30) -- mirrors `createInvestmentTransactionPort.findById`'s identical plain-select shape one ledger over. */
+    async findById(id) {
+      const rows = await database
+        .select()
+        .from(availableBalanceSpends)
+        .where(eq(availableBalanceSpends.id, id))
+        .limit(1);
+      const row = rows[0];
+      return row ? toAvailableBalanceSpend(row) : null;
     },
   };
 }

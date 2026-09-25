@@ -558,3 +558,68 @@ export interface AvailableBalanceSpend {
   /** ISO 8601 timestamp */
   createdAt: string;
 }
+
+/**
+ * Story 4.10 (FR30): the 7 node kinds `assembleMoneyTrail()` walks. The
+ * first 5 mirror a real row of that name, linked by a real FK edge; the last
+ * 2 are terminal, pool-level *references* -- not a specific row -- for the
+ * two places the app has never earmarked a specific rupee to a specific
+ * later transaction (spec-4-10's Decisions #3): a withdrawal's source
+ * Project's pooled active-invested total (`"project_investment_pool"`), and
+ * a party's pooled Available Balance for one Project
+ * (`"available_balance_pool"`).
+ */
+export type MoneyTrailNodeType =
+  | "investment_transaction"
+  | "withdrawal_transaction"
+  | "withdrawal_destination_allocation"
+  | "money_movement"
+  | "available_balance_spend"
+  | "project_investment_pool"
+  | "available_balance_pool";
+
+/**
+ * One node of the assembled trail (Story 4.10, FR30) -- recursive:
+ * `upstream`/`downstream` are each an array of this same shape, walked
+ * outward from the caller's starting node until every branch terminates at
+ * either a true origin (empty `upstream`, e.g. a manually-recorded Add Money
+ * `investment_transaction`) or a pool-reference leaf (both `upstream` and
+ * `downstream` always `[]`, spec-4-10's Boundaries). `data` carries the
+ * type-specific payload: the full underlying row for the five real-entity
+ * node types, or a small pool-summary object for the two pool-reference node
+ * types -- never a further list of every other transaction sharing that
+ * pool (explicitly out of scope, spec-4-10's Decisions #3).
+ */
+export interface MoneyTrailNode {
+  type: MoneyTrailNodeType;
+  id: string;
+  amount: Money;
+  data:
+    | InvestmentTransaction
+    | WithdrawalTransaction
+    | WithdrawalDestinationAllocation
+    | MoneyMovement
+    | AvailableBalanceSpend
+    | { projectId: string; totalActiveInvested: Money }
+    | { partyType: "partner" | "sub_partner"; shareId: string; projectId: string; balance: Money };
+  upstream: MoneyTrailNode[];
+  downstream: MoneyTrailNode[];
+}
+
+/**
+ * One reconciliation failure (Story 4.10, FR30) -- `reconcileMoneyTrail()`
+ * collects every one it finds across the whole assembled tree rather than
+ * throwing on the first, so a caller can see every mismatch in one pass
+ * (spec-4-10's Decisions #5).
+ */
+export interface MoneyTrailDiscrepancy {
+  nodeType: MoneyTrailNodeType;
+  nodeId: string;
+  message: string;
+}
+
+/** The result of walking an assembled `MoneyTrailNode` tree and checking every sum invariant it implies (Story 4.10, FR30). */
+export interface MoneyTrailReconciliationResult {
+  reconciled: boolean;
+  discrepancies: MoneyTrailDiscrepancy[];
+}

@@ -43,4 +43,30 @@ export interface MoneyMovementPort {
    * "Moved from Project A" indicator (this story's Code Map). `[]` if none.
    */
   listByDestinationProjectId(projectId: string): Promise<MoneyMovement[]>;
+  /**
+   * Story 4.10 (FR30): the movement whose `destinationInvestmentTransactionId`
+   * is `investmentTransactionId`, or `null` if none -- at most one by
+   * construction (each `investment_transactions` row is auto-created by at
+   * most one `moveWithdrawalToProject()`/`spendAvailableBalanceToProject()`
+   * call). Walks the trail *backward* from an auto-created destination
+   * `investment_transaction` to the movement that created it.
+   */
+  findByDestinationInvestmentTransactionId(investmentTransactionId: string): Promise<MoneyMovement | null>;
+  /**
+   * Story 4.10 (FR30): the movement linked to one `"project"`
+   * destination-allocation leg, or `null` if that leg never created one
+   * (e.g. a leg that's `"person"`/`"available_balance"`/`"other"`) -- at
+   * most one by construction (`moveWithdrawalToProject()`'s own single call
+   * site). Walks the trail *forward* from a `withdrawal_destination_allocation`
+   * leg to its linked movement.
+   */
+  findByWithdrawalDestinationAllocationId(allocationId: string): Promise<MoneyMovement | null>;
+  /**
+   * Story 4.10 (FR30): the movement linked to one Available Balance spend,
+   * or `null` if that spend's `destinationType` wasn't `"project"` -- at
+   * most one by construction (`spendAvailableBalanceToProject()`'s own
+   * single call site). Walks the trail *forward* from an
+   * `available_balance_spend` to its linked movement.
+   */
+  findByAvailableBalanceSpendId(spendId: string): Promise<MoneyMovement | null>;
 }

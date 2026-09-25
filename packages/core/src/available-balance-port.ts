@@ -59,6 +59,19 @@ export interface AvailableBalancePort {
   debitBalance(input: CreditOrDebitAvailableBalanceInput): Promise<AvailableBalance>;
   /** Every `available_balances` row for one Project, in no particular guaranteed order -- `[]` if none exist yet. The route layer joins this against every *current* Partner/Sub-partner Share, defaulting a share with no row to `"0"` (this story's Code Map). */
   listBalancesByProjectId(projectId: string): Promise<AvailableBalance[]>;
+  /**
+   * Story 4.10 (FR30): the single current balance row for one `(partyType,
+   * shareId, projectId)` key, or `null` if none has ever been credited --
+   * the `"available_balance_pool"` trail node's own data source (a live
+   * aggregate figure, never a specific row -- spec-4-10's Decisions #3).
+   * Plain read, no row lock (unlike `debitBalance`'s own `SELECT ... FOR
+   * UPDATE` -- this is a read-only trail assembly, not a write).
+   */
+  findBalance(
+    partyType: "partner" | "sub_partner",
+    shareId: string,
+    projectId: string,
+  ): Promise<AvailableBalance | null>;
 }
 
 /**
@@ -161,4 +174,6 @@ export interface AvailableBalanceSpendPort {
     idempotencyKey: string,
     actorUserId: string,
   ): Promise<RecordAvailableBalanceSpendResult>;
+  /** The spend with this id, or `null` if it doesn't exist (Story 4.10, FR30) -- mirrors `InvestmentTransactionPort.findById`'s identical shape. */
+  findById(id: string): Promise<AvailableBalanceSpend | null>;
 }

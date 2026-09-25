@@ -151,4 +151,6 @@ export interface WithdrawalDestinationAllocationPort {
    * overwhelmingly common non-racing case, not to replace that guarantee.
    */
   hasConflictingAllocation(withdrawalTransactionId: string, idempotencyKey: string): Promise<boolean>;
+  /** The destination-allocation leg with this id, or `null` if it doesn't exist (Story 4.10, FR30) -- mirrors `InvestmentTransactionPort.findById`'s identical shape. */
+  findById(id: string): Promise<WithdrawalDestinationAllocation | null>;
 }

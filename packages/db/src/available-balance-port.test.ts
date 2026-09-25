@@ -266,6 +266,38 @@ describe("createAvailableBalancePort (live Postgres)", () => {
     });
   });
 
+  /** Story 4.10 (FR30): the `"available_balance_pool"` trail node's own data source -- a plain, lock-free read. */
+  describe("findBalance", () => {
+    it("returns the balance row for the given (partyType, shareId, projectId)", async () => {
+      const port = createAvailableBalancePort();
+      const projectId = await seedProject();
+      const shareId = uuidv7();
+      await port.creditBalance({ projectId, partyType: "partner", shareId, amount: "40000" as Money });
+
+      const found = await port.findBalance("partner", shareId, projectId);
+
+      expect(found?.balance).toBe("40000.00");
+      expect(found?.projectId).toBe(projectId);
+    });
+
+    it("returns null when no balance has ever been credited for that key", async () => {
+      const port = createAvailableBalancePort();
+      const projectId = await seedProject();
+
+      expect(await port.findBalance("partner", uuidv7(), projectId)).toBeNull();
+    });
+
+    it("never returns a sub_partner's balance for the same shareId/projectId as a partner's", async () => {
+      const port = createAvailableBalancePort();
+      const projectId = await seedProject();
+      const shareId = uuidv7();
+      await port.creditBalance({ projectId, partyType: "sub_partner", shareId, amount: "9000" as Money });
+
+      expect(await port.findBalance("partner", shareId, projectId)).toBeNull();
+      expect((await port.findBalance("sub_partner", shareId, projectId))?.balance).toBe("9000.00");
+    });
+  });
+
   /**
    * Review finding: `debitBalance`'s application-level `assertSufficientBalance`
    * guard is what normally prevents a negative balance (AD-10) -- these

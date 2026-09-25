@@ -116,6 +116,15 @@ function createFakeMoneyMovementPort(): MoneyMovementPort & { calls: CreateMoney
     async listByDestinationProjectId() {
       throw new Error("not exercised by spendAvailableBalanceToProject");
     },
+    async findByDestinationInvestmentTransactionId() {
+      throw new Error("not exercised by spendAvailableBalanceToProject");
+    },
+    async findByWithdrawalDestinationAllocationId() {
+      throw new Error("not exercised by spendAvailableBalanceToProject");
+    },
+    async findByAvailableBalanceSpendId() {
+      throw new Error("not exercised by spendAvailableBalanceToProject");
+    },
   };
 }
 

@@ -44,7 +44,8 @@ export type Action =
   | "withdrawal_destination_allocations:create"
   | "money_movements:list"
   | "available_balances:view"
-  | "available_balances:spend";
+  | "available_balances:spend"
+  | "money_trail:view";
 
 /**
  * Role -> allowed-actions permission table. All actions here are
@@ -231,6 +232,14 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // Owner/Admin-facing action to date, no self-service UI exists yet).
   "available_balances:view": new Set(["owner_admin"]),
   "available_balances:spend": new Set(["owner_admin"]),
+  // Story 4.10 (FR30): the End-to-End Money Trail is Owner/Admin-only, no
+  // self-access -- mirrors `money_movements:list`'s identical all-or-
+  // nothing-for-the-role shape (spec-4-10's Decisions #2): every table this
+  // reads is already Owner/Admin-only today, with no `SELF_ACCESS_ACTIONS`
+  // entry; epics.md's "any authorized viewer" phrasing is read as
+  // forward-looking language for a later Epic 5 broadening, not a mandate to
+  // build self-access now.
+  "money_trail:view": new Set(["owner_admin"]),
 };
 
 /**

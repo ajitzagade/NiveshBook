@@ -752,4 +752,28 @@ describe("createWithdrawalDestinationAllocationPort.recordAllocation (live Postg
     expect(await port.hasConflictingAllocation(withdrawalTransactionId, idempotencyKey)).toBe(false);
     expect(await port.hasConflictingAllocation(withdrawalTransactionId, uuidv7())).toBe(true);
   });
+
+  /** Story 4.10 (FR30): the trail assembly's own forward-edge lookup from a withdrawal to one of its legs. */
+  describe("findById", () => {
+    it("returns the leg with the given id", async () => {
+      const port = createWithdrawalDestinationAllocationPort();
+      const sourceProjectId = await seedProject();
+      const actorUserId = await seedActor();
+      const withdrawalTransactionId = await seedWithdrawal(sourceProjectId, actorUserId, "250000");
+      const result = await port.recordAllocation(withdrawalTransactionId, legs(), uuidv7(), actorUserId);
+      const leg = result.allocations[0];
+      expect(leg).toBeDefined();
+
+      const found = await port.findById(leg!.id);
+
+      expect(found?.id).toBe(leg!.id);
+      expect(found?.withdrawalTransactionId).toBe(withdrawalTransactionId);
+    });
+
+    it("returns null for a nonexistent id", async () => {
+      const port = createWithdrawalDestinationAllocationPort();
+
+      expect(await port.findById(uuidv7())).toBeNull();
+    });
+  });
 });

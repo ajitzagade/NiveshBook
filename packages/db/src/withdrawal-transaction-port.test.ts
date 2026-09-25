@@ -387,3 +387,79 @@ describe("createWithdrawalTransactionPort.sumActiveAmountByProjectId (live Postg
     expect(total).toBe("100000.00");
   });
 });
+
+/**
+ * Live-Postgres coverage for `findById` (Story 4.10, FR30) -- the trail
+ * assembly's own starting-point/backward-edge lookup. Mirrors
+ * `investment-transaction-port.test.ts`'s `findById` describe block one
+ * ledger over.
+ */
+describe("createWithdrawalTransactionPort.findById (live Postgres)", () => {
+  const seededProjectIds: string[] = [];
+  const seededUserIds: string[] = [];
+
+  afterEach(async () => {
+    const db = getDb();
+    if (seededUserIds.length > 0) {
+      await db.delete(auditLog).where(inArray(auditLog.actorUserId, seededUserIds.splice(0)));
+    }
+    for (const id of seededProjectIds.splice(0)) {
+      await db.delete(projects).where(eq(projects.id, id));
+    }
+    for (const id of seededUserIds.splice(0)) {
+      await db.delete(users).where(eq(users.id, id));
+    }
+  });
+
+  async function seedProject(): Promise<string> {
+    const db = getDb();
+    const projectId = uuidv7();
+    await db.insert(projects).values({ id: projectId, name: `withdrawal-tx-findbyid-test-${projectId}` });
+    seededProjectIds.push(projectId);
+    return projectId;
+  }
+
+  async function seedActor(): Promise<string> {
+    const db = getDb();
+    const userId = uuidv7();
+    await db.insert(users).values({
+      id: userId,
+      email: `withdrawal-tx-findbyid-test-${userId}@niveshbook.test`,
+      passwordHash: "irrelevant-hash",
+      role: "owner_admin",
+    });
+    seededUserIds.push(userId);
+    return userId;
+  }
+
+  it("returns the withdrawal transaction with the given id", async () => {
+    const port = createWithdrawalTransactionPort();
+    const projectId = await seedProject();
+    const actorUserId = await seedActor();
+    const { transaction } = await port.recordTransaction({
+      projectId,
+      partyType: "partner",
+      shareId: uuidv7(),
+      sharePercentSnapshot: "50" as Percent,
+      canTakeSnapshot: "500000" as Money,
+      amount: "250000" as Money,
+      transactionDate: "2026-10-05",
+      paymentMode: "cash",
+      referenceNumber: null,
+      notes: null,
+      idempotencyKey: uuidv7(),
+      actorUserId,
+    });
+
+    const found = await port.findById(transaction.id);
+
+    expect(found?.id).toBe(transaction.id);
+    expect(found?.amount).toBe("250000.00");
+  });
+
+  it("returns null for a nonexistent id", async () => {
+    const port = createWithdrawalTransactionPort();
+
+    expect(await port.findById(uuidv7())).toBeNull();
+  });
+});

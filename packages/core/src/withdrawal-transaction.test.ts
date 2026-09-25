@@ -111,6 +111,9 @@ function createFakeWithdrawalTransactionPort(): WithdrawalTransactionPort & {
     async sumActiveAmountByProjectId() {
       throw new Error("not exercised by this test file");
     },
+    async findById(id) {
+      return rows.find((row) => row.id === id) ?? null;
+    },
   };
 }
 

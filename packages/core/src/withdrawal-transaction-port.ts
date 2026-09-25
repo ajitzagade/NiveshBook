@@ -87,4 +87,6 @@ export interface WithdrawalTransactionPort {
    * `"0"` when the Project has no withdrawals yet.
    */
   sumActiveAmountByProjectId(projectId: string): Promise<Money>;
+  /** The withdrawal with this id, or `null` if it doesn't exist (Story 4.10, FR30) -- mirrors `InvestmentTransactionPort.findById`'s identical shape one ledger over. */
+  findById(id: string): Promise<WithdrawalTransaction | null>;
 }
