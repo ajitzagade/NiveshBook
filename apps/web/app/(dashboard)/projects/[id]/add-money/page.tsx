@@ -156,6 +156,9 @@ export default function AddMoneyPage() {
   const [requirementDate, setRequirementDate] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // 2026-09-25: the summary-confirm step's own open/closed state -- see
+  // `handleSubmit`'s doc comment below for why this exists.
+  const [requirementConfirmOpen, setRequirementConfirmOpen] = useState(false);
 
   const [expandedRequirementId, setExpandedRequirementId] = useState<string | null>(null);
   const [shouldPayByRequirement, setShouldPayByRequirement] = useState<Record<string, ShouldPayState>>(
@@ -188,6 +191,7 @@ export default function AddMoneyPage() {
   const [recordNotes, setRecordNotes] = useState("");
   const [recordFormError, setRecordFormError] = useState<string | null>(null);
   const [recordSubmitting, setRecordSubmitting] = useState(false);
+  const [recordConfirmOpen, setRecordConfirmOpen] = useState(false);
   // Minted once per *logical* submission attempt (when the dialog opens),
   // never inside the submit handler -- a retry after a failure (same dialog
   // still open) reuses this same key, so a real double-submit is actually
@@ -208,6 +212,7 @@ export default function AddMoneyPage() {
   const [editFormError, setEditFormError] = useState<string | null>(null);
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editIdempotencyKey, setEditIdempotencyKey] = useState("");
+  const [editConfirmOpen, setEditConfirmOpen] = useState(false);
 
   // Story 3.8: the Cancel Payment confirmation dialog -- no editable fields
   // (cancelling never changes amount/date/paymentMode/etc.), so this state
@@ -408,12 +413,26 @@ export default function AddMoneyPage() {
     setRecordReferenceNumber("");
     setRecordNotes("");
     setRecordFormError(null);
+    setRecordConfirmOpen(false);
     // A fresh key for this new logical submission -- see the state's own doc comment.
     setRecordIdempotencyKey(crypto.randomUUID());
   }
 
   function closeRecordPaymentDialog() {
     setRecordPaymentTarget(null);
+  }
+
+  /**
+   * The form's own `onSubmit` -- opens the summary-confirm step rather than
+   * submitting directly (see `handleSubmit`'s doc comment above for why).
+   * The actual `recordInvestmentTransaction` call moved to
+   * `handleConfirmRecordPayment` below.
+   */
+  function handleRecordPaymentSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!recordPaymentTarget) return;
+    setRecordFormError(null);
+    setRecordConfirmOpen(true);
   }
 
   /**
@@ -424,12 +443,11 @@ export default function AddMoneyPage() {
    *
    * Passes `recordIdempotencyKey` through unchanged -- it's minted once, when
    * the dialog opens (`openRecordPaymentDialog`), not here. A retry of a
-   * failed submission (the user clicking Save again with the dialog still
-   * open) reuses that same key, so a real double-submit is deduped
-   * server-side rather than creating two rows.
+   * failed submission (the user re-confirming with the dialog still open)
+   * reuses that same key, so a real double-submit is deduped server-side
+   * rather than creating two rows.
    */
-  async function handleRecordPaymentSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function handleConfirmRecordPayment() {
     if (!recordPaymentTarget) return;
 
     setRecordFormError(null);
@@ -458,6 +476,7 @@ export default function AddMoneyPage() {
 
     setRecordSubmitting(false);
     const requirementId = recordPaymentTarget.requirementId;
+    setRecordConfirmOpen(false);
     closeRecordPaymentDialog();
     // `refreshTransactions`/`refreshAdjustments` both catch their own errors
     // -- a failed refresh just leaves the recorded-payments list/adjustment
@@ -478,12 +497,26 @@ export default function AddMoneyPage() {
     setEditReferenceNumber(transaction.referenceNumber ?? "");
     setEditNotes(transaction.notes ?? "");
     setEditFormError(null);
+    setEditConfirmOpen(false);
     // A fresh key for this new logical edit attempt -- mirrors `recordIdempotencyKey`'s own doc comment.
     setEditIdempotencyKey(crypto.randomUUID());
   }
 
   function closeEditPaymentDialog() {
     setEditPaymentTarget(null);
+  }
+
+  /**
+   * The form's own `onSubmit` -- opens the summary-confirm step rather than
+   * submitting directly (see `handleSubmit`'s doc comment above). The
+   * actual `editInvestmentTransaction` call moved to
+   * `handleConfirmEditPayment` below.
+   */
+  function handleEditPaymentSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editPaymentTarget) return;
+    setEditFormError(null);
+    setEditConfirmOpen(true);
   }
 
   /**
@@ -496,11 +529,10 @@ export default function AddMoneyPage() {
    *
    * Passes `editIdempotencyKey` through unchanged -- minted once, when the
    * dialog opens (`openEditPaymentDialog`), not here -- mirrors
-   * `handleRecordPaymentSubmit`'s identical retry-reuses-the-same-key
+   * `handleConfirmRecordPayment`'s identical retry-reuses-the-same-key
    * contract.
    */
-  async function handleEditPaymentSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function handleConfirmEditPayment() {
     if (!editPaymentTarget) return;
 
     setEditFormError(null);
@@ -529,6 +561,7 @@ export default function AddMoneyPage() {
 
     setEditSubmitting(false);
     const requirementId = editPaymentTarget.requirementId;
+    setEditConfirmOpen(false);
     closeEditPaymentDialog();
     // Best-effort, mirroring `handleRecordPaymentSubmit`'s identical convention.
     await Promise.all([refreshTransactions(requirementId), refreshAdjustments(requirementId)]);
@@ -594,6 +627,7 @@ export default function AddMoneyPage() {
     setAmount("");
     setRequirementDate("");
     setFormError(null);
+    setRequirementConfirmOpen(false);
     setDialogOpen(true);
   }
 
@@ -601,9 +635,30 @@ export default function AddMoneyPage() {
     setDialogOpen(false);
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  /**
+   * 2026-09-25: money-moving/destructive actions on this page (creating a
+   * funding requirement, recording/editing/cancelling a payment) now show a
+   * summary-confirm step before actually submitting -- mirrors the shape
+   * Story 3.8's Cancel Payment dialog and Story 4.5's (in-progress, see
+   * `withdraw-money/page.tsx`) Authorize Extra Withdrawal dialog already
+   * use: a second `Dialog` stacked on top of the still-open form, no
+   * editable fields of its own, "Confirm"/"Back". Low-stakes forms
+   * (Project name/description, Partner Share %) deliberately keep saving
+   * directly -- this is scoped to money/destructive actions only, per that
+   * decision.
+   *
+   * The form's own `onSubmit` (this handler) now only validates via the
+   * browser's native `required` attributes and opens the confirm step --
+   * the actual `addInvestmentRequirement` call moved to
+   * `handleConfirmAddRequirement` below.
+   */
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setFormError(null);
+    setRequirementConfirmOpen(true);
+  }
 
+  async function handleConfirmAddRequirement() {
     setFormError(null);
     setSubmitting(true);
     try {
@@ -615,13 +670,14 @@ export default function AddMoneyPage() {
       return;
     }
 
-    // The requirement is already saved at this point -- close the dialog
+    // The requirement is already saved at this point -- close both dialogs
     // regardless of whether the follow-up refresh (a separate GET) below
     // succeeds. Story 3.3's idempotency keys don't exist yet, so treating a
     // refresh failure the same as a create failure would show a misleading
     // "save failed" error and could prompt the user to click Save again,
     // creating a genuine duplicate requirement.
     setSubmitting(false);
+    setRequirementConfirmOpen(false);
     closeDialog();
     try {
       await refresh();
@@ -925,7 +981,7 @@ export default function AddMoneyPage() {
 
             <div className="flex gap-2.5">
               <Button type="submit" disabled={submitting} icon={<Save size={14} />}>
-                {submitting ? "Saving…" : "Save"}
+                Save
               </Button>
               <Button
                 type="button"
@@ -938,6 +994,48 @@ export default function AddMoneyPage() {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={requirementConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open) setRequirementConfirmOpen(false);
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>Confirm Funding Requirement</DialogTitle>
+          <DialogDescription>
+            Create a funding requirement of <strong>{formatAmount(amount)}</strong> for{" "}
+            <strong>{requirementDate}</strong>? Each funding round is its own new record -- a past
+            requirement is never edited.
+          </DialogDescription>
+
+          {formError ? (
+            <p role="alert" className="mt-4 text-[13.4px] text-danger">
+              {formError}
+            </p>
+          ) : null}
+
+          <div className="mt-4 flex gap-2.5">
+            <Button
+              type="button"
+              onClick={handleConfirmAddRequirement}
+              disabled={submitting}
+              icon={<Save size={14} />}
+            >
+              {submitting ? "Saving…" : "Confirm"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setRequirementConfirmOpen(false)}
+              disabled={submitting}
+              icon={<ArrowLeft size={14} />}
+            >
+              Back
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -1023,7 +1121,7 @@ export default function AddMoneyPage() {
 
             <div className="flex gap-2.5">
               <Button type="submit" disabled={recordSubmitting} icon={<Save size={14} />}>
-                {recordSubmitting ? "Saving…" : "Save"}
+                Save
               </Button>
               <Button
                 type="button"
@@ -1036,6 +1134,55 @@ export default function AddMoneyPage() {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={recordConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open) setRecordConfirmOpen(false);
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>Confirm Payment</DialogTitle>
+          <DialogDescription>
+            Record <strong>{formatAmount(recordAmount)}</strong> for{" "}
+            <strong>{recordPaymentTarget?.personName}</strong>, paid on{" "}
+            <strong>{recordDate}</strong> via <strong>{PAYMENT_MODE_LABELS[recordPaymentMode]}</strong>
+            {recordReferenceNumber.trim() ? (
+              <>
+                {" "}
+                (Ref: <strong>{recordReferenceNumber.trim()}</strong>)
+              </>
+            ) : null}
+            ? Saved with an audit record -- a past payment is never edited here.
+          </DialogDescription>
+
+          {recordFormError ? (
+            <p role="alert" className="mt-4 text-[13.4px] text-danger">
+              {recordFormError}
+            </p>
+          ) : null}
+
+          <div className="mt-4 flex gap-2.5">
+            <Button
+              type="button"
+              onClick={handleConfirmRecordPayment}
+              disabled={recordSubmitting}
+              icon={<Save size={14} />}
+            >
+              {recordSubmitting ? "Saving…" : "Confirm"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setRecordConfirmOpen(false)}
+              disabled={recordSubmitting}
+              icon={<ArrowLeft size={14} />}
+            >
+              Back
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -1120,7 +1267,7 @@ export default function AddMoneyPage() {
 
             <div className="flex gap-2.5">
               <Button type="submit" disabled={editSubmitting} icon={<Save size={14} />}>
-                {editSubmitting ? "Saving…" : "Save"}
+                Save
               </Button>
               <Button
                 type="button"
@@ -1137,6 +1284,54 @@ export default function AddMoneyPage() {
       </Dialog>
 
       <Dialog
+        open={editConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open) setEditConfirmOpen(false);
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>Confirm Changes</DialogTitle>
+          <DialogDescription>
+            Update this payment to <strong>{formatAmount(editAmount)}</strong> on{" "}
+            <strong>{editDate}</strong> via <strong>{PAYMENT_MODE_LABELS[editPaymentMode]}</strong>
+            {editReferenceNumber.trim() ? (
+              <>
+                {" "}
+                (Ref: <strong>{editReferenceNumber.trim()}</strong>)
+              </>
+            ) : null}
+            ? The previous values, who changed it, and when, are preserved in the audit trail (FR41).
+          </DialogDescription>
+
+          {editFormError ? (
+            <p role="alert" className="mt-4 text-[13.4px] text-danger">
+              {editFormError}
+            </p>
+          ) : null}
+
+          <div className="mt-4 flex gap-2.5">
+            <Button
+              type="button"
+              onClick={handleConfirmEditPayment}
+              disabled={editSubmitting}
+              icon={<Save size={14} />}
+            >
+              {editSubmitting ? "Saving…" : "Confirm"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setEditConfirmOpen(false)}
+              disabled={editSubmitting}
+              icon={<ArrowLeft size={14} />}
+            >
+              Back
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
         open={cancelPaymentTarget !== null}
         onOpenChange={(open) => {
           if (!open) closeCancelPaymentDialog();
@@ -1145,6 +1340,14 @@ export default function AddMoneyPage() {
         <DialogContent>
           <DialogTitle>Cancel this payment?</DialogTitle>
           <DialogDescription>
+            {cancelPaymentTarget ? (
+              <>
+                Cancel the{" "}
+                <strong>{formatAmount(cancelPaymentTarget.transaction.amount)}</strong> payment from{" "}
+                <strong>{cancelPaymentTarget.transaction.transactionDate}</strong> (
+                {PAYMENT_MODE_LABELS[cancelPaymentTarget.transaction.paymentMode]})?{" "}
+              </>
+            ) : null}
             Owner/Admin only. The original record is preserved with a &quot;Cancelled&quot; status and a
             linked reversal record is created (FR42) -- nothing is deleted, but the amount stops counting
             toward Paid Now the next time the Adjustment ledger is viewed.

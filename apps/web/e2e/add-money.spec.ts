@@ -22,7 +22,13 @@ test("creates a funding requirement and it appears in the list with a confirmati
   await page.getByRole("button", { name: "New Requirement" }).first().click();
   await page.locator("#requirement-amount").fill("1000000");
   await page.locator("#requirement-date").fill("2027-01-15");
-  await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
+  await page.getByRole("dialog", { name: "New Funding Requirement" }).getByRole("button", { name: "Save" }).click();
+
+  // 2026-09-25: money-moving actions now show a summary-confirm step before
+  // actually submitting (see add-money/page.tsx's `requirementConfirmOpen`).
+  const confirmDialog = page.getByRole("dialog", { name: "Confirm Funding Requirement" });
+  await expect(confirmDialog).toContainText("₹10,00,000");
+  await confirmDialog.getByRole("button", { name: "Confirm" }).click();
 
   await expect(page.getByText("₹10,00,000 created for 2027-01-15")).toBeVisible();
   await expect(page.getByRole("cell", { name: "₹10,00,000" })).toBeVisible();
@@ -51,14 +57,22 @@ test("records a payment against a Partner's Should Pay and shows a confirmation 
   await page.getByRole("button", { name: "New Requirement" }).first().click();
   await page.locator("#requirement-amount").fill("500000");
   await page.locator("#requirement-date").fill("2027-02-01");
-  await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
+  await page.getByRole("dialog", { name: "New Funding Requirement" }).getByRole("button", { name: "Save" }).click();
+  await page
+    .getByRole("dialog", { name: "Confirm Funding Requirement" })
+    .getByRole("button", { name: "Confirm" })
+    .click();
   await expect(page.getByText("₹5,00,000 created for 2027-02-01")).toBeVisible();
 
   await page.getByRole("button", { name: "Should Pay" }).click();
   await page.getByRole("button", { name: "Record Payment" }).first().click();
   await page.locator("#tx-amount").fill("500000");
   await page.locator("#tx-date").fill("2027-02-02");
-  await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
+  await page.getByRole("dialog", { name: /^Record Payment/ }).getByRole("button", { name: "Save" }).click();
+
+  const confirmPaymentDialog = page.getByRole("dialog", { name: "Confirm Payment" });
+  await expect(confirmPaymentDialog).toContainText("E2E Payer");
+  await confirmPaymentDialog.getByRole("button", { name: "Confirm" }).click();
 
   await expect(page.getByText("₹5,00,000 recorded for E2E Payer")).toBeVisible();
 });

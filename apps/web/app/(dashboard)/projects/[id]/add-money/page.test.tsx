@@ -222,17 +222,23 @@ describe("AddMoneyPage -- Record Payment idempotency key reuse across a retry (r
     fireEvent.change(amountInput, { target: { value: "700000" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
 
-    // First attempt: fails.
+    // 2026-09-25: "Save" now only opens the summary-confirm step (money-
+    // moving actions); the actual submit happens on "Confirm" inside it.
     await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Confirm Payment");
+
+    // First attempt: fails. The confirm dialog stays open with the error
+    // shown inside it (mirrors Cancel Payment's stay-open-on-error convention).
+    await user.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() => {
       expect(recordInvestmentTransaction).toHaveBeenCalledTimes(1);
     });
     await screen.findByRole("alert");
 
-    // Retry, with the dialog still open and the same field values -- exactly
-    // the "user clicks Save again after a perceived failure" scenario this
-    // fix protects.
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    // Retry via the same still-open confirm dialog with the same field
+    // values -- exactly the "user retries after a perceived failure"
+    // scenario this fix protects.
+    await user.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() => {
       expect(recordInvestmentTransaction).toHaveBeenCalledTimes(2);
     });
@@ -268,15 +274,20 @@ describe("AddMoneyPage -- Record Payment idempotency key reuse across a retry (r
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "100000" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
     await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Confirm Payment");
+    await user.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() => {
       expect(recordInvestmentTransaction).toHaveBeenCalledTimes(1);
     });
 
-    // Dialog closes on success -- open it again for a second, distinct payment.
+    // Both dialogs close on success -- open Record Payment again for a
+    // second, distinct payment.
     await user.click(screen.getAllByRole("button", { name: "Record Payment" })[0] as HTMLElement);
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "200000" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-06" } });
     await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Confirm Payment");
+    await user.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() => {
       expect(recordInvestmentTransaction).toHaveBeenCalledTimes(2);
     });
