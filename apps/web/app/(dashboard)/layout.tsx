@@ -13,14 +13,14 @@ import {
   BarChart3,
 } from "lucide-react";
 import { createUserPort } from "@niveshbook/db";
-import { requireOwnerAdminOrPartnerSession } from "@/lib/session-guard";
+import { requireOwnerAdminOrPartnerOrSubPartnerSession } from "@/lib/session-guard";
 import { getClientConfig } from "@/lib/client-config";
 import type { SidebarNavItem } from "./SidebarNav";
 import { SidebarShell } from "./SidebarShell";
 
-// Guards every route in this group with a live, owner_admin OR partner
-// session (via `requireOwnerAdminOrPartnerSession()`, Story 5.5) on every
-// request — never statically cached.
+// Guards every route in this group with a live, owner_admin OR partner OR
+// sub_partner session (via `requireOwnerAdminOrPartnerOrSubPartnerSession()`,
+// Story 5.6) on every request — never statically cached.
 export const dynamic = "force-dynamic";
 
 const ICON_SIZE = 14;
@@ -32,11 +32,11 @@ const ICON_SIZE = 14;
  * the "unauthorized item" case EXPERIENCE.md forbids, that's about role,
  * not build-completeness).
  *
- * Each item's `roles` (Story 5.5, FR36) says which role(s) may see it —
- * `DashboardLayout` filters this array by the actor's resolved role before
- * ever passing it to `SidebarShell`. Only `home`/`moneyHistory`/
- * `adjustNextTime` admit `partner` (each already self-access at the API
- * layer — Story 5.1/5.3/5.5 respectively); every other item stays
+ * Each item's `roles` (Story 5.5, widened by Story 5.6) says which role(s)
+ * may see it — `DashboardLayout` filters this array by the actor's resolved
+ * role before ever passing it to `SidebarShell`. Only `home`/`moneyHistory`/
+ * `adjustNextTime` admit `partner`/`sub_partner` (each already self-access at
+ * the API layer — Story 5.1/5.3/5.5/5.6 respectively); every other item stays
  * `owner_admin`-only, since its underlying page/API is still Owner/Admin-only
  * (EXPERIENCE.md's "never a visible-but-blocked nav item" rule, unchanged).
  *
@@ -57,7 +57,7 @@ const ICON_SIZE = 14;
  * destination (inert, not a dead link) until its story lands.
  */
 const OWNER_ADMIN_ONLY = ["owner_admin"] as const;
-const OWNER_ADMIN_OR_PARTNER = ["owner_admin", "partner"] as const;
+const OWNER_ADMIN_OR_PARTNER_OR_SUB_PARTNER = ["owner_admin", "partner", "sub_partner"] as const;
 
 const NAV_ITEMS: readonly SidebarNavItem[] = [
   {
@@ -65,7 +65,7 @@ const NAV_ITEMS: readonly SidebarNavItem[] = [
     label: "Home",
     icon: <Home size={ICON_SIZE} />,
     href: "/home",
-    roles: OWNER_ADMIN_OR_PARTNER,
+    roles: OWNER_ADMIN_OR_PARTNER_OR_SUB_PARTNER,
   },
   {
     key: "projects",
@@ -115,7 +115,7 @@ const NAV_ITEMS: readonly SidebarNavItem[] = [
     label: "Adjust Next Time",
     icon: <RotateCcw size={ICON_SIZE} />,
     href: "/adjust-next-time",
-    roles: OWNER_ADMIN_OR_PARTNER,
+    roles: OWNER_ADMIN_OR_PARTNER_OR_SUB_PARTNER,
   },
   // Story 5.1 (FR31): activated -- unlike Partner Shares/Add Money/Withdraw
   // Money/Available Balance's own "no current Project to jump into yet"
@@ -131,39 +131,41 @@ const NAV_ITEMS: readonly SidebarNavItem[] = [
     label: "Money History",
     icon: <History size={ICON_SIZE} />,
     href: "/money-history",
-    roles: OWNER_ADMIN_OR_PARTNER,
+    roles: OWNER_ADMIN_OR_PARTNER_OR_SUB_PARTNER,
   },
   { key: "reports", label: "Reports", icon: <BarChart3 size={ICON_SIZE} />, roles: OWNER_ADMIN_ONLY },
 ];
 
 /**
- * The authenticated app shell (Story 2.1, widened by Story 5.5): fixed
- * sidebar + content area. Every route under `app/(dashboard)` renders
- * behind `requireOwnerAdminOrPartnerSession()` — an unauthenticated
- * request, or one from any role other than `owner_admin`/`partner`, never
- * reaches a page in this group; both are redirected to the login page
- * first.
+ * The authenticated app shell (Story 2.1, widened by Story 5.5, widened
+ * further by Story 5.6): fixed sidebar + content area. Every route under
+ * `app/(dashboard)` renders behind `requireOwnerAdminOrPartnerOrSubPartnerSession()`
+ * — an unauthenticated request, or one from any role other than
+ * `owner_admin`/`partner`/`sub_partner`, never reaches a page in this group;
+ * both are redirected to the login page first.
  *
  * A second, independent `findUserById()` call (Story 5.5) resolves the
  * actor's own role — mirroring this codebase's established "each layer
  * independently re-verifies" pattern (e.g. `money-trail/route.ts`'s own
  * identical double-read, spec-5-2's Implementation Notes) rather than
- * having `requireOwnerAdminOrPartnerSession()` hand back the role alongside
- * the `Session` it already returns (that guard's own contract stays
- * role-agnostic on its return type, matching `requireSession()`'s). `NAV_ITEMS`
- * is filtered against this resolved role before ever reaching `SidebarShell`
- * — a missing/unresolvable actor fails closed (redirects to `/`) rather than
- * silently defaulting to the broader Owner/Admin item set.
+ * having `requireOwnerAdminOrPartnerOrSubPartnerSession()` hand back the role
+ * alongside the `Session` it already returns (that guard's own contract
+ * stays role-agnostic on its return type, matching `requireSession()`'s).
+ * `NAV_ITEMS` is filtered against this resolved role before ever reaching
+ * `SidebarShell` — a missing/unresolvable actor fails closed (redirects to
+ * `/`) rather than silently defaulting to the broader Owner/Admin item set.
  */
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
-  const session = await requireOwnerAdminOrPartnerSession();
+  const session = await requireOwnerAdminOrPartnerOrSubPartnerSession();
   const actor = await createUserPort().findUserById(session.userId);
   if (!actor) {
     redirect("/");
   }
 
   const { appName } = getClientConfig().branding;
-  const visibleNavItems = NAV_ITEMS.filter((item) => item.roles?.includes(actor.role as "owner_admin" | "partner"));
+  const visibleNavItems = NAV_ITEMS.filter((item) =>
+    item.roles?.includes(actor.role as "owner_admin" | "partner" | "sub_partner"),
+  );
 
   return (
     <div className="grid min-h-screen grid-cols-[236px_1fr] max-[860px]:grid-cols-1">

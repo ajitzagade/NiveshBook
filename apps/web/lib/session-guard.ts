@@ -80,3 +80,32 @@ export async function requireOwnerAdminOrPartnerSession(): Promise<Session> {
 
   return session;
 }
+
+/**
+ * Gates the `(dashboard)` route group to `owner_admin`, `partner`, OR
+ * `sub_partner` (Story 5.6, FR37) -- mirrors `requireOwnerAdminOrPartnerSession()`'s
+ * exact shape, one role wider. This is the role `requireOwnerAdminOrPartnerSession()`'s
+ * own doc comment already named as "a later story's (5.6) own job" -- a
+ * Sub-partner's own scoped dashboard (`/home`) plus the same 2 already
+ * self-access pages (Money History, Story 5.1; Adjust Next Time, Story 5.3)
+ * become reachable via THIS shell for `sub_partner` too -- `layout.tsx`'s
+ * own `NAV_ITEMS` filtering (this story) is what keeps every other item
+ * hidden for a `sub_partner` session, not this guard.
+ *
+ * Redirects any other role to `/`, same destination every sibling guard
+ * uses, since there's no role-scoped dashboard for them yet.
+ *
+ * `requireOwnerAdminSession()` and `requireOwnerAdminOrPartnerSession()` are
+ * both left completely untouched (Open/Closed) -- this is a new sibling,
+ * not a widened version of either.
+ */
+export async function requireOwnerAdminOrPartnerOrSubPartnerSession(): Promise<Session> {
+  const session = await requireSession();
+  const actor = await createUserPort().findUserById(session.userId);
+
+  if (!actor || (actor.role !== "owner_admin" && actor.role !== "partner" && actor.role !== "sub_partner")) {
+    redirect("/");
+  }
+
+  return session;
+}

@@ -88,6 +88,7 @@ function makeUser(overrides: Partial<Record<string, unknown>> = {}) {
 
 const OWNER_USER = makeUser();
 const PARTNER_USER = makeUser({ id: "partner-user-a", email: "partner-a@niveshbook.test", role: "partner" });
+const SUB_PARTNER_USER = makeUser({ id: "sub-partner-user-a", email: "sub-a@niveshbook.test", role: "sub_partner" });
 const OTHER_ROLE_USER = makeUser({ id: "pa-1", email: "pa@niveshbook.test", role: "project_admin" });
 
 const PARTNER_SHARE_PROJECT_A = {
@@ -110,6 +111,34 @@ const OTHER_PARTNER_SHARE = {
   sharePercent: "100",
   userId: "someone-else",
   subPartnerVisibilityGrant: false,
+  effectiveFrom: new Date().toISOString(),
+  createdAt: new Date().toISOString(),
+};
+
+// Story 5.6 (FR37): mirrors PARTNER_SHARE_PROJECT_A/OTHER_PARTNER_SHARE's
+// own shape one role over -- proves `sub_partner` scoping (own share only,
+// sibling excluded) all the way through this route, not just at
+// `resolveMoneyHistoryScope()`'s own pure-function level.
+const SUB_PARTNER_SHARE_PROJECT_A = {
+  id: "sub-row-1",
+  subPartnerId: "sub-partner-1",
+  partnerId: "partner-1",
+  projectId: "project-a",
+  name: "Sub-partner A",
+  sharePercent: "50",
+  userId: "sub-partner-user-a",
+  effectiveFrom: new Date().toISOString(),
+  createdAt: new Date().toISOString(),
+};
+
+const OTHER_SUB_PARTNER_SHARE = {
+  id: "sub-row-2",
+  subPartnerId: "sub-partner-2",
+  partnerId: "partner-1",
+  projectId: "project-a",
+  name: "Sub-partner B",
+  sharePercent: "10",
+  userId: "someone-else",
   effectiveFrom: new Date().toISOString(),
   createdAt: new Date().toISOString(),
 };
@@ -224,6 +253,32 @@ describe("GET /api/adjust-next-time (Story 5.3, FR33/FR34)", () => {
     withdrawalAdjustmentsListAll.mockResolvedValue([
       makeWithdrawalAdjustment({ id: "own-withdrawal", shareId: "partner-1" }),
       makeWithdrawalAdjustment({ id: "not-mine-withdrawal", shareId: "partner-2" }),
+    ]);
+
+    const response = await GET(makeRequest(`${SESSION_COOKIE_NAME}=t`));
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.investmentAdjustments.map((row: { id: string }) => row.id)).toEqual(["own"]);
+    expect(body.withdrawalAdjustments.map((row: { id: string }) => row.id)).toEqual(["own-withdrawal"]);
+    expect(body.canNet).toBe(false);
+  });
+
+  // Story 5.6 (FR37): previously zero coverage for `sub_partner` at this
+  // route -- this story is what first makes `/adjust-next-time` reachable
+  // via the UI for that role. Mirrors the Partner case immediately above,
+  // one role over: own Sub-partner Share's rows only, a sibling
+  // Sub-partner's rows on the same Project excluded, canNet: false.
+  it("a Sub-partner sees only rows matching their own current Sub-partner Share -- excluding a sibling Sub-partner's rows, with canNet: false", async () => {
+    sessionFor(SUB_PARTNER_USER);
+    subPartnerSharesListAll.mockResolvedValue([SUB_PARTNER_SHARE_PROJECT_A, OTHER_SUB_PARTNER_SHARE]);
+    investmentAdjustmentsListAll.mockResolvedValue([
+      makeInvestmentAdjustment({ id: "own", partyType: "sub_partner", shareId: "sub-partner-1" }),
+      makeInvestmentAdjustment({ id: "not-mine", partyType: "sub_partner", shareId: "sub-partner-2" }),
+    ]);
+    withdrawalAdjustmentsListAll.mockResolvedValue([
+      makeWithdrawalAdjustment({ id: "own-withdrawal", partyType: "sub_partner", shareId: "sub-partner-1" }),
+      makeWithdrawalAdjustment({ id: "not-mine-withdrawal", partyType: "sub_partner", shareId: "sub-partner-2" }),
     ]);
 
     const response = await GET(makeRequest(`${SESSION_COOKIE_NAME}=t`));

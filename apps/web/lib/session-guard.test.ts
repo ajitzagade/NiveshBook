@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { requireSession, requireOwnerAdminSession, requireOwnerAdminOrPartnerSession } from "./session-guard";
+import {
+  requireSession,
+  requireOwnerAdminSession,
+  requireOwnerAdminOrPartnerSession,
+  requireOwnerAdminOrPartnerOrSubPartnerSession,
+} from "./session-guard";
 import { SESSION_COOKIE_NAME } from "./session";
 
 const findSessionByTokenHash = vi.fn();
@@ -95,6 +100,26 @@ describe("requireOwnerAdminSession", () => {
     expect(redirect).toHaveBeenCalledWith("/");
   });
 
+  /**
+   * Review finding (Story 5.6's 3-layer review, edge-case-hunter, Medium):
+   * this describe block previously never exercised `sub_partner` specifically
+   * -- only `partner` above. Story 5.6 is exactly what first routes real
+   * `sub_partner` sessions into the outer `(dashboard)` shell that eventually
+   * reaches THIS guard via the nested `apps/web/app/(dashboard)/projects/layout.tsx`
+   * (unchanged by that story) -- this guard's own `actor.role !== "owner_admin"`
+   * check was always role-agnostic (rejects by exclusion, not enumeration),
+   * so this test doesn't change behavior, it just closes the automated
+   * regression-coverage gap the prior `partner`-only test left for this
+   * specific role.
+   */
+  it("redirects to / for an authenticated sub_partner role", async () => {
+    findUserById.mockResolvedValue({ id: "user-1", role: "sub_partner", active: true });
+
+    await expect(requireOwnerAdminSession()).rejects.toThrow("REDIRECT");
+
+    expect(redirect).toHaveBeenCalledWith("/");
+  });
+
   it("resolves the session normally for an owner_admin", async () => {
     findUserById.mockResolvedValue({ id: "user-1", role: "owner_admin", active: true });
 
@@ -162,6 +187,61 @@ describe("requireOwnerAdminOrPartnerSession", () => {
     findUserById.mockResolvedValue(null);
 
     await expect(requireOwnerAdminOrPartnerSession()).rejects.toThrow("REDIRECT");
+
+    expect(redirect).toHaveBeenCalledWith("/");
+  });
+});
+
+describe("requireOwnerAdminOrPartnerOrSubPartnerSession", () => {
+  beforeEach(() => {
+    findSessionByTokenHash.mockReset();
+    touchSession.mockReset();
+    touchSession.mockResolvedValue(1);
+    findUserById.mockReset();
+    (redirect as unknown as Mock).mockClear();
+    mockCookies("a-valid-token");
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+  });
+
+  it("resolves the session normally for an owner_admin", async () => {
+    findUserById.mockResolvedValue({ id: "user-1", role: "owner_admin", active: true });
+
+    const session = await requireOwnerAdminOrPartnerOrSubPartnerSession();
+
+    expect(session.id).toBe(LIVE_SESSION.id);
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("resolves the session normally for a partner", async () => {
+    findUserById.mockResolvedValue({ id: "user-1", role: "partner", active: true });
+
+    const session = await requireOwnerAdminOrPartnerOrSubPartnerSession();
+
+    expect(session.id).toBe(LIVE_SESSION.id);
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("resolves the session normally for a sub_partner", async () => {
+    findUserById.mockResolvedValue({ id: "user-1", role: "sub_partner", active: true });
+
+    const session = await requireOwnerAdminOrPartnerOrSubPartnerSession();
+
+    expect(session.id).toBe(LIVE_SESSION.id);
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("redirects to / for an authenticated project_admin", async () => {
+    findUserById.mockResolvedValue({ id: "user-1", role: "project_admin", active: true });
+
+    await expect(requireOwnerAdminOrPartnerOrSubPartnerSession()).rejects.toThrow("REDIRECT");
+
+    expect(redirect).toHaveBeenCalledWith("/");
+  });
+
+  it("redirects to / when the session's user can no longer be found", async () => {
+    findUserById.mockResolvedValue(null);
+
+    await expect(requireOwnerAdminOrPartnerOrSubPartnerSession()).rejects.toThrow("REDIRECT");
 
     expect(redirect).toHaveBeenCalledWith("/");
   });

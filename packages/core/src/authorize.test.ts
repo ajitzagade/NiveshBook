@@ -1640,3 +1640,51 @@ describe("authorizeScope — money_history:list (Story 5.1, plain multi-role gra
     expect(await authorizeScope("ghost", "money_history:list", deps)).toEqual({ allowed: false });
   });
 });
+
+/**
+ * `adjust_next_time:view` (Story 5.3, FR33/FR34) previously had zero
+ * coverage anywhere in this file -- a review finding from Story 5.6's own
+ * 3-layer review (edge-case-hunter, Medium-High): Story 5.6 is what first
+ * routes real `sub_partner` sessions into this action's own reachable UI
+ * (`/adjust-next-time`), so it needed direct proof of its role table, not
+ * just an assumption mirrored from `money_history:list`'s identical
+ * `new Set(["owner_admin", "partner", "sub_partner"])` grant
+ * (`authorize.ts`). Mirrors that describe block's exact shape one action
+ * over.
+ */
+describe("authorizeScope — adjust_next_time:view (Story 5.3, plain multi-role grant, no self/scope override)", () => {
+  it("allows owner_admin", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("owner-1", "adjust_next_time:view", deps)).toEqual({ allowed: true });
+  });
+
+  it("allows partner", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("partner-1", "adjust_next_time:view", deps)).toEqual({ allowed: true });
+  });
+
+  it("allows sub_partner", async () => {
+    const users = createFakeUserPort([makeUser({ id: "sub-1", role: "sub_partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("sub-1", "adjust_next_time:view", deps)).toEqual({ allowed: true });
+  });
+
+  it("denies project_admin -- FR6's role exists but is granted nothing yet", async () => {
+    const users = createFakeUserPort([makeUser({ id: "pa-1", role: "project_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("pa-1", "adjust_next_time:view", deps)).toEqual({ allowed: false });
+  });
+
+  it("denies a nonexistent actor", async () => {
+    const users = createFakeUserPort([]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("ghost", "adjust_next_time:view", deps)).toEqual({ allowed: false });
+  });
+});

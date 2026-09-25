@@ -8,19 +8,19 @@ import { SidebarShell } from "./SidebarShell";
 // a plain top-level `const`, which -- despite appearing earlier in this
 // file's source -- is NOT yet initialized when "./layout"'s own hoisted
 // `import` chain first resolves "@/lib/session-guard" and invokes this
-// factory) -- required here because `requireOwnerAdminOrPartnerSession` is
-// referenced directly in the returned object, evaluated eagerly the moment
-// the factory runs (unlike `findUserById` below, which is only read inside
-// a nested `() => (...)` closure -- not invoked until a test actually calls
-// `DashboardLayout()`, by which point the whole module has finished
+// factory) -- required here because `requireOwnerAdminOrPartnerOrSubPartnerSession`
+// is referenced directly in the returned object, evaluated eagerly the
+// moment the factory runs (unlike `findUserById` below, which is only read
+// inside a nested `() => (...)` closure -- not invoked until a test actually
+// calls `DashboardLayout()`, by which point the whole module has finished
 // initializing).
-const { requireOwnerAdminOrPartnerSession } = vi.hoisted(() => ({
-  requireOwnerAdminOrPartnerSession: vi.fn(),
+const { requireOwnerAdminOrPartnerOrSubPartnerSession } = vi.hoisted(() => ({
+  requireOwnerAdminOrPartnerOrSubPartnerSession: vi.fn(),
 }));
 const findUserById = vi.fn();
 
 vi.mock("@/lib/session-guard", () => ({
-  requireOwnerAdminOrPartnerSession,
+  requireOwnerAdminOrPartnerOrSubPartnerSession,
 }));
 
 vi.mock("@niveshbook/db", () => ({
@@ -60,9 +60,11 @@ function findComponent(node: ReactNode, type: unknown): ReactElement | undefined
   return findComponent(element.props?.children, type);
 }
 
-describe("DashboardLayout (Story 5.5 role-based nav filtering)", () => {
+describe("DashboardLayout (Story 5.5 role-based nav filtering, widened to sub_partner by Story 5.6)", () => {
   beforeEach(() => {
-    requireOwnerAdminOrPartnerSession.mockReset().mockResolvedValue({ id: "session-1", userId: "user-1" });
+    requireOwnerAdminOrPartnerOrSubPartnerSession
+      .mockReset()
+      .mockResolvedValue({ id: "session-1", userId: "user-1" });
     findUserById.mockReset();
     (redirect as unknown as Mock).mockClear();
   });
@@ -89,6 +91,16 @@ describe("DashboardLayout (Story 5.5 role-based nav filtering)", () => {
 
   it("partner: only Home, Adjust Next Time, and Money History render -- every other item stays hidden", async () => {
     findUserById.mockResolvedValue({ id: "user-1", role: "partner", active: true });
+
+    const result = await DashboardLayout({ children: <div /> });
+
+    const shell = findComponent(result, SidebarShell);
+    const items = (shell?.props as { items: { key: string }[] }).items;
+    expect(items.map((item) => item.key)).toEqual(["home", "adjustNextTime", "moneyHistory"]);
+  });
+
+  it("sub_partner (Story 5.6): only Home, Adjust Next Time, and Money History render -- identical set to partner's own", async () => {
+    findUserById.mockResolvedValue({ id: "user-1", role: "sub_partner", active: true });
 
     const result = await DashboardLayout({ children: <div /> });
 

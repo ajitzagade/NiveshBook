@@ -590,11 +590,153 @@ describe("DashboardHomePage role resolution (Story 5.5)", () => {
     expect(redirect).toHaveBeenCalledWith("/");
   });
 
-  it("redirects to / for a resolvable but unauthorized role (e.g. sub_partner) rather than silently rendering the Owner/Admin dashboard", async () => {
-    findUserById.mockResolvedValue({ id: "user-1", role: "sub_partner", active: true });
+  it("redirects to / for a resolvable but unauthorized role (e.g. project_admin) rather than silently rendering the Owner/Admin dashboard", async () => {
+    findUserById.mockResolvedValue({ id: "user-1", role: "project_admin", active: true });
 
     await expect(DashboardHomePage()).rejects.toThrow("REDIRECT");
     expect(redirect).toHaveBeenCalledWith("/");
+  });
+});
+
+describe("DashboardHomePage (Sub-partner Dashboard, Story 5.6)", () => {
+  beforeEach(() => {
+    findUserById.mockResolvedValue({ id: "user-1", role: "sub_partner", active: true });
+  });
+
+  it("empty case: zero linked Sub-partner Shares -- all 6 stat cards at '0', EmptyState renders, not a crash", async () => {
+    const result = await DashboardHomePage();
+
+    const statCards = findAllComponents(result, StatCard);
+    expect(statCards).toHaveLength(6);
+    for (const card of statCards) {
+      expect((card.props as { value: unknown }).value).toBe("0");
+    }
+
+    expect(findAllComponents(result, EmptyState)).toHaveLength(1);
+    expect(findAllComponents(result, ShareRow)).toHaveLength(0);
+  });
+
+  it("populated case: one linked Sub-partner Share with activity -- correct numbers, scoped to this actor only, no My Sub-partners section", async () => {
+    subPartnerShareListAll.mockResolvedValue([
+      {
+        id: "sub-share-1",
+        subPartnerId: "sub-1",
+        partnerId: "partner-1",
+        projectId: "project-a",
+        name: "Bala",
+        // "40.0000" (not the bare "40" a hand-typed fixture would use)
+        // deliberately mirrors Postgres's own `numeric(7,4)` round-trip
+        // shape, proving `formatSharePercent()`'s trailing-zero trim is
+        // actually wired into the rendered "My Share %" badge here too.
+        sharePercent: "40.0000" as Percent,
+        userId: "user-1",
+        effectiveFrom: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      } satisfies SubPartnerShare,
+      // A sibling Sub-partner (different userId, same parent Partner) --
+      // must never leak into this actor's totals or My Projects list.
+      {
+        id: "sub-share-2",
+        subPartnerId: "sub-2",
+        partnerId: "partner-1",
+        projectId: "project-a",
+        name: "Chetan",
+        sharePercent: "10" as Percent,
+        userId: "someone-else",
+        effectiveFrom: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      } satisfies SubPartnerShare,
+    ]);
+    investmentListAll.mockResolvedValue([
+      makeInvestmentTransaction({ id: "inv-1", partyType: "sub_partner", shareId: "sub-1", amount: "500000" as Money }),
+      // The parent Partner's own activity -- must never leak into totals (Decisions #4).
+      makeInvestmentTransaction({ id: "inv-parent", partyType: "partner", shareId: "partner-1", amount: "9999999" as Money }),
+      // A sibling Sub-partner's own activity -- must never leak into totals (Decisions #4).
+      makeInvestmentTransaction({ id: "inv-sibling", partyType: "sub_partner", shareId: "sub-2", amount: "888888" as Money }),
+    ]);
+    withdrawalListAll.mockResolvedValue([
+      makeWithdrawalTransaction({ id: "wd-1", partyType: "sub_partner", shareId: "sub-1", amount: "150000" as Money }),
+    ]);
+    availableBalanceListAll.mockResolvedValue([
+      makeAvailableBalance({ id: "bal-1", partyType: "sub_partner", shareId: "sub-1", balance: "25000" as Money }),
+    ]);
+    investmentAdjustmentListAll.mockResolvedValue([
+      makeInvestmentAdjustment({ id: "adj-1", partyType: "sub_partner", shareId: "sub-1", adjustmentType: "pending", adjustmentAmount: "20000" as Money }),
+      makeInvestmentAdjustment({ id: "adj-2", partyType: "sub_partner", shareId: "sub-1", requirementId: "req-2", adjustmentType: "extra_paid", adjustmentAmount: "3000" as Money }),
+    ]);
+    withdrawalAdjustmentListAll.mockResolvedValue([
+      makeWithdrawalAdjustment({ id: "wadj-1", partyType: "sub_partner", shareId: "sub-1", adjustmentType: "keep_for_later", adjustmentAmount: "8000" as Money }),
+    ]);
+    listProjects.mockResolvedValue([makeProject({ id: "project-a", name: "Project A" })]);
+
+    const result = await DashboardHomePage();
+
+    const statCards = findAllComponents(result, StatCard);
+    expect(statCards).toHaveLength(6);
+    const byLabel = Object.fromEntries(
+      statCards.map((card) => [(card.props as { label: string }).label, (card.props as { value: unknown }).value]),
+    );
+    expect(byLabel["Money Added"]).toBe("500000");
+    expect(byLabel["Money Withdrawn"]).toBe("150000");
+    expect(byLabel["Available Balance"]).toBe("25000");
+    expect(byLabel["Pending"]).toBe("20000");
+    expect(byLabel["Extra Paid"]).toBe("3000");
+    expect(byLabel["Withdrawal Keep for Later"]).toBe("8000");
+    expect(Object.keys(byLabel)).not.toContain("Extra Taken");
+
+    const shareRows = findAllComponents(result, ShareRow);
+    expect(shareRows).toHaveLength(1); // Only "My Projects" -- no "My Sub-partners" section for this role (Decisions #3)
+    expect((shareRows[0]?.props as { name: string }).name).toBe("Project A");
+    expect(shareRowInputText(shareRows[0]!)).toBe("40%");
+
+    expect(findAllComponents(result, EmptyState)).toHaveLength(0);
+  });
+
+  it("multi-Project/multi-Partner case: myProjects shows one row per linked Project; the 6 aggregate totals sum across all of them", async () => {
+    subPartnerShareListAll.mockResolvedValue([
+      {
+        id: "s1",
+        subPartnerId: "sub-1",
+        partnerId: "partner-1",
+        projectId: "project-a",
+        name: "Bala",
+        sharePercent: "40" as Percent,
+        userId: "user-1",
+        effectiveFrom: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      } satisfies SubPartnerShare,
+      {
+        id: "s2",
+        subPartnerId: "sub-2",
+        partnerId: "partner-2",
+        projectId: "project-b",
+        name: "Bala",
+        sharePercent: "25" as Percent,
+        userId: "user-1",
+        effectiveFrom: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      } satisfies SubPartnerShare,
+    ]);
+    investmentListAll.mockResolvedValue([
+      makeInvestmentTransaction({ id: "inv-1", projectId: "project-a", partyType: "sub_partner", shareId: "sub-1", amount: "100000" as Money }),
+      makeInvestmentTransaction({ id: "inv-2", projectId: "project-b", partyType: "sub_partner", shareId: "sub-2", amount: "250000" as Money }),
+    ]);
+    listProjects.mockResolvedValue([
+      makeProject({ id: "project-a", name: "Project A" }),
+      makeProject({ id: "project-b", name: "Project B" }),
+    ]);
+
+    const result = await DashboardHomePage();
+
+    const shareRows = findAllComponents(result, ShareRow);
+    const projectRowNames = shareRows.map((row) => (row.props as { name: string }).name);
+    expect(projectRowNames).toEqual(expect.arrayContaining(["Project A", "Project B"]));
+
+    const statCards = findAllComponents(result, StatCard);
+    const byLabel = Object.fromEntries(
+      statCards.map((card) => [(card.props as { label: string }).label, (card.props as { value: unknown }).value]),
+    );
+    expect(byLabel["Money Added"]).toBe("350000");
   });
 });
 

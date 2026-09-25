@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import {
   assembleOwnerAdminDashboard,
   assemblePartnerDashboard,
+  assembleSubPartnerDashboard,
   listAllCurrentPartnerShares,
   listAllCurrentSubPartnerShares,
   type PartnerOverviewRow,
@@ -229,10 +230,107 @@ async function PartnerDashboard({ actorUserId }: { actorUserId: string }) {
 }
 
 /**
+ * Sub-partner Dashboard (Story 5.6, FR37) -- a Sub-partner's own scoped
+ * view: My Projects (per-Project Share %) and 6 aggregate money totals
+ * across all of their own Projects. Mirrors `PartnerDashboard`'s exact
+ * shape one role over -- no `partnerSharePort` (this dashboard has no
+ * reason to touch the Partner Shares table at all, this story's frozen
+ * Decisions #7), and no "My Sub-partners" section (that category doesn't
+ * exist for this role, Decisions #3): a Sub-partner has no sub-partners of
+ * their own, so this isn't a data gap to work around with an `EmptyState`,
+ * it's a section that structurally doesn't render.
+ *
+ * Renders exactly the 8 data points this story's frozen AC/I-O matrix names
+ * (My Projects, My Share % -- folded into the same "My Projects" list per
+ * row; Money Added, Money Withdrawn, Available Balance, Pending, Extra
+ * Paid, Withdrawal Keep for Later) -- `assembleSubPartnerDashboard()` also
+ * computes `totalExtraTaken` (AD-4 completeness, mirroring
+ * `totalKeepForLater`'s own three-way `adjustmentType` split), but that
+ * figure isn't one of the named data points, so it's deliberately not
+ * rendered here, mirroring `PartnerDashboard`'s own identical precedent.
+ */
+async function SubPartnerDashboard({ actorUserId }: { actorUserId: string }) {
+  const investmentTransactionPort = createInvestmentTransactionPort();
+  const withdrawalTransactionPort = createWithdrawalTransactionPort();
+  const availableBalancePort = createAvailableBalancePort();
+  const investmentAdjustmentPort = createInvestmentAdjustmentPort();
+  const withdrawalAdjustmentPort = createWithdrawalAdjustmentPort();
+  const subPartnerSharePort = createSubPartnerSharePort();
+  const projectPort = createProjectPort();
+
+  const [
+    investmentTransactions,
+    withdrawalTransactions,
+    availableBalances,
+    investmentAdjustments,
+    withdrawalAdjustments,
+    currentSubPartnerShares,
+    projects,
+  ] = await Promise.all([
+    investmentTransactionPort.listAll(),
+    withdrawalTransactionPort.listAll(),
+    availableBalancePort.listAll(),
+    investmentAdjustmentPort.listAll(),
+    withdrawalAdjustmentPort.listAll(),
+    listAllCurrentSubPartnerShares({ subPartnerShares: subPartnerSharePort }),
+    projectPort.listProjects(),
+  ]);
+
+  const projectNamesById = Object.fromEntries(projects.map((project) => [project.id, project.name]));
+
+  const summary = assembleSubPartnerDashboard(actorUserId, {
+    investmentTransactions,
+    withdrawalTransactions,
+    availableBalances,
+    investmentAdjustments,
+    withdrawalAdjustments,
+    currentSubPartnerShares,
+    projectNamesById,
+  });
+
+  return (
+    <div>
+      <PageHeader
+        title="Home"
+        description="Your own Projects, Share %, and money — scoped to you only."
+        action={<LogoutButton />}
+      />
+
+      <div className="mb-5 grid grid-cols-3 gap-3 max-[760px]:grid-cols-2">
+        <StatCard label="Money Added" value={summary.totalMoneyAdded} format="money" />
+        <StatCard label="Money Withdrawn" value={summary.totalMoneyWithdrawn} format="money" />
+        <StatCard label="Available Balance" value={summary.totalAvailableBalance} format="money" tone="success" />
+        <StatCard label="Pending" value={summary.totalPending} format="money" />
+        <StatCard label="Extra Paid" value={summary.totalExtraPaid} format="money" />
+        <StatCard label="Withdrawal Keep for Later" value={summary.totalKeepForLater} format="money" />
+      </div>
+
+      <Card>
+        <h2 className="mb-3.5 text-[15px] font-bold">My Projects</h2>
+        {summary.myProjects.length === 0 ? (
+          <EmptyState
+            icon={<LayoutGrid size={22} />}
+            title="Not linked to any Project yet"
+            description="Once a Partner adds you as a Sub-partner on a Project, it'll show up here."
+          />
+        ) : (
+          <ShareList>
+            {summary.myProjects.map((row) => (
+              <ShareRow key={row.subPartnerId} name={row.projectName} input={sharePercentBadge(row.sharePercent)} />
+            ))}
+          </ShareList>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+/**
  * Owner/Admin Dashboard (Story 5.4, FR35) -- replaces the Epic 5 placeholder.
  * A server component behind the `(dashboard)` layout's already-live
- * `requireOwnerAdminOrPartnerSession()` gate (widened by Story 5.5; this
- * story's own Decisions #3): no new `authorize.ts` action, no new API
+ * `requireOwnerAdminOrPartnerOrSubPartnerSession()` gate (widened by Story
+ * 5.5, widened further by Story 5.6; this story's own Decisions #3): no new
+ * `authorize.ts` action, no new API
  * route -- every port is constructed and read directly, server-side,
  * mirroring `apps/web/app/page.tsx`'s own "async server component, ports
  * constructed inline, data fetched via `Promise.all`, no client-side fetch
@@ -251,19 +349,20 @@ async function PartnerDashboard({ actorUserId }: { actorUserId: string }) {
  * `AdjustPersonCard` per current Partner Share, or `EmptyState` when there
  * are none.
  *
- * Role branching (Story 5.5): resolves the actor's own role via
- * `requireSession()` + `createUserPort().findUserById()` -- mirroring
- * `layout.tsx`'s own new resolution one layer up (this codebase's
+ * Role branching (Story 5.5, widened by Story 5.6): resolves the actor's
+ * own role via `requireSession()` + `createUserPort().findUserById()` --
+ * mirroring `layout.tsx`'s own new resolution one layer up (this codebase's
  * established "each layer independently re-verifies" pattern) -- purely to
  * pick a render branch, not to gate (the `(dashboard)` layout's own
- * `requireOwnerAdminOrPartnerSession()` already did that). `partner` renders
- * the new `PartnerDashboard` above; every other resolvable role falls
+ * `requireOwnerAdminOrPartnerOrSubPartnerSession()` already did that).
+ * `partner` renders `PartnerDashboard`; `sub_partner` renders
+ * `SubPartnerDashboard` (Story 5.6); every other resolvable role falls
  * through to this SAME Owner/Admin rendering, completely unchanged from
  * Story 5.4 -- byte-for-byte identical behavior for that role. A
- * null/unresolvable actor, or any role that's neither `owner_admin` nor
- * `partner` (shouldn't be reachable -- the layout's own guard already
- * excludes it), redirects to `/` defensively rather than silently rendering
- * the wrong dashboard.
+ * null/unresolvable actor, or any role that's neither `owner_admin`,
+ * `partner`, nor `sub_partner` (shouldn't be reachable -- the layout's own
+ * guard already excludes it), redirects to `/` defensively rather than
+ * silently rendering the wrong dashboard.
  */
 export default async function DashboardHomePage() {
   const session = await requireSession();
@@ -279,6 +378,11 @@ export default async function DashboardHomePage() {
     // shape -- an unexecuted nested async component would be structurally
     // invisible to that approach).
     return await PartnerDashboard({ actorUserId: session.userId });
+  }
+  if (actor?.role === "sub_partner") {
+    // Same "await, return the resolved tree" requirement as `PartnerDashboard`
+    // above (Story 5.6, mirrors that story's own test-harness gotcha).
+    return await SubPartnerDashboard({ actorUserId: session.userId });
   }
   if (!actor || actor.role !== "owner_admin") {
     redirect("/");
