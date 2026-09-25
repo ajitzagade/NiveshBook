@@ -50,7 +50,17 @@ export type Action =
   | "money_trail:view"
   | "money_history:list"
   | "adjust_next_time:view"
-  | "adjustment_nettings:create";
+  | "adjustment_nettings:create"
+  | "reports:project_money"
+  | "reports:partner"
+  | "reports:sub_partner"
+  | "reports:money_added"
+  | "reports:withdrawal"
+  | "reports:available_balance"
+  | "reports:money_movement"
+  | "reports:payment_mode"
+  | "reports:adjustment"
+  | "reports:money_history";
 
 /**
  * Role -> allowed-actions permission table. All actions here are
@@ -287,6 +297,28 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // `withdrawal_destination_allocations:create`'s identical all-or-nothing-
   // for-the-role shape, checked via `authorizeScope()` only.
   "adjustment_nettings:create": new Set(["owner_admin"]),
+  // Story 5.7 (FR38/FR39, Epic 5): the 10 Reports actions -- one per report
+  // type (`packages/core/src/reports.ts` + this story's `money-history.ts`-
+  // reuse path), all sharing one of two grant shapes (spec-5-7's Decisions
+  // #2), never 10 bespoke role lists mirrored from memory. 9 of the 10 grant
+  // all three roles, mirroring `money_history:list`'s own Story 5.1
+  // precedent exactly -- the actual per-row scoping is computed downstream,
+  // never by this table (`resolveMoneyHistoryScope()` reused unchanged for
+  // the 6 Money-History-based types; `reports.ts`'s own new assemble
+  // functions for the 4 genuinely-new aggregate types). `reports:money_movement`
+  // alone grants owner_admin only, mirroring `money_movements:list`'s own
+  // Story 4.8 precedent verbatim -- a deliberate, documented carry-over, not
+  // a new restriction invented for this story.
+  "reports:project_money": new Set(["owner_admin", "partner", "sub_partner"]),
+  "reports:partner": new Set(["owner_admin", "partner", "sub_partner"]),
+  "reports:sub_partner": new Set(["owner_admin", "partner", "sub_partner"]),
+  "reports:money_added": new Set(["owner_admin", "partner", "sub_partner"]),
+  "reports:withdrawal": new Set(["owner_admin", "partner", "sub_partner"]),
+  "reports:available_balance": new Set(["owner_admin", "partner", "sub_partner"]),
+  "reports:money_movement": new Set(["owner_admin"]),
+  "reports:payment_mode": new Set(["owner_admin", "partner", "sub_partner"]),
+  "reports:adjustment": new Set(["owner_admin", "partner", "sub_partner"]),
+  "reports:money_history": new Set(["owner_admin", "partner", "sub_partner"]),
 };
 
 /**

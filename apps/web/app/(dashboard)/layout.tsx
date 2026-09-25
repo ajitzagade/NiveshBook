@@ -133,7 +133,23 @@ const NAV_ITEMS: readonly SidebarNavItem[] = [
     href: "/money-history",
     roles: OWNER_ADMIN_OR_PARTNER_OR_SUB_PARTNER,
   },
-  { key: "reports", label: "Reports", icon: <BarChart3 size={ICON_SIZE} />, roles: OWNER_ADMIN_ONLY },
+  // Story 5.7 (FR38/FR39): activated -- widened from Owner/Admin-only
+  // (inert, no `href`) to all three roles, mirroring Money History/Adjust
+  // Next Time's identical "not Project-scoped, links straight to its own
+  // page" rationale immediately above: Reports spans every Project a viewer
+  // is linked to, and every report type's own permission scoping is now
+  // enforced at the API layer (`GET /api/reports/[type]`'s `authorizeScope()`
+  // call, `authorize.ts`'s 10 new `reports:*` actions) -- a role not granted
+  // a given report type simply never sees that tile (`reports/page.tsx`),
+  // matching EXPERIENCE.md's "never a visible-but-blocked nav item" rule
+  // extended from nav items to report tiles.
+  {
+    key: "reports",
+    label: "Reports",
+    icon: <BarChart3 size={ICON_SIZE} />,
+    href: "/reports",
+    roles: OWNER_ADMIN_OR_PARTNER_OR_SUB_PARTNER,
+  },
 ];
 
 /**

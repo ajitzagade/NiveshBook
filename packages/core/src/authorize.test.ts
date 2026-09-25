@@ -1688,3 +1688,100 @@ describe("authorizeScope — adjust_next_time:view (Story 5.3, plain multi-role 
     expect(await authorizeScope("ghost", "adjust_next_time:view", deps)).toEqual({ allowed: false });
   });
 });
+
+/**
+ * Story 5.7 (FR38/FR39, Epic 5): the 10 new `reports:*` actions -- 9 share
+ * one plain multi-role grant shape (`new Set(["owner_admin", "partner",
+ * "sub_partner"])`, mirroring `money_history:list`/`adjust_next_time:view`'s
+ * identical shape above verbatim); `reports:money_movement` alone mirrors
+ * `money_movements:list`'s owner_admin-only shape instead. Every one of the
+ * 10 gets its own describe block (rather than one shared loop covering all
+ * 10) so a copy-paste error in `PERMISSIONS` -- the single highest-stakes
+ * correctness property this story calls out -- fails on the specific action
+ * it broke, not just "some report action somewhere is wrong".
+ */
+const NINE_MULTI_ROLE_REPORT_ACTIONS = [
+  "reports:project_money",
+  "reports:partner",
+  "reports:sub_partner",
+  "reports:money_added",
+  "reports:withdrawal",
+  "reports:available_balance",
+  "reports:payment_mode",
+  "reports:adjustment",
+  "reports:money_history",
+] as const;
+
+describe.each(NINE_MULTI_ROLE_REPORT_ACTIONS)("authorizeScope — %s (Story 5.7, plain multi-role grant)", (action) => {
+  it("allows owner_admin", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("owner-1", action, deps)).toEqual({ allowed: true });
+  });
+
+  it("allows partner", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("partner-1", action, deps)).toEqual({ allowed: true });
+  });
+
+  it("allows sub_partner", async () => {
+    const users = createFakeUserPort([makeUser({ id: "sub-1", role: "sub_partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("sub-1", action, deps)).toEqual({ allowed: true });
+  });
+
+  it("denies project_admin -- FR6's role exists but is granted nothing yet", async () => {
+    const users = createFakeUserPort([makeUser({ id: "pa-1", role: "project_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("pa-1", action, deps)).toEqual({ allowed: false });
+  });
+
+  it("denies a nonexistent actor", async () => {
+    const users = createFakeUserPort([]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("ghost", action, deps)).toEqual({ allowed: false });
+  });
+});
+
+describe("authorizeScope — reports:money_movement (Story 5.7, owner_admin-only, mirrors money_movements:list)", () => {
+  it("allows owner_admin", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("owner-1", "reports:money_movement", deps)).toEqual({ allowed: true });
+  });
+
+  it("denies partner -- the single most security-sensitive grant in this story; a copy-paste error here would leak Money Movement to a role never meant to see it", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("partner-1", "reports:money_movement", deps)).toEqual({ allowed: false });
+  });
+
+  it("denies sub_partner", async () => {
+    const users = createFakeUserPort([makeUser({ id: "sub-1", role: "sub_partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("sub-1", "reports:money_movement", deps)).toEqual({ allowed: false });
+  });
+
+  it("denies project_admin", async () => {
+    const users = createFakeUserPort([makeUser({ id: "pa-1", role: "project_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("pa-1", "reports:money_movement", deps)).toEqual({ allowed: false });
+  });
+
+  it("denies a nonexistent actor", async () => {
+    const users = createFakeUserPort([]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("ghost", "reports:money_movement", deps)).toEqual({ allowed: false });
+  });
+});

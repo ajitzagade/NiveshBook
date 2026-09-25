@@ -89,24 +89,34 @@ describe("DashboardLayout (Story 5.5 role-based nav filtering, widened to sub_pa
     ]);
   });
 
-  it("partner: only Home, Adjust Next Time, and Money History render -- every other item stays hidden", async () => {
+  it("partner: only Home, Adjust Next Time, Money History, and Reports render -- every other item stays hidden", async () => {
     findUserById.mockResolvedValue({ id: "user-1", role: "partner", active: true });
 
     const result = await DashboardLayout({ children: <div /> });
 
     const shell = findComponent(result, SidebarShell);
     const items = (shell?.props as { items: { key: string }[] }).items;
-    expect(items.map((item) => item.key)).toEqual(["home", "adjustNextTime", "moneyHistory"]);
+    expect(items.map((item) => item.key)).toEqual(["home", "adjustNextTime", "moneyHistory", "reports"]);
   });
 
-  it("sub_partner (Story 5.6): only Home, Adjust Next Time, and Money History render -- identical set to partner's own", async () => {
+  it("sub_partner (Story 5.6, widened by Story 5.7): only Home, Adjust Next Time, Money History, and Reports render -- identical set to partner's own", async () => {
     findUserById.mockResolvedValue({ id: "user-1", role: "sub_partner", active: true });
 
     const result = await DashboardLayout({ children: <div /> });
 
     const shell = findComponent(result, SidebarShell);
     const items = (shell?.props as { items: { key: string }[] }).items;
-    expect(items.map((item) => item.key)).toEqual(["home", "adjustNextTime", "moneyHistory"]);
+    expect(items.map((item) => item.key)).toEqual(["home", "adjustNextTime", "moneyHistory", "reports"]);
+  });
+
+  it("Story 5.7: Reports now carries an href (widened from the inert, Owner/Admin-only placeholder)", async () => {
+    findUserById.mockResolvedValue({ id: "user-1", role: "owner_admin", active: true });
+
+    const result = await DashboardLayout({ children: <div /> });
+
+    const shell = findComponent(result, SidebarShell);
+    const items = (shell?.props as { items: { key: string; href?: string }[] }).items;
+    expect(items.find((item) => item.key === "reports")?.href).toBe("/reports");
   });
 
   it("redirects to / when the actor's own second lookup can't find them (defense-in-depth, fails closed rather than defaulting to the broader Owner/Admin item set)", async () => {
