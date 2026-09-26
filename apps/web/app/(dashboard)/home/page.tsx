@@ -292,7 +292,11 @@ async function PartnerDashboard({ actorUserId }: { actorUserId: string }) {
             />
           </Card>
         ) : (
-          <div className={DASHBOARD_CARD_GRID}>
+          // `ml-6`: the frozen AC lists the Partner dashboard among the
+          // screens where sub-partner rows sit 24px right of partner-level
+          // content -- the whole My Sub-partners grid is sub-level, so the
+          // container carries the one-level inset.
+          <div className={`${DASHBOARD_CARD_GRID} ml-6`}>
             {summary.mySubPartners.map((row) => (
               <DashboardGridCard
                 key={row.subPartnerId}

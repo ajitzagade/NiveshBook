@@ -309,13 +309,25 @@ describe("assembleMyInvestments", () => {
     expect(deps.investmentRequirements.listByProjectId).not.toHaveBeenCalled();
   });
 
-  it("merges the Recommended Amount snapshot only when it differs from the own should-pay", async () => {
+  /**
+   * The noise check's comparison basis for a Partner is the POOLED
+   * `shouldPay` (the value Story 3.5's snapshot is built from,
+   * `recommended-amount.ts`, and the value `my-investment-status/route.ts`'s
+   * `withRecommendedAmount` filters against) -- NOT the own-retained
+   * `ownShouldPay` this module returns as `status.shouldPay`. A
+   * partner-with-subs fixture is what pins the difference: pooled 600000
+   * vs own 300000.
+   */
+  it("filters the Recommended Amount snapshot against the POOLED partner should-pay, not the returned own should-pay", async () => {
     const raw: MyInvestmentsRawData = {
       allCurrentPartnerShares: [
         makePartnerShare({ id: "p1", partnerId: "partner-1", projectId: "project-a", userId: "user-1", sharePercent: "60" as Percent }),
         makePartnerShare({ id: "p2", partnerId: "partner-2", projectId: "project-a", userId: "user-1", name: "Asha 2", sharePercent: "40" as Percent }),
       ],
-      allCurrentSubPartnerShares: [],
+      allCurrentSubPartnerShares: [
+        // Under partner-1: pooled shouldPay 600000, ownShouldPay 300000.
+        makeSubPartnerShare({ id: "s1", subPartnerId: "sub-1", partnerId: "partner-1", projectId: "project-a", sharePercent: "30" as Percent }),
+      ],
       projectNamesById: PROJECT_NAMES,
     };
     const deps = makeDeps({
@@ -324,10 +336,12 @@ describe("assembleMyInvestments", () => {
       },
       recommendedByRequirementId: {
         "req-1": [
-          // Differs from partner-1's own 600000 should-pay -> surfaces.
-          makeRecommendedAmount({ id: "r1", shareId: "partner-1", recommendedAmount: "650000" as Money }),
-          // Equals partner-2's own 400000 should-pay -> omitted as noise.
-          makeRecommendedAmount({ id: "r2", shareId: "partner-2", recommendedAmount: "400000" as Money }),
+          // Equals partner-1's POOLED 600000 (though it differs from their
+          // own 300000) -> omitted as noise, matching
+          // `my-investment-status/route.ts`'s pooled-basis convention.
+          makeRecommendedAmount({ id: "r1", shareId: "partner-1", recommendedAmount: "600000" as Money }),
+          // Differs from partner-2's (sub-less: pooled == own) 400000 -> surfaces.
+          makeRecommendedAmount({ id: "r2", shareId: "partner-2", recommendedAmount: "450000" as Money }),
         ],
       },
     });
@@ -336,8 +350,40 @@ describe("assembleMyInvestments", () => {
 
     const first = entries.find((entry) => entry.shareId === "partner-1")!;
     const second = entries.find((entry) => entry.shareId === "partner-2")!;
-    expect(first.requirements[0]!.status?.recommendedAmount).toBe("650000");
-    expect(second.requirements[0]!.status).not.toHaveProperty("recommendedAmount");
+    // Returned shouldPay stays ownShouldPay -- only the noise BASIS is pooled.
+    expect(first.requirements[0]!.status?.shouldPay).toBe("300000");
+    expect(first.requirements[0]!.status).not.toHaveProperty("recommendedAmount");
+    expect(second.requirements[0]!.status?.recommendedAmount).toBe("450000");
+  });
+
+  it("surfaces a partner-with-subs Recommended Amount that differs from the pooled should-pay, even when it equals the own should-pay", async () => {
+    const raw: MyInvestmentsRawData = {
+      allCurrentPartnerShares: [
+        makePartnerShare({ id: "p1", partnerId: "partner-1", projectId: "project-a", userId: "user-1", sharePercent: "60" as Percent }),
+        makePartnerShare({ id: "p2", partnerId: "partner-2", projectId: "project-a", userId: null, name: "Other", sharePercent: "40" as Percent }),
+      ],
+      allCurrentSubPartnerShares: [
+        makeSubPartnerShare({ id: "s1", subPartnerId: "sub-1", partnerId: "partner-1", projectId: "project-a", sharePercent: "30" as Percent }),
+      ],
+      projectNamesById: PROJECT_NAMES,
+    };
+    const deps = makeDeps({
+      requirementsByProjectId: {
+        "project-a": [makeRequirement({ id: "req-1", amount: "1000000" as Money })],
+      },
+      recommendedByRequirementId: {
+        "req-1": [
+          // Equals partner-1's OWN 300000 but differs from pooled 600000 ->
+          // surfaces (own is never the basis).
+          makeRecommendedAmount({ id: "r1", shareId: "partner-1", recommendedAmount: "300000" as Money }),
+        ],
+      },
+    });
+
+    const entries = await assembleMyInvestments("partner", "user-1", raw, deps);
+
+    const first = entries.find((entry) => entry.shareId === "partner-1")!;
+    expect(first.requirements[0]!.status?.recommendedAmount).toBe("300000");
   });
 
   it("a Project whose shares are not fully allocated yields status: null for its requirements, never a throw across the whole list", async () => {

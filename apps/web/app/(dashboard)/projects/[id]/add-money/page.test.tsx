@@ -161,6 +161,22 @@ describe("AddMoneyPage -- Should Pay expand (regression, spec-3-2 Review Triage 
     expect(screen.getAllByText("₹5,00,000")).toHaveLength(1);
   });
 
+  // Founder feedback 2026-09-26: mirrors withdraw-money/page.test.tsx's
+  // identical closest("div") className assertions -- the indent, not just
+  // the caller-baked "↳" glyph, is what carries the hierarchy on this
+  // AC-listed screen too.
+  it("insets sub-partner ShareRows one hierarchy level (24px, ml-6) while partner rows stay un-inset", async () => {
+    getShouldPay.mockResolvedValue(SHOULD_PAY_RESPONSE);
+
+    await renderAndExpand();
+
+    await screen.findByText("↳ Sub1");
+    const partnerShareRow = screen.getByText("A").closest("div") as HTMLElement;
+    const subShareRow = screen.getByText("↳ Sub1").closest("div") as HTMLElement;
+    expect(subShareRow.className).toContain("ml-6");
+    expect(partnerShareRow.className).not.toContain("ml-6");
+  });
+
   it("does not get stuck on 'Loading…' forever after collapsing before the fetch resolves, then re-expanding (row 2)", async () => {
     let releaseFirstFetch: (() => void) | undefined;
     getShouldPay

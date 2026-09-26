@@ -930,7 +930,10 @@ export default function AddMoneyPage() {
                                                 }
                                                 action={<Amount value={sub.shouldPay} size="sm" />}
                                               />
-                                              <div className="ml-1 mt-1">
+                                              {/* `ml-7` (not the partner level's `ml-1`): follows the sub
+                                                  ShareRow's own 24px `isSub` inset so the hierarchy line
+                                                  holds below the row too (founder feedback 2026-09-26). */}
+                                              <div className="ml-7 mt-1">
                                                 <AdjustmentChip
                                                   adjustment={findSubPartnerAdjustment(
                                                     adjustmentsState,
@@ -940,11 +943,11 @@ export default function AddMoneyPage() {
                                                 />
                                               </div>
                                               {sub.recommendedAmount !== undefined ? (
-                                                <p className="ml-1 mt-1 text-[12.6px] font-semibold text-ink-soft">
+                                                <p className="ml-7 mt-1 text-[12.6px] font-semibold text-ink-soft">
                                                   Recommended: <Amount value={sub.recommendedAmount} size="sm" />
                                                 </p>
                                               ) : null}
-                                              <div className="ml-1 mt-1.5">
+                                              <div className="ml-7 mt-1.5">
                                                 <Button
                                                   variant="ghost"
                                                   tone="success"

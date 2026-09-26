@@ -1110,11 +1110,14 @@ export default function WithdrawMoneyPage() {
                             }
                             action={<Amount value={sub.canTake} size="sm" />}
                           />
-                          <div className="ml-1 mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                          {/* `ml-7` (not the partner level's `ml-1`): follows the sub
+                              ShareRow's own 24px `isSub` inset so the hierarchy line
+                              holds below the row too (founder feedback 2026-09-26). */}
+                          <div className="ml-7 mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
                             <AdjustmentChip adjustment={subAdjustment} />
                             <RecommendedWithdrawal adjustment={subAdjustment} />
                           </div>
-                          <div className="ml-1 mt-1.5">
+                          <div className="ml-7 mt-1.5">
                             <Button
                               variant="ghost"
                               tone="danger"

@@ -59,10 +59,12 @@ export interface MyInvestmentRequirementStatus {
   adjustmentAmount: Money;
   /**
    * The Story 3.5 Recommended Amount snapshot for this share, when one
-   * exists AND differs from `shouldPay` -- mirrors
-   * `my-investment-status/route.ts`'s `withRecommendedAmount`/
-   * `recommended-amount.ts`'s `differsFromShouldPay` convention: an equal
-   * value is noise, so it's omitted.
+   * exists AND differs from the value the snapshot was built from -- for a
+   * Partner that's their POOLED `shouldPay` (never the `ownShouldPay`
+   * returned above), mirroring `my-investment-status/route.ts`'s
+   * `withRecommendedAmount`/`recommended-amount.ts`'s pooled-basis
+   * convention; for a Sub-partner the two coincide. An equal value is
+   * noise, so it's omitted.
    */
   recommendedAmount?: Money;
 }
@@ -191,6 +193,17 @@ function extractOwnStatus(
   let actualPaid: Money | undefined;
   let adjustmentType: MyInvestmentRequirementStatus["adjustmentType"] | undefined;
   let adjustmentAmount: Money | undefined;
+  /**
+   * The value the Recommended-snapshot noise check compares against. Story
+   * 3.5 snapshots a Partner's Recommended Amount from their POOLED
+   * `shouldPay` (`recommended-amount.ts`'s `buildSnapshotInput` call sites),
+   * and `my-investment-status/route.ts`'s `withRecommendedAmount` filters
+   * against that same pooled value -- so this check uses the pooled figure
+   * too, even though the RETURNED `shouldPay` field stays `ownShouldPay`
+   * (see `MyInvestmentRequirementStatus.shouldPay`'s doc comment). For a
+   * Sub-partner the two coincide.
+   */
+  let recommendedNoiseBasis: Money | undefined;
 
   if (role === "partner") {
     const partner = computed.adjustments.find((candidate) => candidate.partnerId === shareId);
@@ -201,6 +214,7 @@ function extractOwnStatus(
       actualPaid = partner.actualPaid;
       adjustmentType = partner.adjustmentType;
       adjustmentAmount = partner.adjustmentAmount;
+      recommendedNoiseBasis = partner.shouldPay;
     }
   } else {
     for (const partner of computed.adjustments) {
@@ -210,6 +224,7 @@ function extractOwnStatus(
         actualPaid = sub.actualPaid;
         adjustmentType = sub.adjustmentType;
         adjustmentAmount = sub.adjustmentAmount;
+        recommendedNoiseBasis = sub.shouldPay;
         break;
       }
     }
@@ -219,7 +234,8 @@ function extractOwnStatus(
     shouldPay === undefined ||
     actualPaid === undefined ||
     adjustmentType === undefined ||
-    adjustmentAmount === undefined
+    adjustmentAmount === undefined ||
+    recommendedNoiseBasis === undefined
   ) {
     // The share existed when the current-share lists were fetched but not in
     // this requirement's computed tree -- defensively "not computable"
@@ -235,7 +251,7 @@ function extractOwnStatus(
     actualPaid,
     adjustmentType,
     adjustmentAmount,
-    ...(recommended !== undefined && !moneyEquals(recommended, shouldPay)
+    ...(recommended !== undefined && !moneyEquals(recommended, recommendedNoiseBasis)
       ? { recommendedAmount: recommended }
       : {}),
   };
@@ -270,61 +286,68 @@ export async function assembleMyInvestments(
     ]),
   ];
 
-  const computedByProjectId = new Map<string, ComputedRequirement[]>();
-  for (const projectId of projectIds) {
-    // The FULL Project tree (every current Partner/Sub-partner Share on the
-    // Project, not just the actor's own) -- `computeShouldPay` needs the
-    // complete allocation to compute anyone's slice. Only the actor's own
-    // extracted entries ever leave this function (FR10).
-    const projectPartnerShares = raw.allCurrentPartnerShares.filter(
-      (share) => share.projectId === projectId,
-    );
-    const projectSubSharesByPartnerId = groupByPartnerId(
-      raw.allCurrentSubPartnerShares.filter((share) => share.projectId === projectId),
-    );
+  // Projects are assembled concurrently (NFR10: an owner_admin's list spans
+  // every Project, and a serial per-project await would multiply round
+  // trips); the per-requirement work INSIDE a project stays sequential --
+  // `computeInvestmentAdjustment`'s upserts per requirement are ordered
+  // within a project, mirroring the single-requirement routes' behavior.
+  const computedProjects = await Promise.all(
+    projectIds.map(async (projectId): Promise<[string, ComputedRequirement[]]> => {
+      // The FULL Project tree (every current Partner/Sub-partner Share on the
+      // Project, not just the actor's own) -- `computeShouldPay` needs the
+      // complete allocation to compute anyone's slice. Only the actor's own
+      // extracted entries ever leave this function (FR10).
+      const projectPartnerShares = raw.allCurrentPartnerShares.filter(
+        (share) => share.projectId === projectId,
+      );
+      const projectSubSharesByPartnerId = groupByPartnerId(
+        raw.allCurrentSubPartnerShares.filter((share) => share.projectId === projectId),
+      );
 
-    const requirements = await deps.investmentRequirements.listByProjectId(projectId);
-    const computed: ComputedRequirement[] = [];
-    for (const requirement of requirements) {
-      const transactions = await deps.investmentTransactions.listByRequirementId(requirement.id);
+      const requirements = await deps.investmentRequirements.listByProjectId(projectId);
+      const computed: ComputedRequirement[] = [];
+      for (const requirement of requirements) {
+        const transactions = await deps.investmentTransactions.listByRequirementId(requirement.id);
 
-      let adjustments: PartnerInvestmentAdjustment[] | null;
-      try {
-        adjustments = await computeInvestmentAdjustment(
-          requirement,
-          projectPartnerShares,
-          projectSubSharesByPartnerId,
-          // Cancelled transactions (and their reversal rows) excluded before
-          // the computation ever sees them -- mirrors
-          // `my-investment-status/route.ts`'s identical Story 3.8 filter step.
-          groupTransactionsByShareKey(filterActiveTransactions(transactions)),
-          { investmentAdjustments: deps.investmentAdjustments },
-        );
-      } catch (error) {
-        if (
-          error instanceof SharesNotFullyAllocatedError ||
-          error instanceof SubPartnerSharesOverAllocatedError
-        ) {
-          adjustments = null;
-        } else {
-          throw error;
+        let adjustments: PartnerInvestmentAdjustment[] | null;
+        try {
+          adjustments = await computeInvestmentAdjustment(
+            requirement,
+            projectPartnerShares,
+            projectSubSharesByPartnerId,
+            // Cancelled transactions (and their reversal rows) excluded before
+            // the computation ever sees them -- mirrors
+            // `my-investment-status/route.ts`'s identical Story 3.8 filter step.
+            groupTransactionsByShareKey(filterActiveTransactions(transactions)),
+            { investmentAdjustments: deps.investmentAdjustments },
+          );
+        } catch (error) {
+          if (
+            error instanceof SharesNotFullyAllocatedError ||
+            error instanceof SubPartnerSharesOverAllocatedError
+          ) {
+            adjustments = null;
+          } else {
+            throw error;
+          }
         }
-      }
 
-      const recommendedRows = await deps.recommendedAmounts.findByRequirementId(requirement.id);
-      computed.push({
-        requirement,
-        adjustments,
-        recommendedByShareKey: new Map(
-          recommendedRows.map((row) => [
-            shareKey(row.partyType, row.shareId),
-            row.recommendedAmount,
-          ]),
-        ),
-      });
-    }
-    computedByProjectId.set(projectId, computed);
-  }
+        const recommendedRows = await deps.recommendedAmounts.findByRequirementId(requirement.id);
+        computed.push({
+          requirement,
+          adjustments,
+          recommendedByShareKey: new Map(
+            recommendedRows.map((row) => [
+              shareKey(row.partyType, row.shareId),
+              row.recommendedAmount,
+            ]),
+          ),
+        });
+      }
+      return [projectId, computed];
+    }),
+  );
+  const computedByProjectId = new Map<string, ComputedRequirement[]>(computedProjects);
 
   function buildEntry(
     role: "partner" | "sub_partner",

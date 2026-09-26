@@ -189,6 +189,31 @@
     background: var(--color-violet-soft);
     border-color: var(--color-violet);
   }
+  /*
+   * A disabled ghost button mutes back to the plain border -- a tinted
+   * resting border would read as still-actionable. Placed AFTER the tone
+   * rules on purpose: `.nb-btn-ghost:disabled` and
+   * `.nb-btn-ghost.nb-btn-tone-*` tie on specificity (0,2,0), so source
+   * order is what lets the muted state win.
+   */
+  .nb-btn-ghost:disabled {
+    border-color: var(--color-border);
+  }
+
+  /*
+   * Accessibility: the founder-feedback motion (elevated-card hover lift +
+   * button color transitions) is decorative -- users who ask for reduced
+   * motion get the same end states with no animation and no transform.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .nb-btn,
+    .nb-card-elevated {
+      transition: none;
+    }
+    .nb-card-elevated:hover {
+      transform: none;
+    }
+  }
 
   .nb-chip {
     display: inline-flex;

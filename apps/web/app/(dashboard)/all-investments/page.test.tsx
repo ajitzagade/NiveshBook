@@ -123,7 +123,7 @@ describe("AllInvestmentsPage (founder feedback 2026-09-26)", () => {
 
     render(<AllInvestmentsPage />);
 
-    await screen.findByText(/Not computable yet/);
+    await screen.findByText(/Not computable yet — this Project's share allocation needs review\./);
   });
 
   it("renders the no-requirements note for a Project with no funding requirements", async () => {

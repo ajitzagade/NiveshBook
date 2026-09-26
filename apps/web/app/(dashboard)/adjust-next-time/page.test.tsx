@@ -76,6 +76,34 @@ describe("AdjustNextTimePage (Story 5.3, FR33/FR34)", () => {
     expect(screen.getAllByText(/partner a/i).length).toBeGreaterThan(0);
   });
 
+  // Founder feedback 2026-09-26: `isSub` is wired from each entry's own
+  // `partyType` -- a sub_partner card carries the one-hierarchy-level
+  // (24px, ml-6) inset, a partner card does not, in BOTH sections.
+  it("insets a sub_partner's AdjustPersonCard one hierarchy level (ml-6) while a partner's card stays un-inset", async () => {
+    getAdjustNextTime.mockResolvedValue({
+      investmentAdjustments: [
+        makeInvestmentEntry(),
+        makeInvestmentEntry({ id: "ia-2", partyType: "sub_partner", shareId: "sub-1", personName: "Sub S" }),
+      ],
+      withdrawalAdjustments: [
+        makeWithdrawalEntry({ id: "wa-2", partyType: "sub_partner", shareId: "sub-1", personName: "Sub S" }),
+      ],
+      canNet: true,
+    });
+
+    render(<AdjustNextTimePage />);
+
+    await screen.findByText("Partner A — Project A");
+    const partnerCard = screen.getByText("Partner A — Project A").parentElement as HTMLElement;
+    // One sub card per section -- both must carry the inset.
+    const subCards = screen.getAllByText("Sub S — Project A").map((el) => el.parentElement as HTMLElement);
+    expect(subCards).toHaveLength(2);
+    for (const subCard of subCards) {
+      expect(subCard.className).toContain("ml-6");
+    }
+    expect(partnerCard.className).not.toContain("ml-6");
+  });
+
   it("shows the error state when the fetch fails", async () => {
     getAdjustNextTime.mockRejectedValue(new Error("Boom"));
 

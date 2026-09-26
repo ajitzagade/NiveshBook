@@ -633,6 +633,11 @@ describe("DashboardHomePage (Partner Dashboard, Story 5.5)", () => {
     for (const grid of grids) {
       expect((grid.props as { className: string }).className).toContain("max-[860px]:grid-cols-1");
     }
+    // Frozen AC: sub-partner rows sit 24px right of partner-level content on
+    // the Partner dashboard -- the My Sub-partners grid (tree order: second)
+    // carries the ml-6 inset; My Projects (first) does not.
+    expect((grids[0]?.props as { className: string }).className).not.toContain("ml-6");
+    expect((grids[1]?.props as { className: string }).className).toContain("ml-6");
     const names = shareRows.map((row) => (row.props as { name: string }).name);
     expect(names).toContain("Project A");
     expect(names).toContain("Bala — Project A");

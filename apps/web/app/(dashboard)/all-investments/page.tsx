@@ -171,8 +171,11 @@ export default function AllInvestmentsPage() {
                           </Td>
                         </>
                       ) : (
+                        // Cause-neutral: status is null for under- AND
+                        // over-allocation (and the defensive share-missing
+                        // branch), so the copy never asserts one cause.
                         <Td colSpan={4} className="!text-left text-ink-soft">
-                          Not computable yet — this Project&apos;s shares aren&apos;t fully allocated.
+                          Not computable yet — this Project&apos;s share allocation needs review.
                         </Td>
                       )}
                     </TableRow>

@@ -14,9 +14,10 @@ export type ButtonTone = "accent" | "success" | "danger" | "info" | "violet";
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: "primary" | "ghost";
   /**
-   * Appends `nb-btn-tone-*` (tokens.css). The tone classes are scoped to
-   * `.nb-btn-ghost`, so passing one alongside `variant="primary"` is a
-   * no-op by construction -- primary buttons never change appearance.
+   * Appends `nb-btn-tone-*` (tokens.css) -- ghost variant only: a `tone`
+   * passed alongside `variant="primary"` emits nothing (and the CSS rules
+   * are additionally scoped to `.nb-btn-ghost`, so primary buttons never
+   * change appearance even if the class leaked in via `className`).
    */
   tone?: ButtonTone;
   asChild?: boolean;
@@ -29,7 +30,7 @@ export function Button({ variant = "primary", tone, asChild, icon, className, ch
   const buttonClassName = cn(
     "nb-btn",
     variant === "primary" ? "nb-btn-primary" : "nb-btn-ghost",
-    tone ? `nb-btn-tone-${tone}` : undefined,
+    variant === "ghost" && tone ? `nb-btn-tone-${tone}` : undefined,
     icon ? "inline-flex items-center gap-1.5" : undefined,
     className,
   );

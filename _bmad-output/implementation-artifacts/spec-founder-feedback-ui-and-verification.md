@@ -2,7 +2,7 @@
 title: 'Founder Feedback: Button Tints, Hierarchy Indent, Split Scroll, All Investments, Scenario Verification'
 type: 'feature'
 created: '2026-09-26'
-status: 'in-review'
+status: 'done'
 route: 'dispatch'
 baseline_commit: '433f3512a27e3165e9722ae30084e9b6432bc053'
 review_loop_iteration: 0
@@ -94,11 +94,34 @@ context: []
 - Home dashboard (Decision 8): each section's list items became elevated `Card`s (`PartnerOverviewCard` reshaped; new `DashboardGridCard` keeps `ShareRow`'s `name`/`input`/`action` slot shape) in a `grid-cols-2 gap-4 max-[860px]:grid-cols-1` wrapper; `AdjustPersonCard`/`ShareRow`/`ShareList` no longer used on this page. Stat-card rows unchanged (they're not list-style sections and are 3/4-up by design).
 - New `authorize.ts` action `my_investments:list` (plain multi-role grant mirroring `money_history:list`); per-entry scoping lives in `assembleMyInvestments()`.
 - Playwright computed-style measurements (real `next build` + `next start` against local Postgres, `scratchpad/measure.mjs` + `measure-shares.mjs`): 22/22 passed -- all 5 tone resting borders + hover fills match their exact `--color-*`/`--color-*-soft` token rgb values; ShareRow `isSub` delta exactly 24px (withdraw-money); shares-page wrapper indent exactly 24px (12px margin + 1px border + 11px padding); AdjustPersonCard `isSub` delta 24px (adjust-next-time); shell `overflow: hidden` at viewport height with both panes `overflow-y: auto` at 1200px, reverting to single scroll at 700px; home grid 2 tracks at 1200px / 1 track at 700px; elevated card resting shadow = `--shadow-card`, hover = `translateY(-2px)` + `--shadow-card-hover`, transition `box-shadow, transform 0.18s`; Card padding still 20px (the 2026-09-24 gotcha); `GET /api/my-investments` 200 in 124ms with 22 entries (NFR10).
-- NOT done: production scenario seeding + persona accounts + credentials/verification report (Decisions 4-6) -- requires the production deployment URL and owner credentials, which this session did not have. Everything else is ready for that pass; `/api/my-investments` was exercised end-to-end against the local production build instead.
+- NOT done here, by founder re-sequencing (2026-09-26 PM): production scenario seeding + persona accounts + credentials/verification report (Decisions 4-6) runs ONCE after the follow-on hierarchy-redesign batch (nested+tinted partner/sub-partner cards + ShareRow action-column crop fix) deploys — so the founder's manual verification happens on the final UI. Production owner access was verified live this session (login + project list). `/api/my-investments` was exercised end-to-end against the local production build.
+- 2026-09-26 review pass: 21 findings triaged (see Review Triage Log) — 13 patches applied and re-verified (incl. recommended-amount pooled-basis fix, Promise.all per-project assembly, sub-wrapper ml-7 alignment, Partner-dashboard My Sub-partners ml-6 inset, reduced-motion + disabled-state CSS, SplitRow.isSub removal, and committed jsdom tests for tone/elevated/isSub emission, indents, and the All Investments navigation), 3 deferred to deferred-work.md, 6 rejected with evidence. Full gate re-run green: lint (0 violations), typecheck, 67-file/971-test web suite + core/ui/db suites, build.
 
 ## Spec Change Log
 
 ## Review Triage Log
+
+2026-09-26 review pass 1 (blind-hunter BH, verification-gap VG, edge-case-hunter EC):
+- BH1 `GET /api/my-investments` upserts the adjustments ledger on read, cross-project blast radius — **medium → defer**: sanctioned lazy-recompute pattern (identical to `my-investment-status`/adjust-next-time routes); writes are idempotent recomputations from current data so concurrent loads converge; a read-only computation path is a design decision, not a patch.
+- BH2 serial N+1 project/requirement fetches — **medium → patch**: parallelize per-project with `Promise.all`.
+- BH3 case-insensitive userId match could conflate IDs — **false**: Postgres `uuid` is case-insensitive by type, two uuids differing only in case cannot coexist as distinct identities; deliberately mirrors `resolveMoneyHistoryScope`.
+- BH4 `lib/my-investments.ts` re-declares core types instead of `import type` — **low → reject**: follows the repo's documented client-lib convention (`lib/adjust-next-time.ts` precedent); changing it is a repo-wide convention decision with no everyday failure.
+- BH5 not-computable copy asserts one cause — **low → patch**: cause-neutral copy.
+- BH6+VG-other+EC7 `SplitRow.isSub` has zero call sites — **low → patch**: remove (Code Map premise was stale; no sub-partner SplitRow exists).
+- BH7+VG4 no committed test pins tone/elevated/isSub class emission — **medium (VG pre-verified) → patch**: jsdom class-emission tests in `packages/ui`; committed computed-style/CI measurement automation → **defer**.
+- BH8+VG3 All Investments dropdown entry + navigation untested — **medium (VG pre-verified) → patch**: ProjectSwitcher/SidebarShell tests.
+- BH9 no `prefers-reduced-motion` guard on new motion — **low → patch**: central media-query guard.
+- BH10+VG-other reports raw export button hand-syncs `nb-btn-tone-accent` — **low → defer**: Radix `asChild` trigger needs a ref host; `Button` lacks `forwardRef` (pre-existing constraint); fix is a Button refactor.
+- BH11 `DashboardGridCard`/`PartnerOverviewCard` stayed page-local — **low → reject**: composition of `packages/ui` primitives with no second consumer; promoting adds public surface without a named reuser.
+- BH12 error state lacks retry; switcher trigger label static on /all-investments — **low → reject**: matches money-history conventions; fixes add state/branches for negligible everyday harm.
+- VG1 add-money indent has no pinning test — **medium (pre-verified) → patch**.
+- VG2 adjust-next-time `isSub` branch never evaluates true in tests — **medium (pre-verified) → patch**.
+- EC1 recommended noise filter compares own-basis against pooled-basis snapshot — **medium → patch**: confirmed (`recommended-amount.ts:165` snapshots pooled `shouldPay`; `my-investment-status` compares pooled); align comparison basis.
+- EC2 sub rows inset but their action-button wrappers stay `ml-1` — **low → patch**: `ml-7` on sub-level wrappers.
+- EC3 disabled tone buttons keep tinted resting border — **low → patch**: one `.nb-btn-ghost:disabled` border reset.
+- EC4 non-allocation error 500s the whole list — **reject**: loud failure on undemonstrated corrupt state is correct behavior; only the two allocation preconditions are expected recoverables.
+- EC5 uniform indent for sub-partner actors implies parenthood under nothing/unrelated cards — **low → reject**: inset doubles as a role marker consistent with other screens; conditional indent adds context-dependent branching; superseded by the founder's same-day hierarchy-redesign request.
+- EC6 Partner dashboard My Sub-partners section not inset despite frozen AC — **medium → patch**: `ml-6` on the section grid + test.
 
 ## Verification
 
