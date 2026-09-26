@@ -1013,7 +1013,7 @@ export default function WithdrawMoneyPage() {
         backHref="/projects"
         backLabel="Projects"
         title="Withdraw Money"
-        description="Can Take is each Partner and Sub-partner's normal withdrawal entitlement -- their Share % of this Project's available-to-withdraw amount, computed automatically."
+        description="Can Take is each Partner and Sub-partner's normal share of what can be withdrawn -- based on their Share % of this Project's available-to-withdraw amount, worked out automatically."
       />
 
       <Card>
@@ -1152,7 +1152,7 @@ export default function WithdrawMoneyPage() {
               status={<Amount value={state.availableToWithdraw} size="sm" />}
             />
             <p className="mt-2 text-[11.6px] text-ink-faint">
-              A Partner&apos;s Sub-partner split is private -- other Partners never see these rows.
+              A Partner&apos;s Sub-partner split is private -- other Partners never see this information.
             </p>
           </>
         )}
@@ -1167,9 +1167,9 @@ export default function WithdrawMoneyPage() {
         <DialogContent>
           <DialogTitle>Record Withdrawal{recordTarget ? ` — ${recordTarget.personName}` : ""}</DialogTitle>
           <DialogDescription>
-            Saved with an audit record (AD-5). An amount within Can Take saves immediately; an amount
-            that exceeds Can Take requires a separate Owner/Admin Extra Withdrawal authorization step
-            (FR25).
+            This is saved as a record you (or another Owner/Admin) can look back on. An amount within
+            Can Take saves right away; an amount that goes over Can Take needs an Owner/Admin to
+            approve it first.
           </DialogDescription>
           <form onSubmit={handleRecordWithdrawalSubmit} className="mt-4">
             <Field>
@@ -1283,9 +1283,9 @@ export default function WithdrawMoneyPage() {
                 <Amount value={recordAmount as Money} size="sm" /> exceeds {recordTarget.personName}
                 &apos;s Can Take of <Amount value={extraWithdrawalCanTake} size="sm" /> by{" "}
                 <Amount value={excessOverCanTake(recordAmount, extraWithdrawalCanTake)} size="sm" />.
-                Only an Owner/Admin with Extra Withdrawal approval authority (Story 1.7) can authorize
-                this excess as Extra Taken (FR25). Confirming records the full amount with this
-                authorization; going back returns to the amount field with nothing saved.
+                Only an Owner/Admin allowed to approve extra withdrawals can do this. Confirming
+                records the full amount as Extra Taken; going back returns to the amount field with
+                nothing saved.
               </>
             ) : null}
           </DialogDescription>
@@ -1329,7 +1329,7 @@ export default function WithdrawMoneyPage() {
           <DialogDescription>
             Split {allocationTarget ? <Amount value={allocationTarget.amount} size="sm" /> : null} across
             one or more destinations -- another Project, a Person, Available Balance, or Other. Optional:
-            skip to record the withdrawal with no allocation yet -- it stays recorded either way.
+            skip this and record the withdrawal without splitting it yet -- it stays recorded either way.
           </DialogDescription>
 
           <div className="mt-4 flex flex-col gap-3">
@@ -1359,7 +1359,7 @@ export default function WithdrawMoneyPage() {
 
           <div className="mt-4">
             <DistributedCheck
-              label="Distributed"
+              label="Split so far"
               status={
                 <>
                   {formatAmount(formatScaledAmount(allocationTotalScaled))} /{" "}
@@ -1407,13 +1407,13 @@ export default function WithdrawMoneyPage() {
         <DialogContent>
           <DialogTitle>Edit Withdrawal</DialogTitle>
           <DialogDescription>
-            Owner/Admin only. The previous values, who changed it, and when, are preserved in the audit
-            trail -- this updates the recorded withdrawal in place, it never creates a new row.
+            Owner/Admin only. The previous values, who changed it, and when, are kept in the history of
+            changes -- this keeps updating the same withdrawal record instead of creating a separate one.
             {editTarget && allocatedWithdrawalIds.has(editTarget.transaction.id) ? (
               <>
                 {" "}
-                Amount can no longer be edited -- a destination allocation has already been recorded for
-                this withdrawal, and its legs must keep summing to the withdrawal&apos;s own amount. Date,
+                Amount can no longer be edited -- this withdrawal has already been split across
+                destinations, and each part must still add up to the total withdrawal amount. Date,
                 payment mode, reference number, and notes can still be edited.
               </>
             ) : null}
@@ -1568,11 +1568,11 @@ export default function WithdrawMoneyPage() {
                 {PAYMENT_MODE_LABELS[cancelTarget.transaction.paymentMode]})?{" "}
               </>
             ) : null}
-            Owner/Admin only. The original record is preserved with a &quot;Cancelled&quot; status and a
-            linked reversal record is created -- nothing is deleted. If this withdrawal was allocated to
-            another Project, that Project&apos;s own investment record is also cancelled; if it was
-            allocated to Available Balance, the credited pool is reversed (rejected instead if that pool
-            was already spent elsewhere -- nothing changes in that case, and this withdrawal stays active).
+            Nothing is deleted. The original stays on record marked &quot;Cancelled,&quot; and a linked
+            entry reverses it. If this withdrawal went into another Project, that investment is
+            cancelled too. If it went into Available Balance, that amount is put back -- unless it was
+            already spent elsewhere, in which case the cancellation is rejected and this withdrawal
+            stays active.
           </DialogDescription>
 
           {cancelFormError ? (
@@ -1818,7 +1818,7 @@ function RecordedWithdrawals({
             </Button>
           ) : null}
           {transaction.status === "active" && allocatedWithdrawalIds.has(transaction.id) ? (
-            <span className="text-ink-faint">(amount locked -- destination allocated)</span>
+            <span className="text-ink-faint">(amount locked -- already split across destinations)</span>
           ) : null}
         </div>
       ))}

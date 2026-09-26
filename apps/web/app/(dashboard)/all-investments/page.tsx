@@ -193,7 +193,8 @@ export default function AllInvestmentsPage() {
                             // over-allocation (and the defensive share-missing
                             // branch), so the copy never asserts one cause.
                             <Td colSpan={4} className="!text-left text-ink-soft">
-                              Not computable yet — this Project&apos;s share allocation needs review.
+                              Not available yet — this Project&apos;s ownership percentages need to be
+                              fixed first.
                             </Td>
                           )}
                         </TableRow>
@@ -256,7 +257,8 @@ export default function AllInvestmentsPage() {
                               },
                               {
                                 label: "Status",
-                                value: "Not computable yet — this Project's share allocation needs review.",
+                                value:
+                                  "Not available yet — this Project's ownership percentages need to be fixed first.",
                               },
                             ]
                       }

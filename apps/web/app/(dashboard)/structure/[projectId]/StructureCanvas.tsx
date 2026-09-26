@@ -55,7 +55,7 @@ function StructureNodeContent({ data }: { data: StructureNodeData }) {
         type="button"
         onClick={data.onSelect}
         className="flex w-full flex-col items-center gap-1 text-center"
-        title={`View ${data.name}'s own scoped structure`}
+        title={`View ${data.name}'s own structure`}
       >
         <p className="text-[13px] font-semibold text-ink">{data.name}</p>
         <ModeFigure display={data.display} />

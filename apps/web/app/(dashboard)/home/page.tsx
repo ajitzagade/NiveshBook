@@ -255,7 +255,7 @@ async function PartnerDashboard({ actorUserId }: { actorUserId: string }) {
     <div>
       <PageHeader
         title="Home"
-        description="Your own Projects, Share %, and money — scoped to you only."
+        description="Your own Projects, Share %, and money — showing only your own numbers."
         action={<LogoutButton />}
       />
 
@@ -387,7 +387,7 @@ async function SubPartnerDashboard({ actorUserId }: { actorUserId: string }) {
     <div>
       <PageHeader
         title="Home"
-        description="Your own Projects, Share %, and money — scoped to you only."
+        description="Your own Projects, Share %, and money — showing only your own numbers."
         action={<LogoutButton />}
       />
 

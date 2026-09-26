@@ -143,7 +143,7 @@ describe("AllInvestmentsPage (founder feedback 2026-09-26)", () => {
     // crash either way.
     await waitFor(() =>
       expect(
-        screen.getAllByText(/Not computable yet — this Project's share allocation needs review\./),
+        screen.getAllByText(/Not available yet — this Project's ownership percentages need to be fixed first\./),
       ).toHaveLength(2),
     );
   });
@@ -234,7 +234,7 @@ describe("AllInvestmentsPage -- below-860px RowCard stack", () => {
 
     const cards = await screen.findByTestId("all-investments-row-cards");
     expect(
-      within(cards).getByText(/Not computable yet — this Project's share allocation needs review\./),
+      within(cards).getByText(/Not available yet — this Project's ownership percentages need to be fixed first\./),
     ).toBeInTheDocument();
   });
 

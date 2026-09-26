@@ -1122,7 +1122,8 @@ export default function AddMoneyPage() {
             Record Payment{recordPaymentTarget ? ` — ${recordPaymentTarget.personName}` : ""}
           </DialogTitle>
           <DialogDescription>
-            Owner/Admin only. Saved with an audit record -- a past payment is never edited here.
+            Owner/Admin only. This is saved as a record you can look back on -- a past payment is never
+            edited here.
           </DialogDescription>
           <form onSubmit={handleRecordPaymentSubmit} className="mt-4">
             <Field>
@@ -1227,7 +1228,7 @@ export default function AddMoneyPage() {
                 (Ref: <strong>{recordReferenceNumber.trim()}</strong>)
               </>
             ) : null}
-            ? Saved with an audit record -- a past payment is never edited here.
+            ? This is saved as a record -- a past payment is never edited here.
           </DialogDescription>
 
           {recordFormError ? (
@@ -1267,8 +1268,8 @@ export default function AddMoneyPage() {
         <DialogContent>
           <DialogTitle>Edit Payment</DialogTitle>
           <DialogDescription>
-            Owner/Admin only. The previous values, who changed it, and when, are preserved in the audit
-            trail (FR41) -- this updates the recorded payment in place, it never creates a new row.
+            Owner/Admin only. The previous values, who changed it, and when, are kept in the history of
+            changes -- this keeps updating the same payment record instead of creating a separate one.
           </DialogDescription>
           <form onSubmit={handleEditPaymentSubmit} className="mt-4">
             <Field>
@@ -1372,7 +1373,7 @@ export default function AddMoneyPage() {
                 (Ref: <strong>{editReferenceNumber.trim()}</strong>)
               </>
             ) : null}
-            ? The previous values, who changed it, and when, are preserved in the audit trail (FR41).
+            ? The previous values, who changed it, and when, are kept in the history of changes.
           </DialogDescription>
 
           {editFormError ? (
@@ -1420,9 +1421,9 @@ export default function AddMoneyPage() {
                 {PAYMENT_MODE_LABELS[cancelPaymentTarget.transaction.paymentMode]})?{" "}
               </>
             ) : null}
-            Owner/Admin only. The original record is preserved with a &quot;Cancelled&quot; status and a
-            linked reversal record is created (FR42) -- nothing is deleted, but the amount stops counting
-            toward Paid Now the next time the Adjustment ledger is viewed.
+            Nothing is deleted. The original stays on record marked &quot;Cancelled,&quot; and a linked
+            entry reverses it. The amount stops counting toward Paid Now the next time you view
+            Adjustments.
           </DialogDescription>
 
           {cancelFormError ? (

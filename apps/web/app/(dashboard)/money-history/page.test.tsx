@@ -384,7 +384,7 @@ describe("MoneyHistoryPage -- trail navigation (Story 5.2, FR32)", () => {
     render(<MoneyHistoryPage />);
 
     expect(getMoneyTrail).toHaveBeenCalledWith("withdrawal_transaction", "wd-1");
-    expect(screen.getByText("Trace: withdrawal_transaction · wd-1")).toBeInTheDocument();
+    expect(screen.getByText("Showing where this money went")).toBeInTheDocument();
 
     // The origin (upstream pool), the root withdrawal, and its downstream leg
     // all appear exactly once, proving `flattenTrail()` walked both directions.
@@ -626,10 +626,10 @@ describe("MoneyHistoryPage -- View Audit History action (Story 5.9's post-review
     await user.click(within(table).getByRole("button", { name: "View Audit History" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Linked Transaction (inv-reversal-1)")).toBeInTheDocument();
+      expect(screen.getByText("Linked Transaction")).toBeInTheDocument();
     });
     // The linked section's own real entry content actually renders -- not
-    // just its static "Linked Transaction (...)" header: its own reason
+    // just its static "Linked Transaction" header: its own reason
     // text ("reversal of inv-1") and its own "Created" action label both
     // appear, distinct from the requested transaction's own "Cancelled"/
     // "recorded by mistake" entry above it.

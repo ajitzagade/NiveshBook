@@ -48,7 +48,7 @@ export default async function ReportsPage() {
     <div>
       <PageHeader
         title="Reports"
-        description="Permission-scoped reports — each one only ever shows what you're allowed to see."
+        description="Reports — each one only ever shows what you're allowed to see."
       />
 
       {/*

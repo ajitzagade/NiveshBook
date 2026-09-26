@@ -44,7 +44,7 @@ function ProjectActionButtons({ project }: { project: Project }) {
       <Button asChild variant="ghost" tone="info">
         <Link href={`/projects/${project.id}/shares`} className="inline-flex items-center gap-1.5">
           <Percent size={14} />
-          Shares
+          Partner Shares
         </Link>
       </Button>
       <Button asChild variant="ghost" tone="success">
@@ -62,7 +62,7 @@ function ProjectActionButtons({ project }: { project: Project }) {
       <Button asChild variant="ghost" tone="violet">
         <Link href={`/structure/${project.id}`} className="inline-flex items-center gap-1.5">
           <Network size={14} />
-          Structure
+          View Structure
         </Link>
       </Button>
     </>

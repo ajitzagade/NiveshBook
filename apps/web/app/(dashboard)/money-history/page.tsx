@@ -299,7 +299,7 @@ export default function MoneyHistoryPage() {
             </Button>
           }
         >
-          Trace: {traceType} · {traceId}
+          Showing where this money went
         </TraceBanner>
 
         <Card className="mt-3.5">
@@ -553,8 +553,7 @@ export default function MoneyHistoryPage() {
           <DialogTitle>Audit History</DialogTitle>
           <DialogDescription>
             Every recorded change to this{" "}
-            {auditTarget?.type === "money_withdrawn" ? "withdrawal" : "payment"} -- who, when, and why
-            (FR41/FR42).
+            {auditTarget?.type === "money_withdrawn" ? "withdrawal" : "payment"} -- who, when, and why.
           </DialogDescription>
           <div className="mt-4">
             <AuditHistoryEntries state={auditState} />
@@ -600,7 +599,7 @@ function AuditHistoryEntries({ state }: { state: AuditLogState }) {
       {state.linkedTransactionId ? (
         <div>
           <p className="mb-1.5 text-[12.6px] font-semibold text-ink-soft">
-            Linked Transaction ({state.linkedTransactionId})
+            Linked Transaction
           </p>
           <AuditHistoryEntryList entries={state.linkedEntries} />
         </div>

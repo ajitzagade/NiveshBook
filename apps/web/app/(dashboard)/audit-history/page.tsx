@@ -90,7 +90,7 @@ export default async function AuditHistoryPage() {
     <div>
       <PageHeader
         title="Audit History"
-        description="Who edited or cancelled what, and when -- every Add Money and Withdraw Money transaction's own audit trail, system-wide."
+        description="See who changed a payment or withdrawal, and when."
       />
 
       <Card>

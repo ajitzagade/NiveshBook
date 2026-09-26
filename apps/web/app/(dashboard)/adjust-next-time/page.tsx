@@ -251,7 +251,7 @@ export default function AdjustNextTimePage() {
     <div>
       <PageHeader
         title="Adjust Next Time"
-        description="Carried-forward Investment and Withdrawal Adjustments, in plain language -- shown separately, never combined or auto-netted."
+        description="Amounts still pending or extra from past rounds -- shown separately for Investments and Withdrawals, never combined automatically."
       />
 
       {state.status === "loading" ? (
@@ -365,7 +365,8 @@ export default function AdjustNextTimePage() {
                 ) : (
                   "none recorded yet"
                 )}
-                . Recorded as its own audited fact -- this never changes either ledger&apos;s own numbers.
+                . Recorded on its own -- this never changes the Investment or Withdrawal numbers
+                themselves.
               </>
             ) : null}
           </DialogDescription>

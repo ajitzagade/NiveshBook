@@ -244,7 +244,7 @@ export default function AvailableBalancePage() {
         backHref="/projects"
         backLabel="Projects"
         title="Available Balance"
-        description="Money withdrawn and allocated to Available Balance (Story 4.7) sits here until it's spent -- reinvested in another Project or given to a person."
+        description="Money you withdrew but haven't spent yet stays here. You can put it into another Project or give it to a person."
       />
 
       <Card>
@@ -319,8 +319,8 @@ export default function AvailableBalancePage() {
             {target ? (
               <>
                 Current balance: <Amount value={target.balance} size="sm" />. Spend part or all of it --
-                reinvest in a Project (this or another one) or give it to a person. Saved with an audit
-                record (AD-5).
+                put it into a Project (this or another one) or give it to a person. This is saved as a
+                record you (or another Owner/Admin) can look back on.
               </>
             ) : null}
           </DialogDescription>

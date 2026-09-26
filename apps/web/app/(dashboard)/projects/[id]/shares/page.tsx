@@ -561,7 +561,7 @@ export default function PartnerSharesPage() {
 
                           <p className="text-[11.6px] text-ink-faint">
                             {share.name}&apos;s sub-partner split is private -- other Partners never
-                            see these rows.
+                            see this information.
                           </p>
                         </>
                       )
