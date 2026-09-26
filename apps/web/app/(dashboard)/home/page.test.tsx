@@ -148,6 +148,34 @@ function shareRowInputText(row: ReactElement): string {
   return (Array.isArray(children) ? children : [children]).join("");
 }
 
+/**
+ * Finds the first `href` anywhere inside a `ShareRow`'s `action` subtree
+ * (Story 5.10's "View Structure" `Link`, nested inside a `Button asChild`) --
+ * mirrors `findAllComponents`'s own recursive-tree-walking approach, but
+ * hunting for a prop rather than a component type.
+ */
+function findHref(node: ReactNode): string | undefined {
+  if (node === null || node === undefined || typeof node !== "object") {
+    return undefined;
+  }
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findHref(child);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  const element = node as ReactElement<{ href?: string; children?: ReactNode }>;
+  if (typeof element.props?.href === "string") {
+    return element.props.href;
+  }
+  return findHref(element.props?.children);
+}
+
+function shareRowActionHref(row: ReactElement): string | undefined {
+  return findHref((row.props as { action?: ReactNode }).action);
+}
+
 function makeInvestmentTransaction(overrides: Partial<InvestmentTransaction> = {}): InvestmentTransaction {
   return {
     id: "inv-1",
@@ -551,6 +579,12 @@ describe("DashboardHomePage (Partner Dashboard, Story 5.5)", () => {
     expect(myProjectsRow && shareRowInputText(myProjectsRow)).toBe("70%");
     expect(mySubPartnerRow && shareRowInputText(mySubPartnerRow)).toBe("50%");
 
+    // Story 5.10: "My Projects" gets a "View Structure" action linking to
+    // this Partner's own scoped structure view; "My Sub-partners" does not
+    // (this story's Code Map -- that action slot stays unused there).
+    expect(myProjectsRow && shareRowActionHref(myProjectsRow)).toBe("/structure/project-a?partnerId=partner-1");
+    expect(mySubPartnerRow && shareRowActionHref(mySubPartnerRow)).toBeUndefined();
+
     expect(findAllComponents(result, EmptyState)).toHaveLength(0);
   });
 
@@ -688,6 +722,10 @@ describe("DashboardHomePage (Sub-partner Dashboard, Story 5.6)", () => {
     expect(shareRows).toHaveLength(1); // Only "My Projects" -- no "My Sub-partners" section for this role (Decisions #3)
     expect((shareRows[0]?.props as { name: string }).name).toBe("Project A");
     expect(shareRowInputText(shareRows[0]!)).toBe("40%");
+
+    // Story 5.10: links to this Sub-partner's own scoped structure view --
+    // `?subPartnerId=`, never `?partnerId=` (their own even-narrower slice).
+    expect(shareRowActionHref(shareRows[0]!)).toBe("/structure/project-a?subPartnerId=sub-1");
 
     expect(findAllComponents(result, EmptyState)).toHaveLength(0);
   });

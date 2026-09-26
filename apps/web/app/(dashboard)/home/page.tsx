@@ -1,4 +1,5 @@
-import { LayoutGrid, Users } from "lucide-react";
+import { LayoutGrid, Network, Users } from "lucide-react";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
   assembleOwnerAdminDashboard,
@@ -22,6 +23,7 @@ import {
 import {
   AdjustPersonCard,
   Amount,
+  Button,
   Card,
   EmptyState,
   PageHeader,
@@ -96,16 +98,43 @@ export function PartnerOverviewCard({ row }: { row: PartnerOverviewRow }) {
  * The Partner Dashboard's own "My Projects" / "My Sub-partners" row `input`
  * content (Story 5.5) -- a plain JSX-returning function, not a component,
  * so every list row still renders `ShareRow` (`packages/ui`) DIRECTLY,
- * rather than through an intermediate wrapper component -- `ShareRow`'s
- * `action` slot is never used here (unlike `shares/page.tsx`'s own
- * Edit/Sub-partners buttons; this page has no edit affordance, matching
- * this story's Boundaries: no new `authorize.ts` action).
+ * rather than through an intermediate wrapper component. `ShareRow`'s
+ * `action` slot was unused here through Story 5.9 (this page had no edit
+ * affordance, matching Story 5.5's own Boundaries: no new `authorize.ts`
+ * action) -- Story 5.10 is what finally needs it, see `viewStructureAction`
+ * below.
  */
 function sharePercentBadge(sharePercent: string) {
   return (
     <span className="justify-self-end font-mono text-[13.4px] tabular-nums">
       {formatSharePercent(sharePercent)}%
     </span>
+  );
+}
+
+/**
+ * Story 5.10 (Ownership & Money-Flow Structure Diagram): a Partner's/
+ * Sub-partner's own entry point into their own scoped structure view --
+ * `ShareRow`'s previously-unused `action` slot on the "My Projects" list
+ * only (never "My Sub-partners", per this story's Code Map). Links to the
+ * new top-level `/structure/[projectId]` page with `?partnerId=`/
+ * `?subPartnerId=` set to the actor's OWN id for that row -- never the
+ * unscoped Project-wide view (that query param presence is exactly what the
+ * route's `authorize()` self-access check keys off of). Mirrors
+ * `projects/page.tsx`'s identical `Button asChild variant="ghost"` wrapping
+ * a `Link`, `lucide-react` icon pattern -- labeled "Structure" (not "View
+ * Structure") to match that same action's label elsewhere and fit
+ * `ShareRow`'s narrow `action` column.
+ */
+function viewStructureAction(projectId: string, scope: { partnerId: string } | { subPartnerId: string }) {
+  const query = "partnerId" in scope ? `partnerId=${scope.partnerId}` : `subPartnerId=${scope.subPartnerId}`;
+  return (
+    <Button asChild variant="ghost">
+      <Link href={`/structure/${projectId}?${query}`} className="inline-flex items-center gap-1">
+        <Network size={12} />
+        Structure
+      </Link>
+    </Button>
   );
 }
 
@@ -199,7 +228,12 @@ async function PartnerDashboard({ actorUserId }: { actorUserId: string }) {
         ) : (
           <ShareList>
             {summary.myProjects.map((row) => (
-              <ShareRow key={row.partnerId} name={row.projectName} input={sharePercentBadge(row.sharePercent)} />
+              <ShareRow
+                key={row.partnerId}
+                name={row.projectName}
+                input={sharePercentBadge(row.sharePercent)}
+                action={viewStructureAction(row.projectId, { partnerId: row.partnerId })}
+              />
             ))}
           </ShareList>
         )}
@@ -316,7 +350,12 @@ async function SubPartnerDashboard({ actorUserId }: { actorUserId: string }) {
         ) : (
           <ShareList>
             {summary.myProjects.map((row) => (
-              <ShareRow key={row.subPartnerId} name={row.projectName} input={sharePercentBadge(row.sharePercent)} />
+              <ShareRow
+                key={row.subPartnerId}
+                name={row.projectName}
+                input={sharePercentBadge(row.sharePercent)}
+                action={viewStructureAction(row.projectId, { subPartnerId: row.subPartnerId })}
+              />
             ))}
           </ShareList>
         )}

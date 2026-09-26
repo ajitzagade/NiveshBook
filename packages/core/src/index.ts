@@ -46,3 +46,4 @@ export * from "./sub-partner-dashboard";
 export * from "./reports";
 export * from "./audit-log-port";
 export * from "./audit-history";
+export * from "./ownership-structure";

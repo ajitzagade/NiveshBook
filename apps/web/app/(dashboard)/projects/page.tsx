@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { FolderKanban, Plus, Pencil, Percent, Minus } from "lucide-react";
+import { FolderKanban, Plus, Pencil, Percent, Minus, Network } from "lucide-react";
 import type { Project } from "@niveshbook/types";
 import {
   Button,
@@ -127,6 +127,12 @@ export default function ProjectsPage() {
                         <Link href={`/projects/${project.id}/withdraw-money`} className="inline-flex items-center gap-1.5">
                           <Minus size={14} />
                           Withdraw Money
+                        </Link>
+                      </Button>
+                      <Button asChild variant="ghost">
+                        <Link href={`/structure/${project.id}`} className="inline-flex items-center gap-1.5">
+                          <Network size={14} />
+                          Structure
                         </Link>
                       </Button>
                     </div>

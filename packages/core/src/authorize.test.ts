@@ -1887,3 +1887,186 @@ describe("authorizeScope — reports:money_movement (Story 5.7, owner_admin-only
     expect(await authorizeScope("ghost", "reports:money_movement", deps)).toEqual({ allowed: false });
   });
 });
+
+/**
+ * Story 5.10: the Ownership & Money-Flow Structure Diagram's two new
+ * actions. `ownership_structure:view_project` (the unscoped, full-Project
+ * tree) is owner_admin-only, all-or-nothing for the role, mirroring
+ * `investment_transactions:list`'s identical shape (checked via
+ * `authorizeScope()` only, no self-access override of any kind). This is
+ * this story's single most security-sensitive property (task item #1): a
+ * `partner`/`sub_partner` requesting the unscoped view must always be
+ * denied, regardless of anything else about the request.
+ */
+describe("authorizeScope — ownership_structure:view_project (Story 5.10, owner_admin-only)", () => {
+  it("allows owner_admin", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("owner-1", "ownership_structure:view_project", deps)).toEqual({ allowed: true });
+  });
+
+  it("denies partner -- a Partner must never reach the unscoped, full-Project tree, no matter what", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("partner-1", "ownership_structure:view_project", deps)).toEqual({
+      allowed: false,
+    });
+  });
+
+  it("denies sub_partner", async () => {
+    const users = createFakeUserPort([makeUser({ id: "sub-1", role: "sub_partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("sub-1", "ownership_structure:view_project", deps)).toEqual({
+      allowed: false,
+    });
+  });
+
+  it("denies project_admin", async () => {
+    const users = createFakeUserPort([makeUser({ id: "pa-1", role: "project_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("pa-1", "ownership_structure:view_project", deps)).toEqual({
+      allowed: false,
+    });
+  });
+
+  it("denies a nonexistent actor", async () => {
+    const users = createFakeUserPort([]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("ghost", "ownership_structure:view_project", deps)).toEqual({
+      allowed: false,
+    });
+  });
+});
+
+/**
+ * `ownership_structure:view_partner` -- self-access via `SELF_ACCESS_ACTIONS`,
+ * mirroring `investment_transactions:view_audit`/`withdrawal_status:view`'s
+ * identical "resourceRef.ownerId is the target share's own userId" shape.
+ * The SAME action covers both a Partner viewing their own slice and a
+ * Sub-partner viewing their own even-narrower slice -- this gate itself
+ * doesn't distinguish the two (the route resolves which share's `userId`
+ * `resourceRef.ownerId` is, before calling `authorize()`), so these tests
+ * exercise it exactly like every other single-resource self-access action.
+ */
+describe("authorize — ownership_structure:view_partner (Story 5.10, self-access)", () => {
+  it("allows owner_admin regardless of resourceRef.ownerId", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "owner-1",
+      "ownership_structure:view_partner",
+      { ownerId: "someone-else" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("allows a Partner whose own userId matches resourceRef.ownerId (their own Partner-scoped slice)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-a", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "partner-user-a",
+      "ownership_structure:view_partner",
+      { ownerId: "partner-user-a" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("allows a Sub-partner whose own userId matches resourceRef.ownerId (their own even-narrower slice)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "sub-user-1", role: "sub_partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "sub-user-1",
+      "ownership_structure:view_partner",
+      { ownerId: "sub-user-1" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("matches userId case-insensitively (UUIDs, RFC 4122)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-a", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "PARTNER-USER-A",
+      "ownership_structure:view_partner",
+      { ownerId: "partner-user-a" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("denies a different Partner (Partner B) requesting Partner A's own resourceRef.ownerId -- the co-partner privacy boundary", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-b", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "partner-user-b",
+      "ownership_structure:view_partner",
+      { ownerId: "partner-user-a" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies a Sub-partner requesting a sibling Sub-partner's own resourceRef.ownerId", async () => {
+    const users = createFakeUserPort([makeUser({ id: "sub-user-1", role: "sub_partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "sub-user-1",
+      "ownership_structure:view_partner",
+      { ownerId: "sub-user-2" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies an unlinked share (resourceRef.ownerId: '') for a non-owner_admin caller", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-a", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize("partner-user-a", "ownership_structure:view_partner", { ownerId: "" }, deps);
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies project_admin targeting someone else's resourceRef.ownerId -- FR6's role exists but is granted nothing yet (parity with ownership_structure:view_project's identical case above)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "pa-1", role: "project_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "pa-1",
+      "ownership_structure:view_partner",
+      { ownerId: "someone-else" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies a nonexistent actor targeting someone else's resourceRef.ownerId (no self-access match, no role to fall back on)", async () => {
+    const users = createFakeUserPort([]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize("ghost", "ownership_structure:view_partner", { ownerId: "someone-else" }, deps);
+
+    expect(result).toEqual({ allowed: false });
+  });
+});

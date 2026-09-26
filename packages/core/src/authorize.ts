@@ -61,7 +61,9 @@ export type Action =
   | "reports:money_movement"
   | "reports:payment_mode"
   | "reports:adjustment"
-  | "reports:money_history";
+  | "reports:money_history"
+  | "ownership_structure:view_project"
+  | "ownership_structure:view_partner";
 
 /**
  * Role -> allowed-actions permission table. All actions here are
@@ -327,6 +329,29 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   "reports:payment_mode": new Set(["owner_admin", "partner", "sub_partner"]),
   "reports:adjustment": new Set(["owner_admin", "partner", "sub_partner"]),
   "reports:money_history": new Set(["owner_admin", "partner", "sub_partner"]),
+  // Story 5.10: the Ownership & Money-Flow Structure Diagram's two actions.
+  // `ownership_structure:view_project` (the full, unscoped Project tree
+  // showing every current Partner Share) is Owner/Admin-only, all-or-nothing
+  // for the role -- mirrors `investment_transactions:list`'s identical
+  // shape, checked via `authorizeScope()` only, no `SELF_ACCESS_ACTIONS`/
+  // `SCOPE_SELF_ACCESS_ACTIONS` entry. A `partner`/`sub_partner` actor never
+  // reaches this even via URL manipulation (this story's Decision #3's
+  // privacy boundary, absolute) -- their own entry point always requests the
+  // OTHER action below instead.
+  "ownership_structure:view_project": new Set(["owner_admin"]),
+  // `ownership_structure:view_partner` -- one Partner's OR one Sub-partner's
+  // own scoped slice (`?partnerId=`/`?subPartnerId=` at the route layer) --
+  // is Owner/Admin-unrestricted in this table (mirrors `subpartner_shares:list`'s
+  // Story 2.3/2.4 "owner_admin-only in the role table, opened one level
+  // further via a separate self-access mechanism" shape), with self-access
+  // admitted below via `SELF_ACCESS_ACTIONS`, mirroring
+  // `investment_transactions:view_audit`/`withdrawal_status:view`'s identical
+  // "resolve the target share's own userId, then authorize() against it"
+  // shape -- the SAME action name covers both a Partner viewing their own
+  // Partner-level slice and a Sub-partner viewing their own even-narrower
+  // slice, since only `resourceRef.ownerId` (resolved by the route from
+  // whichever share the query param names) differs between the two.
+  "ownership_structure:view_partner": new Set(["owner_admin"]),
 };
 
 /**
@@ -407,6 +432,18 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
  * Shares the same way beforehand). `withdrawal_transactions:edit`/`:cancel`
  * are deliberately NOT in this set -- editing/cancelling stays Owner/
  * Admin-only, gated by the role table above alone.
+ *
+ * Story 5.10 adds `ownership_structure:view_partner`: identical shape to
+ * `investment_transactions:view_audit`/`withdrawal_status:view` --
+ * `resourceRef.ownerId` is the target Partner's OR target Sub-partner's own
+ * `userId` (whichever the request's `partnerId`/`subPartnerId` query param
+ * names), resolved by the route from the Project's *current* Partner/
+ * Sub-partner Shares before calling `authorize()`. `ownership_structure:view_project`
+ * is deliberately NOT in this set -- the unscoped, full-Project view stays
+ * Owner/Admin-only, gated by the role table above alone, mirroring
+ * `investment_transactions:list`'s identical all-or-nothing shape (this
+ * story's Decision #3's absolute privacy boundary: no self-access override
+ * could ever admit a `partner`/`sub_partner` actor to it, by construction).
  */
 const SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set([
   "users:view",
@@ -418,6 +455,7 @@ const SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set([
   "withdrawal_transactions:create",
   "withdrawal_status:view",
   "withdrawal_transactions:view_audit",
+  "ownership_structure:view_partner",
 ]);
 
 /**
