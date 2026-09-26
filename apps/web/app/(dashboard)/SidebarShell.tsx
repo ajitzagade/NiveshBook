@@ -106,7 +106,12 @@ export function SidebarShell({ items }: { items: readonly SidebarNavItem[] }) {
 
   return (
     <div className="flex flex-col gap-3">
-      <ProjectSwitcher projects={projects} activeProjectId={activeProjectId} onSelect={selectProject} />
+      <ProjectSwitcher
+        projects={projects}
+        activeProjectId={activeProjectId}
+        onSelect={selectProject}
+        onSelectAllInvestments={() => router.push("/all-investments")}
+      />
       <SidebarNav items={resolvedItems} />
     </div>
   );

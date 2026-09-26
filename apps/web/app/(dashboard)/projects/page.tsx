@@ -104,32 +104,33 @@ export default function ProjectsPage() {
                   <Td className="font-semibold">{project.name}</Td>
                   <Td className="!text-left text-ink-soft">{project.description ?? "—"}</Td>
                   <Td className="!text-left">
+                    {/* Tones per DESIGN.md's canonical nav-badge map (founder feedback 2026-09-26). */}
                     <div className="flex gap-1.5">
-                      <Button asChild variant="ghost">
+                      <Button asChild variant="ghost" tone="accent">
                         <Link href={`/projects/${project.id}/edit`} className="inline-flex items-center gap-1.5">
                           <Pencil size={14} />
                           Edit
                         </Link>
                       </Button>
-                      <Button asChild variant="ghost">
+                      <Button asChild variant="ghost" tone="info">
                         <Link href={`/projects/${project.id}/shares`} className="inline-flex items-center gap-1.5">
                           <Percent size={14} />
                           Shares
                         </Link>
                       </Button>
-                      <Button asChild variant="ghost">
+                      <Button asChild variant="ghost" tone="success">
                         <Link href={`/projects/${project.id}/add-money`} className="inline-flex items-center gap-1.5">
                           <Plus size={14} />
                           Add Money
                         </Link>
                       </Button>
-                      <Button asChild variant="ghost">
+                      <Button asChild variant="ghost" tone="danger">
                         <Link href={`/projects/${project.id}/withdraw-money`} className="inline-flex items-center gap-1.5">
                           <Minus size={14} />
                           Withdraw Money
                         </Link>
                       </Button>
-                      <Button asChild variant="ghost">
+                      <Button asChild variant="ghost" tone="violet">
                         <Link href={`/structure/${project.id}`} className="inline-flex items-center gap-1.5">
                           <Network size={14} />
                           Structure

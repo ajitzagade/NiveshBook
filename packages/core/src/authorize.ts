@@ -50,6 +50,7 @@ export type Action =
   | "available_balances:spend"
   | "money_trail:view"
   | "money_history:list"
+  | "my_investments:list"
   | "adjust_next_time:view"
   | "adjustment_nettings:create"
   | "reports:project_money"
@@ -292,6 +293,17 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // Story 5.4-5.6's job, not this one's; granting the role here only means
   // the API itself is correctly scoped starting now.
   "money_history:list": new Set(["owner_admin", "partner", "sub_partner"]),
+  // Founder feedback 2026-09-26 (All Investments): the cross-project
+  // self-scoped "my investments" list -- mirrors `money_history:list`'s
+  // exact shape (that spec's Approach: "reusing the Money History
+  // cross-project pattern"): a plain multi-role Set, never a
+  // `SELF_ACCESS_ACTIONS`/`SCOPE_SELF_ACCESS_ACTIONS` override, since the
+  // scoping need is the same "what's actor's own scope across a whole list
+  // assembly spanning every Project" shape. The actual per-entry scoping
+  // (owner_admin sees all projects/parties; a partner/sub-partner sees only
+  // entries for their own current Shares) is computed downstream by
+  // `assembleMyInvestments()` (`my-investments.ts`), never by this table.
+  "my_investments:list": new Set(["owner_admin", "partner", "sub_partner"]),
   // Story 5.3 (FR33/FR34, Epic 5): the Adjust Next Time page's own view
   // action -- mirrors `money_history:list`'s exact shape (spec-5-3's
   // Decisions #3): a plain multi-role Set, not a single-owner_admin-only Set

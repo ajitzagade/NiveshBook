@@ -14,8 +14,8 @@ import type {
   WithdrawalAdjustment,
   WithdrawalTransaction,
 } from "@niveshbook/types";
-import { AdjustPersonCard, EmptyState, ShareRow, StatCard } from "@niveshbook/ui";
-import DashboardHomePage, { formatSharePercent, PartnerOverviewCard } from "./page";
+import { Card, EmptyState, StatCard } from "@niveshbook/ui";
+import DashboardHomePage, { formatSharePercent, PartnerOverviewCard, DashboardGridCard } from "./page";
 
 const investmentListAll = vi.fn();
 const withdrawalListAll = vi.fn();
@@ -134,8 +134,51 @@ function containsComponent(node: ReactNode, type: unknown): boolean {
   return findAllComponents(node, type).length > 0;
 }
 
+/** Flattens every plain-string descendant of a JSX tree into one string -- for asserting rendered text content without a DOM render (founder feedback 2026-09-26: `PartnerOverviewCard`'s lines are plain JSX now, not `AdjustPersonCard` props). */
+function collectText(node: ReactNode): string {
+  if (node === null || node === undefined || typeof node === "boolean") {
+    return "";
+  }
+  if (typeof node === "string" || typeof node === "number") {
+    return String(node);
+  }
+  if (Array.isArray(node)) {
+    return node.map(collectText).join("");
+  }
+  const element = node as ReactElement<{ children?: ReactNode }>;
+  return collectText(element.props?.children);
+}
+
 /**
- * Flattens a `ShareRow`'s own `input` prop (a small JSX tree, e.g.
+ * Every element (host or component) whose `className` contains the given
+ * substring -- for asserting the dashboard sections' own 2-column/1-column
+ * grid wrapper classes (founder feedback 2026-09-26, Decision 8).
+ */
+function collectByClassName(node: ReactNode, substring: string, results: ReactElement[]): void {
+  if (node === null || node === undefined || typeof node !== "object") {
+    return;
+  }
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      collectByClassName(child, substring, results);
+    }
+    return;
+  }
+  const element = node as ReactElement<{ className?: string; children?: ReactNode }>;
+  if (typeof element.props?.className === "string" && element.props.className.includes(substring)) {
+    results.push(element);
+  }
+  collectByClassName(element.props?.children, substring, results);
+}
+
+function findAllByClassName(node: ReactNode, substring: string): ReactElement[] {
+  const results: ReactElement[] = [];
+  collectByClassName(node, substring, results);
+  return results;
+}
+
+/**
+ * Flattens a `DashboardGridCard`'s own `input` prop (a small JSX tree, e.g.
  * `<span>{formatSharePercent(...)}%</span>`) down to its plain rendered
  * text -- review finding (2026-09-25): every prior Partner-dashboard test
  * asserted on `ShareRow`'s `name` prop but never on `input`, so "My Share
@@ -149,7 +192,7 @@ function shareRowInputText(row: ReactElement): string {
 }
 
 /**
- * Finds the first `href` anywhere inside a `ShareRow`'s `action` subtree
+ * Finds the first `href` anywhere inside a `DashboardGridCard`'s `action` subtree
  * (Story 5.10's "View Structure" `Link`, nested inside a `Button asChild`) --
  * mirrors `findAllComponents`'s own recursive-tree-walking approach, but
  * hunting for a prop rather than a component type.
@@ -321,26 +364,38 @@ beforeEach(() => {
 describe("DashboardHomePage (Owner/Admin Dashboard, Story 5.4, unchanged by Story 5.5)", () => {
 
   /**
-   * Review finding (2026-09-25): `PartnerOverviewCard` was previously only
-   * ever asserted on as an opaque wrapper (matched by reference, never
-   * looked inside) -- nothing proved it actually renders `AdjustPersonCard`
-   * (`packages/ui`) rather than a hand-rolled duplicate (AGENTS.md's UI
-   * reuse rule). Calling the component function directly and walking ITS
-   * OWN returned tree (rather than `DashboardHomePage()`'s tree, which never
-   * expands `PartnerOverviewCard`'s own internals since it's an unexecuted
-   * element there) proves the real child component is used, with the
-   * row's own data threaded through to the right props.
+   * Review finding (2026-09-25), reshaped by founder feedback 2026-09-26
+   * (Decision 8): `PartnerOverviewCard` now renders one elevated `Card`
+   * (`packages/ui` -- the new hover-lift/shadow capability), not
+   * `AdjustPersonCard`. Calling the component function directly and walking
+   * ITS OWN returned tree (rather than `DashboardHomePage()`'s tree, which
+   * never expands `PartnerOverviewCard`'s own internals since it's an
+   * unexecuted element there) proves the real `packages/ui` `Card` is used
+   * with `elevated` set, with the row's own data threaded through.
    */
-  it("PartnerOverviewCard genuinely renders AdjustPersonCard (packages/ui), not a hand-rolled duplicate", () => {
+  it("PartnerOverviewCard genuinely renders an elevated Card (packages/ui), not a hand-rolled duplicate", () => {
     const row = makePartnerOverviewRow({ name: "Deepa", projectName: "Project Z" });
 
     const rendered = PartnerOverviewCard({ row });
 
-    const cards = findAllComponents(rendered, AdjustPersonCard);
+    const cards = findAllComponents(rendered, Card);
     expect(cards).toHaveLength(1);
-    const props = cards[0]?.props as { name: string; lines: Array<{ label: string }> };
-    expect(props.name).toBe("Deepa — Project Z");
-    expect(props.lines.map((line) => line.label)).toEqual(["Invested", "Withdrawn", "Available Balance"]);
+    expect((cards[0]?.props as { elevated?: boolean }).elevated).toBe(true);
+    const text = collectText(rendered);
+    expect(text).toContain("Deepa — Project Z");
+    for (const label of ["Invested", "Withdrawn", "Available Balance", "Net Position"]) {
+      expect(text).toContain(label);
+    }
+  });
+
+  /** Founder feedback 2026-09-26 (Decision 8): the "My Projects"/"My Sub-partners" grid card is the same elevated `packages/ui` `Card`, name/input/action slots threaded through. */
+  it("DashboardGridCard genuinely renders an elevated Card (packages/ui), not a hand-rolled duplicate", () => {
+    const rendered = DashboardGridCard({ name: "Project Z", input: <span>70%</span> });
+
+    const cards = findAllComponents(rendered, Card);
+    expect(cards).toHaveLength(1);
+    expect((cards[0]?.props as { elevated?: boolean }).elevated).toBe(true);
+    expect(collectText(rendered)).toContain("Project Z");
   });
 
   it("empty case: renders all 4 stat cards at '0' and EmptyState (not a crash) when there are zero current Partner Shares", async () => {
@@ -453,6 +508,12 @@ describe("DashboardHomePage (Owner/Admin Dashboard, Story 5.4, unchanged by Stor
     const overviewCards = findAllComponents(result, PartnerOverviewCard);
     expect(overviewCards).toHaveLength(2);
 
+    // Decision 8 (founder feedback 2026-09-26): the section lays its cards
+    // out as a 2-column grid that collapses to 1 column below 860px.
+    const grids = findAllByClassName(result, "grid-cols-2 gap-4");
+    expect(grids).toHaveLength(1);
+    expect((grids[0]?.props as { className: string }).className).toContain("max-[860px]:grid-cols-1");
+
     const rows = overviewCards.map(
       (card) => (card.props as { row: { partnerId: string; projectName: string; invested: string; withdrawn: string; availableBalance: string } }).row,
     );
@@ -496,7 +557,7 @@ describe("DashboardHomePage (Partner Dashboard, Story 5.5)", () => {
     }
 
     expect(findAllComponents(result, EmptyState)).toHaveLength(2);
-    expect(findAllComponents(result, ShareRow)).toHaveLength(0);
+    expect(findAllComponents(result, DashboardGridCard)).toHaveLength(0);
   });
 
   it("populated case: one linked Partner Share with activity -- correct numbers, scoped to this actor only", async () => {
@@ -563,14 +624,21 @@ describe("DashboardHomePage (Partner Dashboard, Story 5.5)", () => {
     // Extra Taken is deliberately not one of the rendered stat cards (this story's Implementation Notes).
     expect(Object.keys(byLabel)).not.toContain("Extra Taken");
 
-    const shareRows = findAllComponents(result, ShareRow);
-    expect(shareRows).toHaveLength(2); // 1 "My Projects" row + 1 "My Sub-partners" row
+    const shareRows = findAllComponents(result, DashboardGridCard);
+    expect(shareRows).toHaveLength(2); // 1 "My Projects" card + 1 "My Sub-partners" card
+    // Decision 8: both populated sections render their own 2-column grid
+    // (1-col <860px).
+    const grids = findAllByClassName(result, "grid-cols-2 gap-4");
+    expect(grids).toHaveLength(2);
+    for (const grid of grids) {
+      expect((grid.props as { className: string }).className).toContain("max-[860px]:grid-cols-1");
+    }
     const names = shareRows.map((row) => (row.props as { name: string }).name);
     expect(names).toContain("Project A");
     expect(names).toContain("Bala — Project A");
 
     // "My Share %" (one of the frozen AC's 9 named data points): proves the
-    // ACTUAL rendered badge text, not just that a ShareRow exists -- both
+    // ACTUAL rendered badge text, not just that a grid card exists -- both
     // fixtures above used Postgres's own `numeric(7,4)` round-trip shape
     // ("70.0000"/"50.0000"), so this locks in `formatSharePercent()`'s
     // trailing-zero trim end-to-end, not just at the unit level.
@@ -604,7 +672,7 @@ describe("DashboardHomePage (Partner Dashboard, Story 5.5)", () => {
 
     const result = await DashboardHomePage();
 
-    const shareRows = findAllComponents(result, ShareRow);
+    const shareRows = findAllComponents(result, DashboardGridCard);
     const projectRowNames = shareRows.map((row) => (row.props as { name: string }).name);
     expect(projectRowNames).toEqual(expect.arrayContaining(["Project A", "Project B"]));
 
@@ -647,7 +715,7 @@ describe("DashboardHomePage (Sub-partner Dashboard, Story 5.6)", () => {
     }
 
     expect(findAllComponents(result, EmptyState)).toHaveLength(1);
-    expect(findAllComponents(result, ShareRow)).toHaveLength(0);
+    expect(findAllComponents(result, DashboardGridCard)).toHaveLength(0);
   });
 
   it("populated case: one linked Sub-partner Share with activity -- correct numbers, scoped to this actor only, no My Sub-partners section", async () => {
@@ -718,8 +786,12 @@ describe("DashboardHomePage (Sub-partner Dashboard, Story 5.6)", () => {
     expect(byLabel["Withdrawal Keep for Later"]).toBe("8000");
     expect(Object.keys(byLabel)).not.toContain("Extra Taken");
 
-    const shareRows = findAllComponents(result, ShareRow);
+    const shareRows = findAllComponents(result, DashboardGridCard);
     expect(shareRows).toHaveLength(1); // Only "My Projects" -- no "My Sub-partners" section for this role (Decisions #3)
+    // Decision 8: the one populated section renders a 2-column grid (1-col <860px).
+    const grids = findAllByClassName(result, "grid-cols-2 gap-4");
+    expect(grids).toHaveLength(1);
+    expect((grids[0]?.props as { className: string }).className).toContain("max-[860px]:grid-cols-1");
     expect((shareRows[0]?.props as { name: string }).name).toBe("Project A");
     expect(shareRowInputText(shareRows[0]!)).toBe("40%");
 
@@ -766,7 +838,7 @@ describe("DashboardHomePage (Sub-partner Dashboard, Story 5.6)", () => {
 
     const result = await DashboardHomePage();
 
-    const shareRows = findAllComponents(result, ShareRow);
+    const shareRows = findAllComponents(result, DashboardGridCard);
     const projectRowNames = shareRows.map((row) => (row.props as { name: string }).name);
     expect(projectRowNames).toEqual(expect.arrayContaining(["Project A", "Project B"]));
 

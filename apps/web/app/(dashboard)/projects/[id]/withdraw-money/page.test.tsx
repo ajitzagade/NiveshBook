@@ -262,6 +262,15 @@ describe("WithdrawMoneyPage (Story 4.1)", () => {
     expect(screen.getByText("B")).toBeInTheDocument();
     expect(screen.getByText("↳ Sub1")).toBeInTheDocument();
     expect(screen.getByText("↳ Sub2")).toBeInTheDocument();
+
+    // Founder feedback 2026-09-26: sub-partner rows are inset one hierarchy
+    // level (24px -- `ShareRow`'s `isSub`, Tailwind `ml-6`) while partner
+    // rows are not; the indent, not just the caller-baked "↳" glyph, is
+    // what carries the partner -> sub-partner hierarchy.
+    const partnerShareRow = screen.getByText("A").closest("div") as HTMLElement;
+    const subShareRow = screen.getByText("↳ Sub1").closest("div") as HTMLElement;
+    expect(subShareRow.className).toContain("ml-6");
+    expect(partnerShareRow.className).not.toContain("ml-6");
     // A's own retained figure (₹1,25,000) is called out distinctly from their
     // pooled canTake total (₹2,50,000) -- never the same number reused for both.
     expect(findParagraphContaining("Own:")).toHaveTextContent("₹1,25,000");

@@ -774,7 +774,7 @@ export default function AddMoneyPage() {
             title="No funding requirements yet"
             description="Create the first one to get started -- an amount and a date is all it takes."
             action={
-              <Button variant="ghost" onClick={openAddDialog} icon={<Plus size={14} />}>
+              <Button variant="ghost" tone="success" onClick={openAddDialog} icon={<Plus size={14} />}>
                 New Requirement
               </Button>
             }
@@ -886,6 +886,7 @@ export default function AddMoneyPage() {
                                       <div className="ml-1 mt-1.5">
                                         <Button
                                           variant="ghost"
+                                          tone="success"
                                           onClick={() =>
                                             openRecordPaymentDialog(
                                               requirement.id,
@@ -920,6 +921,7 @@ export default function AddMoneyPage() {
                                           {partner.subPartners.map((sub) => (
                                             <div key={sub.subPartnerId}>
                                               <ShareRow
+                                                isSub
                                                 name={`↳ ${sub.name}`}
                                                 input={
                                                   <span className="justify-self-end font-mono text-[12.6px] tabular-nums text-ink-soft">
@@ -945,6 +947,7 @@ export default function AddMoneyPage() {
                                               <div className="ml-1 mt-1.5">
                                                 <Button
                                                   variant="ghost"
+                                                  tone="success"
                                                   onClick={() =>
                                                     openRecordPaymentDialog(
                                                       requirement.id,
@@ -1583,12 +1586,12 @@ function RecordedPayments({
             </StatusChip>
           ) : null}
           {transaction.status === "active" ? (
-            <Button variant="ghost" onClick={() => onEdit(transaction)} icon={<Pencil size={12} />}>
+            <Button variant="ghost" tone="accent" onClick={() => onEdit(transaction)} icon={<Pencil size={12} />}>
               Edit
             </Button>
           ) : null}
           {transaction.status === "active" ? (
-            <Button variant="ghost" onClick={() => onCancel(transaction)} icon={<Ban size={12} />}>
+            <Button variant="ghost" tone="danger" onClick={() => onCancel(transaction)} icon={<Ban size={12} />}>
               Cancel
             </Button>
           ) : null}

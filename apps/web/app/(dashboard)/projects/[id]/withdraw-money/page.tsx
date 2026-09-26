@@ -1078,6 +1078,7 @@ export default function WithdrawMoneyPage() {
                   <div className="ml-1 mt-1.5">
                     <Button
                       variant="ghost"
+                      tone="danger"
                       onClick={() => openRecordWithdrawalDialog("partner", partner.partnerId, partner.name)}
                       icon={<Minus size={14} />}
                     >
@@ -1100,6 +1101,7 @@ export default function WithdrawMoneyPage() {
                         return (
                         <div key={sub.subPartnerId}>
                           <ShareRow
+                            isSub
                             name={`↳ ${sub.name}`}
                             input={
                               <span className="justify-self-end font-mono text-[12.6px] tabular-nums text-ink-soft">
@@ -1115,6 +1117,7 @@ export default function WithdrawMoneyPage() {
                           <div className="ml-1 mt-1.5">
                             <Button
                               variant="ghost"
+                              tone="danger"
                               onClick={() =>
                                 openRecordWithdrawalDialog("sub_partner", sub.subPartnerId, sub.name)
                               }
@@ -1343,7 +1346,7 @@ export default function WithdrawMoneyPage() {
           </div>
 
           <div className="mt-3">
-            <Button type="button" variant="ghost" onClick={addAllocationLeg} icon={<Plus size={14} />}>
+            <Button type="button" variant="ghost" tone="accent" onClick={addAllocationLeg} icon={<Plus size={14} />}>
               Add destination
             </Button>
           </div>
@@ -1799,12 +1802,12 @@ function RecordedWithdrawals({
             </StatusChip>
           ) : null}
           {transaction.status === "active" ? (
-            <Button variant="ghost" onClick={() => onEdit(transaction)} icon={<Pencil size={12} />}>
+            <Button variant="ghost" tone="accent" onClick={() => onEdit(transaction)} icon={<Pencil size={12} />}>
               Edit
             </Button>
           ) : null}
           {transaction.status === "active" ? (
-            <Button variant="ghost" onClick={() => onCancel(transaction)} icon={<Ban size={12} />}>
+            <Button variant="ghost" tone="danger" onClick={() => onCancel(transaction)} icon={<Ban size={12} />}>
               Cancel
             </Button>
           ) : null}

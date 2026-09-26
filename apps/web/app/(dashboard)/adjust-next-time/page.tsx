@@ -278,6 +278,11 @@ export default function AdjustNextTimePage() {
               state.investmentAdjustments.map((entry) => (
                 <AdjustPersonCard
                   key={entry.id}
+                  // Founder feedback 2026-09-26: sub-partner cards sit one
+                  // hierarchy level (24px) right of partner cards -- wired
+                  // from the row's own `partyType`, never inferred from the
+                  // display name.
+                  isSub={entry.partyType === "sub_partner"}
                   name={`${entry.personName} — ${entry.projectName}`}
                   lines={[
                     { label: "Should Pay", value: <Amount value={entry.shouldPay} size="sm" /> },
@@ -293,6 +298,7 @@ export default function AdjustNextTimePage() {
                         {state.canNet ? (
                           <Button
                             variant="ghost"
+                            tone="accent"
                             onClick={() => openNettingDialog(entry)}
                             icon={<Scale size={12} />}
                           >
@@ -319,6 +325,7 @@ export default function AdjustNextTimePage() {
               state.withdrawalAdjustments.map((entry) => (
                 <AdjustPersonCard
                   key={entry.id}
+                  isSub={entry.partyType === "sub_partner"}
                   name={`${entry.personName} — ${entry.projectName}`}
                   lines={[
                     { label: "Can Take", value: <Amount value={entry.canTake} size="sm" /> },

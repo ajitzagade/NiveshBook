@@ -2,18 +2,34 @@ import { Slot } from "@radix-ui/react-slot";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { cn } from "../lib/cn";
 
+/**
+ * Per-action tint for ghost buttons (founder feedback 2026-09-26) --
+ * DESIGN.md's canonical nav-badge map: Add Money -> "success", Withdraw ->
+ * "danger", Shares -> "info", Edit/default -> "accent", Structure/Available
+ * Balance -> "violet"; destructive Cancel -> "danger". Omit the prop for
+ * neutral actions (Cancel/Back/Close), which keep the plain ghost look.
+ */
+export type ButtonTone = "accent" | "success" | "danger" | "info" | "violet";
+
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: "primary" | "ghost";
+  /**
+   * Appends `nb-btn-tone-*` (tokens.css). The tone classes are scoped to
+   * `.nb-btn-ghost`, so passing one alongside `variant="primary"` is a
+   * no-op by construction -- primary buttons never change appearance.
+   */
+  tone?: ButtonTone;
   asChild?: boolean;
   /** Leading icon (lucide-react, 14px) -- see DESIGN.md.Components' `button` icon convention. */
   icon?: ReactNode;
 }
 
-export function Button({ variant = "primary", asChild, icon, className, children, ...props }: ButtonProps) {
+export function Button({ variant = "primary", tone, asChild, icon, className, children, ...props }: ButtonProps) {
   const Comp = asChild ? Slot : "button";
   const buttonClassName = cn(
     "nb-btn",
     variant === "primary" ? "nb-btn-primary" : "nb-btn-ghost",
+    tone ? `nb-btn-tone-${tone}` : undefined,
     icon ? "inline-flex items-center gap-1.5" : undefined,
     className,
   );

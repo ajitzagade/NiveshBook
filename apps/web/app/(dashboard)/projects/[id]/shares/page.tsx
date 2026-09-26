@@ -456,7 +456,7 @@ export default function PartnerSharesPage() {
             title="No Partner Shares yet"
             description="Add the first Partner and their Share % to start tracking this Project's ownership."
             action={
-              <Button variant="ghost" onClick={openAddDialog} icon={<UserPlus size={14} />}>
+              <Button variant="ghost" tone="info" onClick={openAddDialog} icon={<UserPlus size={14} />}>
                 Add Partner
               </Button>
             }
@@ -478,7 +478,7 @@ export default function PartnerSharesPage() {
                     }
                     action={
                       <div className="flex gap-1.5">
-                        <Button variant="ghost" onClick={() => openEditDialog(share)} icon={<Pencil size={14} />}>
+                        <Button variant="ghost" tone="accent" onClick={() => openEditDialog(share)} icon={<Pencil size={14} />}>
                           Edit
                         </Button>
                         <Button
@@ -498,7 +498,7 @@ export default function PartnerSharesPage() {
                   />
 
                   {expanded ? (
-                    <div className="ml-5 mt-2 flex flex-col gap-2.5 border-l border-border pl-3">
+                    <div className="ml-3 mt-2 flex flex-col gap-2.5 border-l border-border pl-[11px]">
                       {!subState || subState.status === "loading" ? (
                         <p className="text-[12.6px] text-ink-soft">Loading Sub-partners…</p>
                       ) : subState.status === "error" ? (
@@ -525,6 +525,7 @@ export default function PartnerSharesPage() {
                                   action={
                                     <Button
                                       variant="ghost"
+                                      tone="accent"
                                       onClick={() => openEditSubDialog(share.partnerId, subShare)}
                                       icon={<Pencil size={14} />}
                                     >
@@ -547,6 +548,7 @@ export default function PartnerSharesPage() {
                           <div>
                             <Button
                               variant="ghost"
+                              tone="info"
                               onClick={() => openAddSubDialog(share.partnerId)}
                               icon={<UserPlus size={14} />}
                             >

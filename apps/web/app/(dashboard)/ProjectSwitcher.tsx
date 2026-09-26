@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, FolderKanban } from "lucide-react";
+import { ChevronDown, FolderKanban, LayoutGrid } from "lucide-react";
 import type { Project } from "@niveshbook/types";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@niveshbook/ui";
 
@@ -26,10 +26,13 @@ export function ProjectSwitcher({
   projects,
   activeProjectId,
   onSelect,
+  onSelectAllInvestments,
 }: {
   projects: readonly Project[];
   activeProjectId: string | null;
   onSelect: (projectId: string) => void;
+  /** Founder feedback 2026-09-26: navigates to the cross-project `/all-investments` view -- `SidebarShell` owns the navigation, keeping this component presentation-only. */
+  onSelectAllInvestments: () => void;
 }) {
   const active = activeProjectId ? projects.find((project) => project.id === activeProjectId) : null;
   const label = !activeProjectId ? "Select a Project" : active ? active.name : "Loading…";
@@ -47,6 +50,19 @@ export function ProjectSwitcher({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-[204px]">
+        {/*
+          Founder feedback 2026-09-26: the cross-project "All Investments"
+          entry -- always present (it's also reachable by direct URL),
+          visually separated from the per-Project items below by a bottom
+          border, mirroring the dropdown's own border token.
+        */}
+        <DropdownMenuItem
+          onSelect={onSelectAllInvestments}
+          className="mb-1 flex items-center gap-2 border-b border-border pb-2"
+        >
+          <LayoutGrid size={14} className="shrink-0 text-ink-soft" />
+          All Investments
+        </DropdownMenuItem>
         {projects.length === 0 ? (
           <p className="px-2.5 py-1.5 text-[12.6px] text-ink-faint">No Projects yet.</p>
         ) : (

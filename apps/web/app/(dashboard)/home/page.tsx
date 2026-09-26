@@ -20,15 +20,13 @@ import {
   createWithdrawalAdjustmentPort,
   createWithdrawalTransactionPort,
 } from "@niveshbook/db";
+import type { ReactNode } from "react";
 import {
-  AdjustPersonCard,
   Amount,
   Button,
   Card,
   EmptyState,
   PageHeader,
-  ShareList,
-  ShareRow,
   StatCard,
 } from "@niveshbook/ui";
 import { requireSession } from "@/lib/session-guard";
@@ -74,35 +72,77 @@ export const dynamic = "force-dynamic";
  * that module's own pure-function tests -- this page only ever reads the
  * already-computed `row.netPosition`, never recomputes it.
  */
-/** Exported for `page.test.tsx`'s own tree-walking assertions (mirrors `app/page.test.tsx`'s identical "find the child component, assert its props" pattern) -- not otherwise used outside this module. */
+/**
+ * The dashboard card grid every list-style section renders into (founder
+ * feedback 2026-09-26, Decision 8): two cards per row, one column below
+ * 860px -- matching `layout.tsx`'s single-column breakpoint, so the grid
+ * collapses exactly when the shell does.
+ */
+const DASHBOARD_CARD_GRID = "grid grid-cols-2 gap-4 max-[860px]:grid-cols-1";
+
+/**
+ * Exported for `page.test.tsx`'s own tree-walking assertions (mirrors
+ * `app/page.test.tsx`'s identical "find the child component, assert its
+ * props" pattern) -- not otherwise used outside this module.
+ *
+ * Founder feedback 2026-09-26 (Decision 8): one elevated `Card`
+ * (`packages/ui` -- soft shadow, hover lift/shadow transition) per current
+ * Partner Share, laid out by the section's 2-column grid -- previously an
+ * `AdjustPersonCard` list. Same data, same labels, new shell.
+ */
 export function PartnerOverviewCard({ row }: { row: PartnerOverviewRow }) {
   return (
-    <AdjustPersonCard
-      name={`${row.name} — ${row.projectName}`}
-      lines={[
-        { label: "Invested", value: <Amount value={row.invested} size="sm" /> },
-        { label: "Withdrawn", value: <Amount value={row.withdrawn} size="sm" /> },
-        { label: "Available Balance", value: <Amount value={row.availableBalance} size="sm" /> },
-      ]}
-      resolution={
-        <>
-          <span className="text-ink-soft">Net Position</span>
-          <Amount value={row.netPosition} size="sm" />
-        </>
-      }
-    />
+    <Card elevated>
+      <div className="mb-1.5 text-[13.8px] font-bold">{`${row.name} — ${row.projectName}`}</div>
+      {[
+        { label: "Invested", value: row.invested },
+        { label: "Withdrawn", value: row.withdrawn },
+        { label: "Available Balance", value: row.availableBalance },
+      ].map((line) => (
+        <div key={line.label} className="flex justify-between py-0.5 text-[12.8px] text-ink-soft">
+          <span>{line.label}</span>
+          <Amount value={line.value} size="sm" />
+        </div>
+      ))}
+      <div className="mt-2 flex items-center justify-between border-t border-border pt-2 text-[12.8px]">
+        <span className="text-ink-soft">Net Position</span>
+        <Amount value={row.netPosition} size="sm" />
+      </div>
+    </Card>
   );
 }
 
 /**
- * The Partner Dashboard's own "My Projects" / "My Sub-partners" row `input`
- * content (Story 5.5) -- a plain JSX-returning function, not a component,
- * so every list row still renders `ShareRow` (`packages/ui`) DIRECTLY,
- * rather than through an intermediate wrapper component. `ShareRow`'s
- * `action` slot was unused here through Story 5.9 (this page had no edit
- * affordance, matching Story 5.5's own Boundaries: no new `authorize.ts`
- * action) -- Story 5.10 is what finally needs it, see `viewStructureAction`
- * below.
+ * One "My Projects"/"My Sub-partners" grid card (founder feedback
+ * 2026-09-26, Decision 8) -- previously a `ShareRow` list row; same
+ * `name`/`input`/`action` slot shape kept deliberately, now rendered as an
+ * elevated `Card` (`packages/ui`) inside the section's 2-column grid.
+ * Exported for `page.test.tsx`'s tree-walking assertions, mirroring
+ * `PartnerOverviewCard`'s identical precedent.
+ */
+export function DashboardGridCard({
+  name,
+  input,
+  action,
+}: {
+  name: string;
+  input: ReactNode;
+  action?: ReactNode;
+}) {
+  return (
+    <Card elevated className="flex items-center gap-2.5">
+      <span className="min-w-0 flex-1 truncate text-[13.4px] font-semibold">{name}</span>
+      {input}
+      {action}
+    </Card>
+  );
+}
+
+/**
+ * The Partner Dashboard's own "My Projects" / "My Sub-partners" card `input`
+ * content (Story 5.5) -- a plain JSX-returning function, not a component.
+ * Rendered into `DashboardGridCard`'s `input` slot (founder feedback
+ * 2026-09-26 -- previously `ShareRow`'s identical slot).
  */
 function sharePercentBadge(sharePercent: string) {
   return (
@@ -217,48 +257,52 @@ async function PartnerDashboard({ actorUserId }: { actorUserId: string }) {
         <StatCard label="Withdrawal Keep for Later" value={summary.totalKeepForLater} format="money" />
       </div>
 
-      <Card className="mb-5">
+      <section className="mb-5">
         <h2 className="mb-3.5 text-[15px] font-bold">My Projects</h2>
         {summary.myProjects.length === 0 ? (
-          <EmptyState
-            icon={<LayoutGrid size={22} />}
-            title="Not linked to any Project yet"
-            description="Once an Owner/Admin links you to a Project's Partner Share, it'll show up here."
-          />
+          <Card>
+            <EmptyState
+              icon={<LayoutGrid size={22} />}
+              title="Not linked to any Project yet"
+              description="Once an Owner/Admin links you to a Project's Partner Share, it'll show up here."
+            />
+          </Card>
         ) : (
-          <ShareList>
+          <div className={DASHBOARD_CARD_GRID}>
             {summary.myProjects.map((row) => (
-              <ShareRow
+              <DashboardGridCard
                 key={row.partnerId}
                 name={row.projectName}
                 input={sharePercentBadge(row.sharePercent)}
                 action={viewStructureAction(row.projectId, { partnerId: row.partnerId })}
               />
             ))}
-          </ShareList>
+          </div>
         )}
-      </Card>
+      </section>
 
-      <Card>
+      <section>
         <h2 className="mb-3.5 text-[15px] font-bold">My Sub-partners</h2>
         {summary.mySubPartners.length === 0 ? (
-          <EmptyState
-            icon={<Users size={22} />}
-            title="No Sub-partners yet"
-            description="Sub-partners you add under your own Partner Share will show up here."
-          />
+          <Card>
+            <EmptyState
+              icon={<Users size={22} />}
+              title="No Sub-partners yet"
+              description="Sub-partners you add under your own Partner Share will show up here."
+            />
+          </Card>
         ) : (
-          <ShareList>
+          <div className={DASHBOARD_CARD_GRID}>
             {summary.mySubPartners.map((row) => (
-              <ShareRow
+              <DashboardGridCard
                 key={row.subPartnerId}
                 name={`${row.name} — ${row.projectName}`}
                 input={sharePercentBadge(row.sharePercent)}
               />
             ))}
-          </ShareList>
+          </div>
         )}
-      </Card>
+      </section>
     </div>
   );
 }
@@ -339,27 +383,29 @@ async function SubPartnerDashboard({ actorUserId }: { actorUserId: string }) {
         <StatCard label="Withdrawal Keep for Later" value={summary.totalKeepForLater} format="money" />
       </div>
 
-      <Card>
+      <section>
         <h2 className="mb-3.5 text-[15px] font-bold">My Projects</h2>
         {summary.myProjects.length === 0 ? (
-          <EmptyState
-            icon={<LayoutGrid size={22} />}
-            title="Not linked to any Project yet"
-            description="Once a Partner adds you as a Sub-partner on a Project, it'll show up here."
-          />
+          <Card>
+            <EmptyState
+              icon={<LayoutGrid size={22} />}
+              title="Not linked to any Project yet"
+              description="Once a Partner adds you as a Sub-partner on a Project, it'll show up here."
+            />
+          </Card>
         ) : (
-          <ShareList>
+          <div className={DASHBOARD_CARD_GRID}>
             {summary.myProjects.map((row) => (
-              <ShareRow
+              <DashboardGridCard
                 key={row.subPartnerId}
                 name={row.projectName}
                 input={sharePercentBadge(row.sharePercent)}
                 action={viewStructureAction(row.projectId, { subPartnerId: row.subPartnerId })}
               />
             ))}
-          </ShareList>
+          </div>
         )}
-      </Card>
+      </section>
     </div>
   );
 }
@@ -385,8 +431,9 @@ async function SubPartnerDashboard({ actorUserId }: { actorUserId: string }) {
  * then renders: a 4-up `StatCard` row (Total Project Money, Total Added,
  * Total Withdrawn, Available Balance -- `WalletHero` is never used here,
  * this story's Decisions #5) followed by the partner-wise overview as one
- * `AdjustPersonCard` per current Partner Share, or `EmptyState` when there
- * are none.
+ * elevated `PartnerOverviewCard` per current Partner Share in the 2-column
+ * dashboard card grid (founder feedback 2026-09-26, Decision 8), or
+ * `EmptyState` when there are none.
  *
  * Role branching (Story 5.5, widened by Story 5.6): resolves the actor's
  * own role via `requireSession()` + `createUserPort().findUserById()` --
@@ -478,18 +525,24 @@ export default async function DashboardHomePage() {
         <StatCard label="Available Balance" value={summary.totalAvailableBalance} format="money" tone="success" />
       </div>
 
-      <Card>
+      <section>
         <h2 className="mb-3.5 text-[15px] font-bold">Partner-wise Overview</h2>
         {summary.partnerOverview.length === 0 ? (
-          <EmptyState
-            icon={<Users size={22} />}
-            title="No Partner Shares yet"
-            description="Once a Project has current Partner Shares, each Partner's Invested, Withdrawn, and Available Balance totals will show up here."
-          />
+          <Card>
+            <EmptyState
+              icon={<Users size={22} />}
+              title="No Partner Shares yet"
+              description="Once a Project has current Partner Shares, each Partner's Invested, Withdrawn, and Available Balance totals will show up here."
+            />
+          </Card>
         ) : (
-          summary.partnerOverview.map((row) => <PartnerOverviewCard key={row.partnerId} row={row} />)
+          <div className={DASHBOARD_CARD_GRID}>
+            {summary.partnerOverview.map((row) => (
+              <PartnerOverviewCard key={row.partnerId} row={row} />
+            ))}
+          </div>
         )}
-      </Card>
+      </section>
     </div>
   );
 }

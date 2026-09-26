@@ -395,7 +395,7 @@ export default function MoneyHistoryPage() {
             <Button type="submit" icon={<Search size={14} />}>
               Filter
             </Button>
-            <Button type="button" variant="ghost" onClick={handleClearFilters}>
+            <Button type="button" variant="ghost" tone="accent" onClick={handleClearFilters}>
               Clear
             </Button>
           </div>
@@ -475,8 +475,11 @@ export default function MoneyHistoryPage() {
                   <Td className="!text-left text-ink-soft">{entry.notes ?? "—"}</Td>
                   <Td className="!text-left">
                     {isAuditable ? (
+                      // Default action -> accent (Decision 1's tone map,
+                      // founder feedback 2026-09-26).
                       <Button
                         variant="ghost"
+                        tone="accent"
                         onClick={(event) => openAuditDialog(event, entry)}
                         icon={<History size={12} />}
                       >

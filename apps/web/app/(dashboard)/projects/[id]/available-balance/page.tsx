@@ -486,7 +486,7 @@ function BalanceRow({
         <Amount value={balance} size={subRow ? "sm" : undefined} />
       </Td>
       <Td className="!text-left">
-        <Button variant="ghost" onClick={onUseBalance} disabled={isZero} icon={<Wallet size={14} />}>
+        <Button variant="ghost" tone="violet" onClick={onUseBalance} disabled={isZero} icon={<Wallet size={14} />}>
           Use Balance
         </Button>
       </Td>

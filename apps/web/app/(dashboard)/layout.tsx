@@ -205,16 +205,21 @@ export default async function DashboardLayout({ children }: { children: ReactNod
     item.roles?.includes(actor.role as "owner_admin" | "partner" | "sub_partner"),
   );
 
+  // Founder feedback 2026-09-26: at >=860px the shell locks to the viewport
+  // (`h-screen overflow-hidden`) and the sidebar + main content each scroll
+  // independently (`overflow-y-auto` on both panes) -- scrolling a long page
+  // no longer drags the sidebar along. Below 860px (single-column stack) all
+  // three overrides revert so the page scrolls as one, exactly as before.
   return (
-    <div className="grid min-h-screen grid-cols-[236px_1fr] max-[860px]:grid-cols-1">
-      <aside className="flex flex-col gap-5 border-r border-border bg-surface p-4 max-[860px]:border-b max-[860px]:border-r-0">
+    <div className="grid h-screen grid-cols-[236px_1fr] overflow-hidden max-[860px]:h-auto max-[860px]:min-h-screen max-[860px]:grid-cols-1 max-[860px]:overflow-visible">
+      <aside className="flex flex-col gap-5 overflow-y-auto border-r border-border bg-surface p-4 max-[860px]:overflow-visible max-[860px]:border-b max-[860px]:border-r-0">
         <div className="flex items-center gap-2 px-1 pb-1 pt-0.5">
           <Logo />
           <span className="text-[15px] font-bold tracking-tight text-ink">{appName}</span>
         </div>
         <SidebarShell items={visibleNavItems} />
       </aside>
-      <main className="max-w-[1020px] px-9 py-7 pb-16 max-[860px]:px-4 max-[860px]:py-5">
+      <main className="max-w-[1020px] overflow-y-auto px-9 py-7 pb-16 max-[860px]:overflow-visible max-[860px]:px-4 max-[860px]:py-5">
         {children}
       </main>
     </div>

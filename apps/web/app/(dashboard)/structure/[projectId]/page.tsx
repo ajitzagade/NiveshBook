@@ -156,9 +156,14 @@ export default function OwnershipStructurePage() {
               </Button>
             ) : null}
             {VIEW_MODES.map((mode) => (
+              // Structure -> violet (Decision 1's tone map, founder feedback
+              // 2026-09-26); `tone` is scoped to `.nb-btn-ghost` in
+              // tokens.css, so the active mode's primary variant is
+              // untouched by construction.
               <Button
                 key={mode.value}
                 variant={viewMode === mode.value ? "primary" : "ghost"}
+                tone="violet"
                 onClick={() => setViewMode(mode.value)}
               >
                 {mode.label}

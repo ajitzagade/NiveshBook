@@ -423,7 +423,11 @@ export default function ReportViewerPage() {
               <button
                 type="button"
                 disabled={!canExport}
-                className="nb-btn nb-btn-ghost inline-flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-50"
+                // `nb-btn-tone-accent` matches `Button tone="accent"`'s own
+                // emitted class exactly (Decision 1's default-action tone,
+                // founder feedback 2026-09-26) -- kept in lockstep with the
+                // shared classes this raw button already reuses.
+                className="nb-btn nb-btn-ghost nb-btn-tone-accent inline-flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Export
                 <ChevronDown size={14} />
@@ -490,7 +494,7 @@ export default function ReportViewerPage() {
             <Button type="submit" icon={<Search size={14} />}>
               Filter
             </Button>
-            <Button type="button" variant="ghost" onClick={handleClearFilters}>
+            <Button type="button" variant="ghost" tone="accent" onClick={handleClearFilters}>
               Clear
             </Button>
           </div>
