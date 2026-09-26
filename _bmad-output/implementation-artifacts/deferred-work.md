@@ -133,3 +133,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-founder-feedback-ui-and-verification.md`
   summary: The Playwright computed-style measurement scripts (tone colors, 24px insets, scroll-lock, card elevation) live in the session scratchpad and are not committed or CI-run — the exact silent-CSS regression class AGENTS.md warns about can recur with every check green.
   evidence: found by Story review 2026-09-26 (verification-gap, filed as broken-verification). jsdom class-emission tests were added as the committed guard for class wiring, but computed-value verification (does `nb-btn-tone-success` actually paint `--color-success-soft`?) still only exists as a manual measured pass. Committing a measurement script + wiring it into CI is a test-infra decision (needs a real browser in CI), not a one-file patch.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-partner-hierarchy-cards.md`
+  summary: The new nested/role-tinted `PersonCard` hierarchy pattern (partner/sub-partner cards, colored rail) has no corresponding update to `_bmad-output/planning-artifacts/ux-designs/ux-NiveshBook-2026-09-23/DESIGN.md`/`EXPERIENCE.md`, despite `packages/ui/src/styles/tokens.css`'s own header stating it must stay in sync with those docs.
+  evidence: found by Story review 2026-09-26 (blind-hunter). The pattern replaces the earlier `↳`/indent convention across six screens — a real, doc-worthy design decision. Fixing well means documenting the new pattern's screens, role-color mapping, and rail behavior, not a one-line patch.

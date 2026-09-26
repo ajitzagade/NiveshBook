@@ -116,6 +116,55 @@
     box-shadow: var(--shadow-card-hover);
   }
 
+  /*
+   * Role-tinted person cards (founder-approved hybrid, 2026-09-26):
+   * hierarchy = containment (sub-partner cards nested INSIDE their parent
+   * partner card, behind `.nb-person-nest`'s colored rail) + role tint --
+   * partner = `info` family (teal), sub-partner = `violet` family, the
+   * StatusChip/nav-badge role-color precedent. Backgrounds are the light
+   * `-soft` tints so text contrast is preserved; borders are the same
+   * tone's base color at reduced alpha (a color-mix of an EXISTING token
+   * with transparent -- never a new color family). The `-partner`/`-sub`
+   * tint classes deliberately set only background/border-color, so they
+   * also compose onto `.nb-card` and AdjustPersonCard's own shells.
+   */
+  .nb-person-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    padding: 12px 15px;
+  }
+  .nb-person-card-partner {
+    background: var(--color-info-soft);
+    /* Plain-color fallback for browsers without color-mix() support -- the
+       color-mix() declaration right after wins when it's supported (review
+       fix, 2026-09-26). */
+    border-color: var(--color-info);
+    border-color: color-mix(in srgb, var(--color-info) 35%, transparent);
+  }
+  .nb-person-card-sub {
+    background: var(--color-violet-soft);
+    border-color: var(--color-violet);
+    border-color: color-mix(in srgb, var(--color-violet) 35%, transparent);
+  }
+  /*
+   * The partner -> sub-partner connection: a colored left rail on the
+   * nested sub section -- containment replaces literal drawn connector
+   * lines (that paradigm stays exclusive to StructureCanvas). The rail
+   * fades parent teal (--color-info) into child violet (--color-violet)
+   * top-to-bottom via border-image; a browser without border-image support
+   * falls back to the solid violet border-left color.
+   */
+  .nb-person-nest {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 12px;
+    padding-left: 12px;
+    border-left: 3px solid var(--color-violet);
+    border-image: linear-gradient(to bottom, var(--color-info), var(--color-violet)) 1;
+  }
+
   .nb-btn {
     border: none;
     border-radius: var(--radius-el);

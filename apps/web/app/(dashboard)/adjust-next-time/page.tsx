@@ -281,8 +281,12 @@ export default function AdjustNextTimePage() {
                   // Founder feedback 2026-09-26: sub-partner cards sit one
                   // hierarchy level (24px) right of partner cards -- wired
                   // from the row's own `partyType`, never inferred from the
-                  // display name.
+                  // display name. `role` (spec-partner-hierarchy-cards) adds
+                  // the role tint on top: partner = teal, sub-partner =
+                  // violet, so the role reads from card styling alone even
+                  // in this flat list where no parent card is present.
                   isSub={entry.partyType === "sub_partner"}
+                  role={entry.partyType}
                   name={`${entry.personName} — ${entry.projectName}`}
                   lines={[
                     { label: "Should Pay", value: <Amount value={entry.shouldPay} size="sm" /> },
@@ -326,6 +330,7 @@ export default function AdjustNextTimePage() {
                 <AdjustPersonCard
                   key={entry.id}
                   isSub={entry.partyType === "sub_partner"}
+                  role={entry.partyType}
                   name={`${entry.personName} — ${entry.projectName}`}
                   lines={[
                     { label: "Can Take", value: <Amount value={entry.canTake} size="sm" /> },

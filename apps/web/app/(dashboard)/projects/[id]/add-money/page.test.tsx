@@ -140,7 +140,7 @@ describe("AddMoneyPage -- Should Pay expand (regression, spec-3-2 Review Triage 
     await renderAndExpand();
 
     // The pooled total (ownShouldPay + Σ subShouldPay = 250000 + 125000 +
-    // 125000 = 500000) still appears, once -- the ShareRow action amount.
+    // 125000 = 500000) still appears, once -- the partner card's header amount.
     await waitFor(() => {
       expect(screen.getByText("₹5,00,000")).toBeInTheDocument();
     });
@@ -156,25 +156,30 @@ describe("AddMoneyPage -- Should Pay expand (regression, spec-3-2 Review Triage 
     expect(hint.textContent).toContain("₹2,50,000");
     expect(hint.textContent).not.toContain("₹5,00,000");
 
-    // Exactly one place shows the pooled total (₹5,00,000) -- the ShareRow
-    // action amount -- confirming the hint/"Own" line don't also show it.
+    // Exactly one place shows the pooled total (₹5,00,000) -- the partner
+    // card's header action amount -- confirming the hint/"Own" line don't
+    // also show it.
     expect(screen.getAllByText("₹5,00,000")).toHaveLength(1);
   });
 
-  // Founder feedback 2026-09-26: mirrors withdraw-money/page.test.tsx's
-  // identical closest("div") className assertions -- the indent, not just
-  // the caller-baked "↳" glyph, is what carries the hierarchy on this
-  // AC-listed screen too.
-  it("insets sub-partner ShareRows one hierarchy level (24px, ml-6) while partner rows stay un-inset", async () => {
+  // spec-partner-hierarchy-cards (founder-approved hybrid, 2026-09-26):
+  // structure intentionally changed from batch-1's `↳`/`ml-6` indent --
+  // each Sub-partner is now a violet-tinted card nested INSIDE its parent
+  // Partner's teal-tinted card, behind the `.nb-person-nest` colored rail.
+  // Containment + role tint, not an indent, carry the hierarchy. Mirrors
+  // withdraw-money/page.test.tsx's identical assertions.
+  it("nests violet sub-partner cards inside the teal partner card behind the rail", async () => {
     getShouldPay.mockResolvedValue(SHOULD_PAY_RESPONSE);
 
     await renderAndExpand();
 
-    await screen.findByText("↳ Sub1");
-    const partnerShareRow = screen.getByText("A").closest("div") as HTMLElement;
-    const subShareRow = screen.getByText("↳ Sub1").closest("div") as HTMLElement;
-    expect(subShareRow.className).toContain("ml-6");
-    expect(partnerShareRow.className).not.toContain("ml-6");
+    await screen.findByText("Sub1");
+    const partnerCard = screen.getByText("A").closest(".nb-person-card") as HTMLElement;
+    const subCard = screen.getByText("Sub1").closest(".nb-person-card") as HTMLElement;
+    expect(partnerCard.className).toContain("nb-person-card-partner");
+    expect(subCard.className).toContain("nb-person-card-sub");
+    expect(partnerCard.contains(subCard)).toBe(true);
+    expect(subCard.parentElement?.className).toContain("nb-person-nest");
   });
 
   it("does not get stuck on 'Loading…' forever after collapsing before the fetch resolves, then re-expanding (row 2)", async () => {

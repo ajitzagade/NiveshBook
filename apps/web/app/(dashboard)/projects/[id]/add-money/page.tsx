@@ -36,8 +36,8 @@ import {
   Input,
   Label,
   PageHeader,
+  PersonCard,
   ShareList,
-  ShareRow,
   StatusChip,
   Table,
   TableHead,
@@ -830,18 +830,89 @@ export default function AddMoneyPage() {
                             ) : (
                               <>
                                 <ShareList>
+                                  {/* Founder-approved hybrid (spec-partner-hierarchy-cards):
+                                      each Partner is a teal-tinted `PersonCard` whose
+                                      Sub-partners render as violet cards nested INSIDE it
+                                      behind the colored rail -- containment + tint carry the
+                                      hierarchy, superseding the earlier `↳`/`ml-6`/`ml-7`
+                                      indent presentation. */}
                                   {shouldPayState.partners.map((partner) => (
-                                    <div key={partner.partnerId}>
-                                      <ShareRow
-                                        name={partner.name}
-                                        input={
-                                          <span className="justify-self-end font-mono text-[12.6px] tabular-nums text-ink-soft">
-                                            {formatSharePercent(partner.sharePercent)}%
-                                          </span>
-                                        }
-                                        action={<Amount value={partner.shouldPay} size="sm" />}
-                                      />
-                                      <div className="ml-1 mt-1">
+                                    <PersonCard
+                                      key={partner.partnerId}
+                                      role="partner"
+                                      name={partner.name}
+                                      value={
+                                        <span className="font-mono text-[12.6px] tabular-nums text-ink-soft">
+                                          {formatSharePercent(partner.sharePercent)}%
+                                        </span>
+                                      }
+                                      action={<Amount value={partner.shouldPay} size="sm" />}
+                                      nested={
+                                        partner.subPartners.length > 0
+                                          ? partner.subPartners.map((sub) => (
+                                              <PersonCard
+                                                key={sub.subPartnerId}
+                                                role="sub_partner"
+                                                name={sub.name}
+                                                value={
+                                                  <span className="font-mono text-[12.6px] tabular-nums text-ink-soft">
+                                                    {formatSharePercent(sub.sharePercent)}%
+                                                  </span>
+                                                }
+                                                action={<Amount value={sub.shouldPay} size="sm" />}
+                                              >
+                                                <div className="mt-1">
+                                                  <AdjustmentChip
+                                                    adjustment={findSubPartnerAdjustment(
+                                                      adjustmentsState,
+                                                      partner.partnerId,
+                                                      sub.subPartnerId,
+                                                    )}
+                                                  />
+                                                </div>
+                                                {sub.recommendedAmount !== undefined ? (
+                                                  <p className="mt-1 text-[12.6px] font-semibold text-ink-soft">
+                                                    Recommended: <Amount value={sub.recommendedAmount} size="sm" />
+                                                  </p>
+                                                ) : null}
+                                                <div className="mt-1.5">
+                                                  <Button
+                                                    variant="ghost"
+                                                    tone="success"
+                                                    onClick={() =>
+                                                      openRecordPaymentDialog(
+                                                        requirement.id,
+                                                        "sub_partner",
+                                                        sub.subPartnerId,
+                                                        sub.name,
+                                                      )
+                                                    }
+                                                    icon={<Wallet size={14} />}
+                                                  >
+                                                    Record Payment
+                                                  </Button>
+                                                </div>
+                                                <RecordedPayments
+                                                  transactions={recordedPaymentsFor(
+                                                    requirement.id,
+                                                    "sub_partner",
+                                                    sub.subPartnerId,
+                                                  )}
+                                                  movementsByTransactionId={moneyMovementsByTransactionId}
+                                                  projectNamesById={projectNamesById}
+                                                  onEdit={(transaction) =>
+                                                    openEditPaymentDialog(requirement.id, transaction)
+                                                  }
+                                                  onCancel={(transaction) =>
+                                                    openCancelPaymentDialog(requirement.id, transaction)
+                                                  }
+                                                />
+                                              </PersonCard>
+                                            ))
+                                          : null
+                                      }
+                                    >
+                                      <div className="mt-1">
                                         <AdjustmentChip
                                           adjustment={findPartnerAdjustment(
                                             adjustmentsState,
@@ -851,12 +922,12 @@ export default function AddMoneyPage() {
                                       </div>
                                       {partner.subPartners.length > 0 ? (
                                         // A Partner with Sub-partners has delegated part of their
-                                        // Should Pay away -- the `ShareRow` action above is the
+                                        // Should Pay away -- the card's header amount is the
                                         // pooled *total* (`ownShouldPay + Σ subShouldPay`), so their
                                         // actual retained ("Own") obligation must be called out as
                                         // its own distinct figure (AC2), never conflated with that
                                         // total. Mirrors the Shares page's `retainedMessage` precedent.
-                                        <p className="ml-1 mt-1 text-[12.6px] font-semibold text-ink-soft">
+                                        <p className="mt-1 text-[12.6px] font-semibold text-ink-soft">
                                           Own: <Amount value={partner.ownShouldPay} size="sm" />
                                         </p>
                                       ) : null}
@@ -866,11 +937,11 @@ export default function AddMoneyPage() {
                                         // (never in place of it). `mergeRecommendedAmounts` (packages/core)
                                         // already leaves this `undefined` when it numerically equals the
                                         // plain Should Pay, so no client-side comparison is needed here.
-                                        <p className="ml-1 mt-1 text-[12.6px] font-semibold text-ink-soft">
+                                        <p className="mt-1 text-[12.6px] font-semibold text-ink-soft">
                                           Recommended: <Amount value={partner.recommendedAmount} size="sm" />
                                         </p>
                                       ) : null}
-                                      <p className="ml-1 mt-1 text-[11.6px] text-ink-faint">
+                                      <p className="mt-1 text-[11.6px] text-ink-faint">
                                         Share {formatSharePercent(partner.sharePercent)}% means if the
                                         project needs <Amount value={requirement.amount} size="sm" />,{" "}
                                         {partner.name}&apos;s normal share is{" "}
@@ -883,7 +954,7 @@ export default function AddMoneyPage() {
                                           self-access vs. Owner/Admin, this page is only ever reached by
                                           an Owner/Admin route in the current nav (Epic 5 builds the
                                           self-service equivalent). */}
-                                      <div className="ml-1 mt-1.5">
+                                      <div className="mt-1.5">
                                         <Button
                                           variant="ghost"
                                           tone="success"
@@ -915,75 +986,7 @@ export default function AddMoneyPage() {
                                           openCancelPaymentDialog(requirement.id, transaction)
                                         }
                                       />
-
-                                      {partner.subPartners.length > 0 ? (
-                                        <ShareList>
-                                          {partner.subPartners.map((sub) => (
-                                            <div key={sub.subPartnerId}>
-                                              <ShareRow
-                                                isSub
-                                                name={`↳ ${sub.name}`}
-                                                input={
-                                                  <span className="justify-self-end font-mono text-[12.6px] tabular-nums text-ink-soft">
-                                                    {formatSharePercent(sub.sharePercent)}%
-                                                  </span>
-                                                }
-                                                action={<Amount value={sub.shouldPay} size="sm" />}
-                                              />
-                                              {/* `ml-7` (not the partner level's `ml-1`): follows the sub
-                                                  ShareRow's own 24px `isSub` inset so the hierarchy line
-                                                  holds below the row too (founder feedback 2026-09-26). */}
-                                              <div className="ml-7 mt-1">
-                                                <AdjustmentChip
-                                                  adjustment={findSubPartnerAdjustment(
-                                                    adjustmentsState,
-                                                    partner.partnerId,
-                                                    sub.subPartnerId,
-                                                  )}
-                                                />
-                                              </div>
-                                              {sub.recommendedAmount !== undefined ? (
-                                                <p className="ml-7 mt-1 text-[12.6px] font-semibold text-ink-soft">
-                                                  Recommended: <Amount value={sub.recommendedAmount} size="sm" />
-                                                </p>
-                                              ) : null}
-                                              <div className="ml-7 mt-1.5">
-                                                <Button
-                                                  variant="ghost"
-                                                  tone="success"
-                                                  onClick={() =>
-                                                    openRecordPaymentDialog(
-                                                      requirement.id,
-                                                      "sub_partner",
-                                                      sub.subPartnerId,
-                                                      sub.name,
-                                                    )
-                                                  }
-                                                  icon={<Wallet size={14} />}
-                                                >
-                                                  Record Payment
-                                                </Button>
-                                              </div>
-                                              <RecordedPayments
-                                                transactions={recordedPaymentsFor(
-                                                  requirement.id,
-                                                  "sub_partner",
-                                                  sub.subPartnerId,
-                                                )}
-                                                movementsByTransactionId={moneyMovementsByTransactionId}
-                                                projectNamesById={projectNamesById}
-                                                onEdit={(transaction) =>
-                                                  openEditPaymentDialog(requirement.id, transaction)
-                                                }
-                                                onCancel={(transaction) =>
-                                                  openCancelPaymentDialog(requirement.id, transaction)
-                                                }
-                                              />
-                                            </div>
-                                          ))}
-                                        </ShareList>
-                                      ) : null}
-                                    </div>
+                                    </PersonCard>
                                   ))}
                                 </ShareList>
                                 <DistributedCheck

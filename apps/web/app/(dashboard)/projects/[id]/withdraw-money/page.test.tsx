@@ -260,17 +260,20 @@ describe("WithdrawMoneyPage (Story 4.1)", () => {
 
     await screen.findByText("A");
     expect(screen.getByText("B")).toBeInTheDocument();
-    expect(screen.getByText("↳ Sub1")).toBeInTheDocument();
-    expect(screen.getByText("↳ Sub2")).toBeInTheDocument();
+    expect(screen.getByText("Sub1")).toBeInTheDocument();
+    expect(screen.getByText("Sub2")).toBeInTheDocument();
 
-    // Founder feedback 2026-09-26: sub-partner rows are inset one hierarchy
-    // level (24px -- `ShareRow`'s `isSub`, Tailwind `ml-6`) while partner
-    // rows are not; the indent, not just the caller-baked "↳" glyph, is
-    // what carries the partner -> sub-partner hierarchy.
-    const partnerShareRow = screen.getByText("A").closest("div") as HTMLElement;
-    const subShareRow = screen.getByText("↳ Sub1").closest("div") as HTMLElement;
-    expect(subShareRow.className).toContain("ml-6");
-    expect(partnerShareRow.className).not.toContain("ml-6");
+    // spec-partner-hierarchy-cards (founder-approved hybrid, 2026-09-26):
+    // structure intentionally changed from batch-1's `↳`/`ml-6` indent --
+    // each Sub-partner is now a violet-tinted card nested INSIDE its parent
+    // Partner's teal-tinted card, behind the `.nb-person-nest` colored rail.
+    // Containment + role tint, not an indent, carry the hierarchy.
+    const partnerCard = screen.getByText("A").closest(".nb-person-card") as HTMLElement;
+    const subCard = screen.getByText("Sub1").closest(".nb-person-card") as HTMLElement;
+    expect(partnerCard.className).toContain("nb-person-card-partner");
+    expect(subCard.className).toContain("nb-person-card-sub");
+    expect(partnerCard.contains(subCard)).toBe(true);
+    expect(subCard.parentElement?.className).toContain("nb-person-nest");
     // A's own retained figure (₹1,25,000) is called out distinctly from their
     // pooled canTake total (₹2,50,000) -- never the same number reused for both.
     expect(findParagraphContaining("Own:")).toHaveTextContent("₹1,25,000");
@@ -452,8 +455,10 @@ describe("WithdrawMoneyPage -- Withdrawal Adjustment chip (Story 4.3)", () => {
     render(<WithdrawMoneyPage />);
 
     await screen.findByText("A");
-    const sub1Row = screen.getByText("↳ Sub1").closest("div")?.parentElement as HTMLElement;
-    const sub2Row = screen.getByText("↳ Sub2").closest("div")?.parentElement as HTMLElement;
+    // Each sub's own content now lives inside its nested `PersonCard`
+    // (spec-partner-hierarchy-cards) -- scope lookups to that card.
+    const sub1Row = screen.getByText("Sub1").closest(".nb-person-card") as HTMLElement;
+    const sub2Row = screen.getByText("Sub2").closest(".nb-person-card") as HTMLElement;
 
     expect(within(sub1Row).getByText("Keep for Later")).toBeInTheDocument();
     // Scoped to the chip itself, not the whole sub1Row -- Story 4.4's
@@ -620,8 +625,10 @@ describe("WithdrawMoneyPage -- Recommended Available Withdrawal (Story 4.4)", ()
     render(<WithdrawMoneyPage />);
 
     await screen.findByText("A");
-    const sub1Row = screen.getByText("↳ Sub1").closest("div")?.parentElement as HTMLElement;
-    const sub2Row = screen.getByText("↳ Sub2").closest("div")?.parentElement as HTMLElement;
+    // Each sub's own content now lives inside its nested `PersonCard`
+    // (spec-partner-hierarchy-cards) -- scope lookups to that card.
+    const sub1Row = screen.getByText("Sub1").closest(".nb-person-card") as HTMLElement;
+    const sub2Row = screen.getByText("Sub2").closest(".nb-person-card") as HTMLElement;
 
     // Sub1 (keep_for_later): recommends its Keep for Later amount.
     expect(

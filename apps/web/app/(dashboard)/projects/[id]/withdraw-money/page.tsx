@@ -40,8 +40,8 @@ import {
   Input,
   Label,
   PageHeader,
+  PersonCard,
   ShareList,
-  ShareRow,
   SplitRow,
   StatusChip,
   toast,
@@ -365,10 +365,11 @@ type ProjectsState =
  * Withdrawal" dialog per row (Story 4.2) that saves a Take Now transaction
  * with its own audit record (AD-5). Reached from the Projects list page's
  * per-row "Withdraw Money" link, mirroring "Add Money"/"Shares". Covers all
- * 4 NFR8 states (loading/error/empty/loaded), the same data-table-with-
- * sub-rows shape as Partner Shares/Add Money (`ShareRow`, Sub-partners
- * indented one level with `↳`), plus the worked-example hint line matching
- * Should Pay's established copy pattern (EXPERIENCE.md).
+ * 4 NFR8 states (loading/error/empty/loaded), the same nested-card shape as
+ * Partner Shares/Add Money (role-tinted `PersonCard`s -- Sub-partner cards
+ * nested inside their parent Partner's card behind the colored rail,
+ * spec-partner-hierarchy-cards 2026-09-26), plus the worked-example hint
+ * line matching Should Pay's established copy pattern (EXPERIENCE.md).
  *
  * The recorded-withdrawals list per person is fetched via
  * `listWithdrawalTransactions` on page load (Story 4.2, closing Review
@@ -1042,40 +1043,91 @@ export default function WithdrawMoneyPage() {
                 // `adjustmentsState.partners` (an O(n) `.find`) a second time
                 // for the same result.
                 const partnerAdjustment = findPartnerAdjustment(partner.partnerId);
+                // Founder-approved hybrid (spec-partner-hierarchy-cards): each
+                // Partner is a teal-tinted `PersonCard` whose Sub-partners
+                // render as violet cards nested INSIDE it behind the colored
+                // rail -- containment + tint carry the hierarchy, superseding
+                // the earlier `↳`/`ml-6`/`ml-7` indent presentation.
                 return (
-                <div key={partner.partnerId}>
-                  <ShareRow
-                    name={partner.name}
-                    input={
-                      <span className="justify-self-end font-mono text-[13.4px] tabular-nums text-ink-soft">
-                        {formatSharePercent(partner.sharePercent)}%
-                      </span>
-                    }
-                    action={<Amount value={partner.canTake} />}
-                  />
+                <PersonCard
+                  key={partner.partnerId}
+                  role="partner"
+                  name={partner.name}
+                  value={
+                    <span className="font-mono text-[13.4px] tabular-nums text-ink-soft">
+                      {formatSharePercent(partner.sharePercent)}%
+                    </span>
+                  }
+                  action={<Amount value={partner.canTake} />}
+                  nested={
+                    partner.subPartners.length > 0
+                      ? partner.subPartners.map((sub) => {
+                          // Same once-per-row rationale as `partnerAdjustment`
+                          // above, one level down.
+                          const subAdjustment = findSubPartnerAdjustment(partner.partnerId, sub.subPartnerId);
+                          return (
+                            <PersonCard
+                              key={sub.subPartnerId}
+                              role="sub_partner"
+                              name={sub.name}
+                              value={
+                                <span className="font-mono text-[12.6px] tabular-nums text-ink-soft">
+                                  {formatSharePercent(sub.sharePercent)}%
+                                </span>
+                              }
+                              action={<Amount value={sub.canTake} size="sm" />}
+                            >
+                              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                                <AdjustmentChip adjustment={subAdjustment} />
+                                <RecommendedWithdrawal adjustment={subAdjustment} />
+                              </div>
+                              <div className="mt-1.5">
+                                <Button
+                                  variant="ghost"
+                                  tone="danger"
+                                  onClick={() =>
+                                    openRecordWithdrawalDialog("sub_partner", sub.subPartnerId, sub.name)
+                                  }
+                                  icon={<Minus size={14} />}
+                                >
+                                  Record Withdrawal
+                                </Button>
+                              </div>
+                              <RecordedWithdrawals
+                                transactions={recordedWithdrawalsFor("sub_partner", sub.subPartnerId)}
+                                allocatedWithdrawalIds={allocatedWithdrawalIds}
+                                onEdit={openEditWithdrawalDialog}
+                                onCancel={openCancelWithdrawalDialog}
+                              />
+                            </PersonCard>
+                          );
+                        })
+                      : null
+                  }
+                >
                   {partner.subPartners.length > 0 ? (
                     // A Partner with Sub-partners has delegated part of their Can
-                    // Take away -- the `ShareRow` action above is the pooled
+                    // Take away -- the card's header amount is the pooled
                     // *total* (`ownCanTake + Σ subCanTake`), so their actual
                     // retained ("Own") entitlement must be called out as its own
                     // distinct figure, never conflated with that total. Mirrors
                     // the Add Money page's identical "Own:" line for Should Pay.
-                    <p className="ml-1 mt-1 text-[12.6px] font-semibold text-ink-soft">
+                    <p className="mt-1 text-[12.6px] font-semibold text-ink-soft">
                       Own: <Amount value={partner.ownCanTake} size="sm" />
                     </p>
                   ) : null}
-                  <p className="ml-1 mt-1 text-[11.6px] text-ink-faint">
+                  <p className="mt-1 text-[11.6px] text-ink-faint">
                     Share {formatSharePercent(partner.sharePercent)}% means if{" "}
                     <Amount value={state.availableToWithdraw} size="sm" /> is available to withdraw,{" "}
                     {partner.name}&apos;s normal Can Take is{" "}
                     <Amount value={partner.ownCanTake} size="sm" />.
                   </p>
-                  <div className="ml-1 mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
                     <AdjustmentChip adjustment={partnerAdjustment} />
                     <RecommendedWithdrawal adjustment={partnerAdjustment} />
                   </div>
 
-                  <div className="ml-1 mt-1.5">
+                  <div className="mt-1.5">
                     <Button
                       variant="ghost"
                       tone="danger"
@@ -1091,56 +1143,7 @@ export default function WithdrawMoneyPage() {
                     onEdit={openEditWithdrawalDialog}
                     onCancel={openCancelWithdrawalDialog}
                   />
-
-                  {partner.subPartners.length > 0 ? (
-                    <ShareList>
-                      {partner.subPartners.map((sub) => {
-                        // Same once-per-row rationale as `partnerAdjustment`
-                        // above, one level down.
-                        const subAdjustment = findSubPartnerAdjustment(partner.partnerId, sub.subPartnerId);
-                        return (
-                        <div key={sub.subPartnerId}>
-                          <ShareRow
-                            isSub
-                            name={`↳ ${sub.name}`}
-                            input={
-                              <span className="justify-self-end font-mono text-[12.6px] tabular-nums text-ink-soft">
-                                {formatSharePercent(sub.sharePercent)}%
-                              </span>
-                            }
-                            action={<Amount value={sub.canTake} size="sm" />}
-                          />
-                          {/* `ml-7` (not the partner level's `ml-1`): follows the sub
-                              ShareRow's own 24px `isSub` inset so the hierarchy line
-                              holds below the row too (founder feedback 2026-09-26). */}
-                          <div className="ml-7 mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-                            <AdjustmentChip adjustment={subAdjustment} />
-                            <RecommendedWithdrawal adjustment={subAdjustment} />
-                          </div>
-                          <div className="ml-7 mt-1.5">
-                            <Button
-                              variant="ghost"
-                              tone="danger"
-                              onClick={() =>
-                                openRecordWithdrawalDialog("sub_partner", sub.subPartnerId, sub.name)
-                              }
-                              icon={<Minus size={14} />}
-                            >
-                              Record Withdrawal
-                            </Button>
-                          </div>
-                          <RecordedWithdrawals
-                            transactions={recordedWithdrawalsFor("sub_partner", sub.subPartnerId)}
-                            allocatedWithdrawalIds={allocatedWithdrawalIds}
-                            onEdit={openEditWithdrawalDialog}
-                            onCancel={openCancelWithdrawalDialog}
-                          />
-                        </div>
-                        );
-                      })}
-                    </ShareList>
-                  ) : null}
-                </div>
+                </PersonCard>
                 );
               })}
             </ShareList>

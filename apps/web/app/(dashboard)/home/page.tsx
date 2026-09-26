@@ -92,7 +92,9 @@ const DASHBOARD_CARD_GRID = "grid grid-cols-2 gap-4 max-[860px]:grid-cols-1";
  */
 export function PartnerOverviewCard({ row }: { row: PartnerOverviewRow }) {
   return (
-    <Card elevated>
+    // `tint="partner"` (spec-partner-hierarchy-cards, 2026-09-26): every
+    // overview row is a Partner, so the card carries the teal role tint.
+    <Card elevated tint="partner">
       <div className="mb-1.5 text-[13.8px] font-bold">{`${row.name} — ${row.projectName}`}</div>
       {[
         { label: "Invested", value: row.invested },
@@ -124,13 +126,22 @@ export function DashboardGridCard({
   name,
   input,
   action,
+  tint,
 }: {
   name: string;
   input: ReactNode;
   action?: ReactNode;
+  /**
+   * Role tint (spec-partner-hierarchy-cards, 2026-09-26), threaded straight
+   * to `Card`'s own `tint` capability: the Partner dashboard's "My
+   * Projects" cards are partner-teal, "My Sub-partners" and the Sub-partner
+   * dashboard's own cards are violet -- role identifiable from card styling
+   * alone, even where only one role appears on screen.
+   */
+  tint?: "partner" | "sub_partner";
 }) {
   return (
-    <Card elevated className="flex items-center gap-2.5">
+    <Card elevated tint={tint} className="flex items-center gap-2.5">
       <span className="min-w-0 flex-1 truncate text-[13.4px] font-semibold">{name}</span>
       {input}
       {action}
@@ -272,6 +283,7 @@ async function PartnerDashboard({ actorUserId }: { actorUserId: string }) {
             {summary.myProjects.map((row) => (
               <DashboardGridCard
                 key={row.partnerId}
+                tint="partner"
                 name={row.projectName}
                 input={sharePercentBadge(row.sharePercent)}
                 action={viewStructureAction(row.projectId, { partnerId: row.partnerId })}
@@ -300,6 +312,7 @@ async function PartnerDashboard({ actorUserId }: { actorUserId: string }) {
             {summary.mySubPartners.map((row) => (
               <DashboardGridCard
                 key={row.subPartnerId}
+                tint="sub_partner"
                 name={`${row.name} — ${row.projectName}`}
                 input={sharePercentBadge(row.sharePercent)}
               />
@@ -402,6 +415,7 @@ async function SubPartnerDashboard({ actorUserId }: { actorUserId: string }) {
             {summary.myProjects.map((row) => (
               <DashboardGridCard
                 key={row.subPartnerId}
+                tint="sub_partner"
                 name={row.projectName}
                 input={sharePercentBadge(row.sharePercent)}
                 action={viewStructureAction(row.projectId, { subPartnerId: row.subPartnerId })}

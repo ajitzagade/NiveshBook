@@ -19,8 +19,8 @@ import {
   Input,
   Label,
   PageHeader,
+  PersonCard,
   ShareList,
-  ShareRow,
   toast,
 } from "@niveshbook/ui";
 import { listPartnerShares, addPartnerShare, updatePartnerShare } from "@/lib/partner-shares";
@@ -122,21 +122,21 @@ function retainedMessage(partnerName: string, partnerSharePercent: string, subTo
 }
 
 /**
- * Partner Shares page (Story 2.2, extended by Story 2.3): one page per
- * Project, listing current Partner Shares via `ShareList`/`ShareRow` plus a
- * `DistributedCheck` showing the live total, with a `Dialog` (name + Share %
- * fields) for both add and edit -- reusing components built speculatively
- * for this screen (`packages/ui`'s `ShareRow`/`ShareList`/`DistributedCheck`).
- * Covers all 4 NFR8 states (loading/error/empty/loaded).
+ * Partner Shares page (Story 2.2, extended by Story 2.3; reshaped by the
+ * founder-approved hybrid, spec-partner-hierarchy-cards 2026-09-26): one
+ * page per Project, listing current Partner Shares as teal-tinted
+ * `PersonCard`s plus a `DistributedCheck` showing the live total, with a
+ * `Dialog` (name + Share % fields) for both add and edit. Covers all 4
+ * NFR8 states (loading/error/empty/loaded).
  *
- * Story 2.3 adds an expand affordance per Partner row: its current
- * Sub-partner Shares render inline, one indent level under the Partner with
- * a `↳` prefix and smaller muted text (never a second indent level), plus
- * a per-Partner `DistributedCheck` ("Allocated: X% (Y% remaining)") scoped
- * to that Partner's own Share % -- not the Project's 100% total -- and a
- * computed "retained" line (never stored, see `retainedMessage`). Reuses
- * the same `ShareRow`/`ShareList`/`DistributedCheck`/`Dialog` components a
- * second time, scoped to one Partner at a time -- no new components.
+ * Story 2.3 adds an expand affordance per Partner card: its current
+ * Sub-partner Shares render as violet-tinted cards nested INSIDE the
+ * Partner's own card behind a colored rail (containment + role tint carry
+ * the hierarchy -- the earlier `↳`-prefix/indent presentation is
+ * superseded), plus a per-Partner `DistributedCheck` ("Allocated: X% (Y%
+ * remaining)") scoped to that Partner's own Share % -- not the Project's
+ * 100% total -- and a computed "retained" line (never stored, see
+ * `retainedMessage`).
  */
 export default function PartnerSharesPage() {
   const params = useParams<{ id: string }>();
@@ -467,39 +467,43 @@ export default function PartnerSharesPage() {
               const expanded = expandedPartnerId === share.partnerId;
               const subState = subSharesByPartner[share.partnerId];
 
+              // Founder-approved hybrid (spec-partner-hierarchy-cards): each
+              // Partner is a teal-tinted `PersonCard`; its expanded
+              // Sub-partners render as violet cards nested INSIDE it, behind
+              // the card's colored rail -- containment + tint carry the
+              // hierarchy, so no `↳` glyph or extra indent is needed here.
               return (
-                <div key={share.partnerId}>
-                  <ShareRow
-                    name={share.name}
-                    input={
-                      <span className="justify-self-end font-mono text-[13.4px] tabular-nums">
-                        {formatSharePercent(share.sharePercent)}%
-                      </span>
-                    }
-                    action={
-                      <div className="flex gap-1.5">
-                        <Button variant="ghost" tone="accent" onClick={() => openEditDialog(share)} icon={<Pencil size={14} />}>
-                          Edit
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          aria-expanded={expanded}
-                          onClick={() => toggleExpanded(share.partnerId)}
-                          icon={expanded ? <ChevronUp size={14} /> : <Users size={14} />}
-                        >
-                          {expanded
-                            ? "Hide"
-                            : subState?.status === "loaded" && subState.shares.length > 0
-                              ? `Sub-partners (${subState.shares.length})`
-                              : "Sub-partners"}
-                        </Button>
-                      </div>
-                    }
-                  />
-
-                  {expanded ? (
-                    <div className="ml-3 mt-2 flex flex-col gap-2.5 border-l border-border pl-[11px]">
-                      {!subState || subState.status === "loading" ? (
+                <PersonCard
+                  key={share.partnerId}
+                  role="partner"
+                  name={share.name}
+                  value={
+                    <span className="font-mono text-[13.4px] tabular-nums">
+                      {formatSharePercent(share.sharePercent)}%
+                    </span>
+                  }
+                  action={
+                    <div className="flex flex-wrap gap-1.5">
+                      <Button variant="ghost" tone="accent" onClick={() => openEditDialog(share)} icon={<Pencil size={14} />}>
+                        Edit
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        aria-expanded={expanded}
+                        onClick={() => toggleExpanded(share.partnerId)}
+                        icon={expanded ? <ChevronUp size={14} /> : <Users size={14} />}
+                      >
+                        {expanded
+                          ? "Hide"
+                          : subState?.status === "loaded" && subState.shares.length > 0
+                            ? `Sub-partners (${subState.shares.length})`
+                            : "Sub-partners"}
+                      </Button>
+                    </div>
+                  }
+                  nested={
+                    expanded ? (
+                      !subState || subState.status === "loading" ? (
                         <p className="text-[12.6px] text-ink-soft">Loading Sub-partners…</p>
                       ) : subState.status === "error" ? (
                         <p role="alert" className="text-[12.6px] text-danger">
@@ -512,29 +516,28 @@ export default function PartnerSharesPage() {
                               No Sub-partners yet for {share.name}.
                             </p>
                           ) : (
-                            <ShareList>
-                              {subState.shares.map((subShare) => (
-                                <ShareRow
-                                  key={subShare.subPartnerId}
-                                  name={`↳ ${subShare.name}`}
-                                  input={
-                                    <span className="justify-self-end font-mono text-[12.6px] tabular-nums text-ink-soft">
-                                      {formatSharePercent(subShare.sharePercent)}%
-                                    </span>
-                                  }
-                                  action={
-                                    <Button
-                                      variant="ghost"
-                                      tone="accent"
-                                      onClick={() => openEditSubDialog(share.partnerId, subShare)}
-                                      icon={<Pencil size={14} />}
-                                    >
-                                      Edit
-                                    </Button>
-                                  }
-                                />
-                              ))}
-                            </ShareList>
+                            subState.shares.map((subShare) => (
+                              <PersonCard
+                                key={subShare.subPartnerId}
+                                role="sub_partner"
+                                name={subShare.name}
+                                value={
+                                  <span className="font-mono text-[12.6px] tabular-nums text-ink-soft">
+                                    {formatSharePercent(subShare.sharePercent)}%
+                                  </span>
+                                }
+                                action={
+                                  <Button
+                                    variant="ghost"
+                                    tone="accent"
+                                    onClick={() => openEditSubDialog(share.partnerId, subShare)}
+                                    icon={<Pencil size={14} />}
+                                  >
+                                    Edit
+                                  </Button>
+                                }
+                              />
+                            ))
                           )}
 
                           <DistributedCheck
@@ -561,10 +564,10 @@ export default function PartnerSharesPage() {
                             see these rows.
                           </p>
                         </>
-                      )}
-                    </div>
-                  ) : null}
-                </div>
+                      )
+                    ) : null
+                  }
+                />
               );
             })}
           </ShareList>

@@ -110,7 +110,15 @@ export default function AllInvestmentsPage() {
         </Card>
       ) : (
         state.entries.map((entry) => (
-          <Card key={`${entry.role}:${entry.shareId}:${entry.projectId}`} className="mb-5 last:mb-0">
+          // `tint` by the entry's own role (spec-partner-hierarchy-cards,
+          // 2026-09-26): partner = teal, sub-partner = violet -- matching the
+          // role `StatusChip` inside, so the role reads from card styling
+          // alone even in this single-actor view.
+          <Card
+            key={`${entry.role}:${entry.shareId}:${entry.projectId}`}
+            tint={entry.role}
+            className="mb-5 last:mb-0"
+          >
             <div className="mb-3.5 flex flex-wrap items-center gap-2.5">
               <h2 className="text-[15px] font-bold">{entry.projectName}</h2>
               <StatusChip variant={entry.role === "partner" ? "info" : "violet"}>

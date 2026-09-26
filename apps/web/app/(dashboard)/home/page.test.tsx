@@ -381,6 +381,9 @@ describe("DashboardHomePage (Owner/Admin Dashboard, Story 5.4, unchanged by Stor
     const cards = findAllComponents(rendered, Card);
     expect(cards).toHaveLength(1);
     expect((cards[0]?.props as { elevated?: boolean }).elevated).toBe(true);
+    // spec-partner-hierarchy-cards (2026-09-26): every overview row is a
+    // Partner, so the card carries the teal role tint.
+    expect((cards[0]?.props as { tint?: string }).tint).toBe("partner");
     const text = collectText(rendered);
     expect(text).toContain("Deepa — Project Z");
     for (const label of ["Invested", "Withdrawn", "Available Balance", "Net Position"]) {
@@ -389,12 +392,13 @@ describe("DashboardHomePage (Owner/Admin Dashboard, Story 5.4, unchanged by Stor
   });
 
   /** Founder feedback 2026-09-26 (Decision 8): the "My Projects"/"My Sub-partners" grid card is the same elevated `packages/ui` `Card`, name/input/action slots threaded through. */
-  it("DashboardGridCard genuinely renders an elevated Card (packages/ui), not a hand-rolled duplicate", () => {
-    const rendered = DashboardGridCard({ name: "Project Z", input: <span>70%</span> });
+  it("DashboardGridCard genuinely renders an elevated Card (packages/ui), threading the tint prop through", () => {
+    const rendered = DashboardGridCard({ name: "Project Z", input: <span>70%</span>, tint: "partner" });
 
     const cards = findAllComponents(rendered, Card);
     expect(cards).toHaveLength(1);
     expect((cards[0]?.props as { elevated?: boolean }).elevated).toBe(true);
+    expect((cards[0]?.props as { tint?: string }).tint).toBe("partner");
     expect(collectText(rendered)).toContain("Project Z");
   });
 
@@ -652,6 +656,12 @@ describe("DashboardHomePage (Partner Dashboard, Story 5.5)", () => {
     expect(myProjectsRow && shareRowInputText(myProjectsRow)).toBe("70%");
     expect(mySubPartnerRow && shareRowInputText(mySubPartnerRow)).toBe("50%");
 
+    // spec-partner-hierarchy-cards (2026-09-26): My Projects cards carry the
+    // partner (teal) role tint, My Sub-partners cards the sub_partner
+    // (violet) tint -- role reads from card styling alone.
+    expect((myProjectsRow?.props as { tint?: string }).tint).toBe("partner");
+    expect((mySubPartnerRow?.props as { tint?: string }).tint).toBe("sub_partner");
+
     // Story 5.10: "My Projects" gets a "View Structure" action linking to
     // this Partner's own scoped structure view; "My Sub-partners" does not
     // (this story's Code Map -- that action slot stays unused there).
@@ -799,6 +809,12 @@ describe("DashboardHomePage (Sub-partner Dashboard, Story 5.6)", () => {
     expect((grids[0]?.props as { className: string }).className).toContain("max-[860px]:grid-cols-1");
     expect((shareRows[0]?.props as { name: string }).name).toBe("Project A");
     expect(shareRowInputText(shareRows[0]!)).toBe("40%");
+
+    // spec-partner-hierarchy-cards (2026-09-26): the Sub-partner dashboard's
+    // own "My Projects" cards carry the sub_partner (violet) role tint --
+    // this actor's own role is unambiguous even though no parent Partner
+    // card is present here (frozen I/O matrix row 3).
+    expect((shareRows[0]?.props as { tint?: string }).tint).toBe("sub_partner");
 
     // Story 5.10: links to this Sub-partner's own scoped structure view --
     // `?subPartnerId=`, never `?partnerId=` (their own even-narrower slice).

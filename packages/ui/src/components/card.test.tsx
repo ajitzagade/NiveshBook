@@ -21,3 +21,22 @@ describe("Card elevated (founder feedback 2026-09-26, Decision 8)", () => {
     expect(classNameOf(el)).not.toContain("nb-card-elevated");
   });
 });
+
+describe("Card tint (spec-partner-hierarchy-cards, 2026-09-26)", () => {
+  it("tint=partner emits the teal person-card tint on top of nb-card (incl. keeping p-5)", () => {
+    const el = Card({ tint: "partner", elevated: true }) as ReactElement;
+    expect(classNameOf(el)).toContain("nb-card");
+    expect(classNameOf(el)).toContain("nb-person-card-partner");
+    expect(classNameOf(el)).toContain("p-5");
+  });
+
+  it("tint=sub_partner emits the violet person-card tint", () => {
+    const el = Card({ tint: "sub_partner" }) as ReactElement;
+    expect(classNameOf(el)).toContain("nb-person-card-sub");
+  });
+
+  it("no tint emits no person-card tint class", () => {
+    const el = Card({}) as ReactElement;
+    expect(classNameOf(el)).not.toContain("nb-person-card");
+  });
+});

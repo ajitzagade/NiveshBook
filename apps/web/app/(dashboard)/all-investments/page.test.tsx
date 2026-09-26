@@ -103,6 +103,13 @@ describe("AllInvestmentsPage (founder feedback 2026-09-26)", () => {
     expect(within(extraPaidChip).getByText("₹7,500")).toBeInTheDocument();
     // The Recommended snapshot surfaces when it differs from should-pay.
     expect(screen.getByText("₹60,000")).toBeInTheDocument();
+
+    // spec-partner-hierarchy-cards (2026-09-26): each entry Card's `tint`
+    // prop (wired from `entry.role`) renders the matching role-tint class.
+    const partnerCard = screen.getByText("Project A").closest(".nb-card") as HTMLElement;
+    const subPartnerCard = screen.getByText("Project B").closest(".nb-card") as HTMLElement;
+    expect(partnerCard.className).toContain("nb-person-card-partner");
+    expect(subPartnerCard.className).toContain("nb-person-card-sub");
   });
 
   it("renders the not-computable note (never a crash) for a requirement whose status is null", async () => {

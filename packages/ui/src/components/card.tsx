@@ -9,10 +9,31 @@ export interface CardProps extends HTMLAttributes<HTMLDivElement> {
    * every existing Card stays byte-for-byte unchanged.
    */
   elevated?: boolean;
+  /**
+   * Role tint (spec-partner-hierarchy-cards, 2026-09-26): `partner` = teal
+   * (`--color-info-soft` background, info-tinted border), `sub_partner` =
+   * the violet equivalents -- for dashboard/list cards representing one
+   * person, so the role reads from card styling alone. Named `tint`, not
+   * `role`: this component spreads its HTML attributes, and `role` is
+   * already the ARIA attribute there. Default unset -- every existing Card
+   * stays byte-for-byte unchanged.
+   */
+  tint?: "partner" | "sub_partner";
 }
 
-export function Card({ elevated, className, ...props }: CardProps) {
-  return <div className={cn("nb-card p-5", elevated && "nb-card-elevated", className)} {...props} />;
+export function Card({ elevated, tint, className, ...props }: CardProps) {
+  return (
+    <div
+      className={cn(
+        "nb-card p-5",
+        elevated && "nb-card-elevated",
+        tint === "partner" && "nb-person-card-partner",
+        tint === "sub_partner" && "nb-person-card-sub",
+        className,
+      )}
+      {...props}
+    />
+  );
 }
 
 export function CardHeader({ className, ...props }: HTMLAttributes<HTMLDivElement>) {

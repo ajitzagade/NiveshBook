@@ -12,17 +12,29 @@ export interface AdjustPersonCardProps {
   resolution: ReactNode;
   /** Sub-partner card: 24px left inset, matching `ShareRow`'s `isSub`/`nb-sub-row` indent precedent (founder feedback 2026-09-26). */
   isSub?: boolean;
+  /**
+   * Role tint (spec-partner-hierarchy-cards, 2026-09-26; kept separate from
+   * `isSub`, which is layout-only): `partner` = teal (`--color-info-soft`
+   * background, info-tinted border), `sub_partner` = the violet
+   * equivalents -- role identifiable from card styling alone. When set, the
+   * tint class carries the border color (the plain `border-border` utility
+   * would win over the component-layer tint otherwise).
+   */
+  role?: "partner" | "sub_partner";
 }
 
 /**
  * Investment and Withdrawal render as two separate columns of these cards,
  * never merged -- adjustments are independent, never netted (PRD).
  */
-export function AdjustPersonCard({ name, lines, resolution, isSub }: AdjustPersonCardProps) {
+export function AdjustPersonCard({ name, lines, resolution, isSub, role }: AdjustPersonCardProps) {
   return (
     <div
       className={cn(
-        "mb-[11px] rounded-xl border border-border px-[15px] py-3.5 last:mb-0",
+        "mb-[11px] rounded-xl border px-[15px] py-3.5 last:mb-0",
+        role === "partner" && "nb-person-card-partner",
+        role === "sub_partner" && "nb-person-card-sub",
+        !role && "border-border",
         isSub && "ml-6",
       )}
     >

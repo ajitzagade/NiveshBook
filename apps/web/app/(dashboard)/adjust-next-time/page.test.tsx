@@ -79,7 +79,11 @@ describe("AdjustNextTimePage (Story 5.3, FR33/FR34)", () => {
   // Founder feedback 2026-09-26: `isSub` is wired from each entry's own
   // `partyType` -- a sub_partner card carries the one-hierarchy-level
   // (24px, ml-6) inset, a partner card does not, in BOTH sections.
-  it("insets a sub_partner's AdjustPersonCard one hierarchy level (ml-6) while a partner's card stays un-inset", async () => {
+  // spec-partner-hierarchy-cards (2026-09-26) additionally wires `role` from
+  // the same `partyType` -- partner cards get the teal tint, sub-partner
+  // cards the violet tint -- so role reads from card styling alone even in
+  // this flat list (no parent card present, per the frozen I/O matrix).
+  it("insets a sub_partner's AdjustPersonCard one hierarchy level (ml-6) and role-tints it violet, while a partner's card stays un-inset and teal-tinted", async () => {
     getAdjustNextTime.mockResolvedValue({
       investmentAdjustments: [
         makeInvestmentEntry(),
@@ -95,13 +99,15 @@ describe("AdjustNextTimePage (Story 5.3, FR33/FR34)", () => {
 
     await screen.findByText("Partner A — Project A");
     const partnerCard = screen.getByText("Partner A — Project A").parentElement as HTMLElement;
-    // One sub card per section -- both must carry the inset.
+    // One sub card per section -- both must carry the inset and the tint.
     const subCards = screen.getAllByText("Sub S — Project A").map((el) => el.parentElement as HTMLElement);
     expect(subCards).toHaveLength(2);
     for (const subCard of subCards) {
       expect(subCard.className).toContain("ml-6");
+      expect(subCard.className).toContain("nb-person-card-sub");
     }
     expect(partnerCard.className).not.toContain("ml-6");
+    expect(partnerCard.className).toContain("nb-person-card-partner");
   });
 
   it("shows the error state when the fetch fails", async () => {
