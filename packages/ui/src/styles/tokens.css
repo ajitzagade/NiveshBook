@@ -135,7 +135,11 @@
     padding: 12px 15px;
   }
   .nb-person-card-partner {
-    background: var(--color-info-soft);
+    /* No background fill (founder feedback 2026-09-26) -- a solid teal wash
+       across every Partner card read as too heavy/odd; a tinted border alone
+       (matching Sub-partner's border treatment) is enough to signal role.
+       Sub-partner's own `.nb-person-card-sub` keeps its background fill
+       unchanged -- this was scoped to Partner cards only. */
     /* Plain-color fallback for browsers without color-mix() support -- the
        color-mix() declaration right after wins when it's supported (review
        fix, 2026-09-26). */
