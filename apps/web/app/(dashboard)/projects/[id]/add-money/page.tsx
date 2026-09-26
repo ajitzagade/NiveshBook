@@ -2,8 +2,24 @@
 
 import { Fragment, useEffect, useRef, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
-import { Wallet, Plus, ChevronUp, Calculator, Save, X, Ban, ArrowLeft, Pencil, ArrowLeftRight } from "lucide-react";
-import type { InvestmentRequirement, InvestmentTransaction, MoneyMovement, PaymentMode } from "@niveshbook/types";
+import {
+  Wallet,
+  Plus,
+  ChevronUp,
+  Calculator,
+  Save,
+  X,
+  Ban,
+  ArrowLeft,
+  Pencil,
+  ArrowLeftRight,
+} from "lucide-react";
+import type {
+  InvestmentRequirement,
+  InvestmentTransaction,
+  MoneyMovement,
+  PaymentMode,
+} from "@niveshbook/types";
 import type { PartnerInvestmentAdjustment, PartnerShouldPayWithRecommended } from "@niveshbook/core";
 import {
   Amount,

@@ -45,6 +45,19 @@ interface RouteContext {
  * `"create"` plus any `"edit"`s -- not filtered to only edits (this story's
  * Decisions: "the audit trail" naturally includes the transaction's origin
  * too).
+ *
+ * Story 5.9 extends the response additively (never a breaking reshape, per
+ * that story's Boundaries): `linkedTransactionId`/`linkedEntries` resolve
+ * this transaction's linked cancel/reversal pair via
+ * `reversalOfTransactionId` -- if `transaction` IS a reversal, the linked
+ * transaction is the original it reverses; otherwise, if some OTHER
+ * transaction's `reversalOfTransactionId` points back at this one, that's
+ * the linked reversal. `linkedEntries` is that linked transaction's own
+ * audit entries (empty for a reversal row, which never gets its own
+ * `audit_log` rows -- `cancelTransaction`'s atomicity contract only ever
+ * writes one `"cancel"` entry, against the ORIGINAL transaction's id). Both
+ * are `null`/`[]` when there's no linked transaction at all (never cancelled
+ * -- this story's I/O matrix row 7).
  */
 export async function GET(request: NextRequest, { params }: RouteContext) {
   const token = readSessionToken(request);
@@ -120,5 +133,22 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     investmentTransactions: investmentTransactionPort,
   });
 
-  return NextResponse.json({ entries });
+  // Story 5.9: resolve this transaction's linked cancel/reversal pair (if
+  // any), via `reversalOfTransactionId` (both directions) -- see this
+  // function's own doc comment above for the exact resolution logic.
+  let linkedTransactionId: string | null = null;
+  if (transaction.reversalOfTransactionId) {
+    linkedTransactionId = transaction.reversalOfTransactionId;
+  } else {
+    const reversal = await investmentTransactionPort.findByReversalOfTransactionId(transactionId);
+    linkedTransactionId = reversal?.id ?? null;
+  }
+
+  const linkedEntries = linkedTransactionId
+    ? await listAuditLogForTransaction(linkedTransactionId, {
+        investmentTransactions: investmentTransactionPort,
+      })
+    : [];
+
+  return NextResponse.json({ entries, linkedTransactionId, linkedEntries });
 }

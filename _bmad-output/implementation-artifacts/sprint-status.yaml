@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-23-2026 00:28
-last_updated: 09-26-2026 00:55
+last_updated: 09-26-2026 11:15
 project: NiveshBook
 project_key: NOKEY
 tracking_system: file-system
@@ -90,6 +90,6 @@ development_status:
   5-6-sub-partner-dashboard: review
   5-7-permission-scoped-reports: review
   5-8-report-export: review
-  5-9-audit-history-viewing-surface: backlog
+  5-9-audit-history-viewing-surface: review
   5-10-ownership-structure-diagram: backlog # 2026-09-25 addition -- see epics.md
   epic-5-retrospective: optional

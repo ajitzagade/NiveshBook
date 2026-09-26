@@ -45,6 +45,7 @@ import {
   AdjustmentNettingIdempotencyKeyConflictError,
   type AdjustmentNettingPort,
   type RecordAdjustmentNettingInput,
+  type AuditLogPort,
 } from "@niveshbook/core";
 import type {
   User,
@@ -994,10 +995,12 @@ export function matchesAllocationRequest(
 /**
  * Drizzle-backed implementation of `packages/core`'s `WithdrawalTransactionPort`
  * (Story 4.2) -- mirrors `createInvestmentTransactionPort.recordTransaction`'s
- * exact atomicity/idempotency structure one ledger over, deliberately
- * narrower (no `editTransaction`/`cancelTransaction`/`findById`/
- * `findAuditLogByTransactionId` yet -- Story 4.11's job, mirroring
- * `withdrawal_transactions`' own Story-3.3-before-3.7/3.8 shape).
+ * exact atomicity/idempotency structure one ledger over. `editTransaction`/
+ * `cancelTransaction`/`findById` were added by Story 4.11;
+ * `findAuditLogByTransactionId`/`findByReversalOfTransactionId` (the read
+ * gap this same doc comment used to flag as "Story 4.11's job", left undone)
+ * were closed by Story 5.9, mirroring the investment side's identical Story
+ * 3.7 methods one ledger over.
  *
  * `recordTransaction`'s idempotency handling, in order (identical to
  * `createInvestmentTransactionPort.recordTransaction`'s own doc comment, one
@@ -1484,6 +1487,27 @@ export function createWithdrawalTransactionPort(
         throw error;
       }
     },
+    /**
+     * Story 5.9: mirrors `createInvestmentTransactionPort.findAuditLogByTransactionId`'s
+     * identical Story 3.7 shape one ledger over -- closes the read gap this
+     * port's own doc comment above had explicitly flagged as "Story 4.11's
+     * job", left undone until now.
+     */
+    async findAuditLogByTransactionId(transactionId) {
+      const rows = await database
+        .select()
+        .from(auditLog)
+        .where(
+          and(eq(auditLog.entityType, "withdrawal_transaction"), eq(auditLog.entityId, transactionId)),
+        )
+        .orderBy(asc(auditLog.createdAt));
+      return rows.map(toAuditLogEntry);
+    },
+    /** Story 5.9: a thin public wrapper over `findWithdrawalReversalRow` (above), queried against the plain `database` handle -- mirrors `createInvestmentTransactionPort.findByReversalOfTransactionId`'s identical shape one ledger over. */
+    async findByReversalOfTransactionId(originalTransactionId) {
+      const row = await findWithdrawalReversalRow(database, originalTransactionId);
+      return row ? toWithdrawalTransaction(row) : null;
+    },
   };
 }
 
@@ -1711,6 +1735,11 @@ export function createInvestmentTransactionPort(
     async listAll() {
       const rows = await database.select().from(investmentTransactions);
       return rows.map(toInvestmentTransaction);
+    },
+    /** Story 5.9: a thin public wrapper over `findReversalRow` (below), queried against the plain `database` handle -- mirrors `findById`'s identical one-line delegation shape immediately above. */
+    async findByReversalOfTransactionId(originalTransactionId) {
+      const row = await findReversalRow(database, originalTransactionId);
+      return row ? toInvestmentTransaction(row) : null;
     },
     /**
      * Story 3.7's `editTransaction` -- mirrors `recordTransaction`'s
@@ -2976,6 +3005,23 @@ export function createAdjustmentNettingPort(database: Database = getDb()): Adjus
     async listAll() {
       const rows = await database.select().from(adjustmentNettings);
       return rows.map(toAdjustmentNetting);
+    },
+  };
+}
+
+/**
+ * Drizzle-backed implementation of `packages/core`'s `AuditLogPort` (Story
+ * 5.9) -- a plain, unfiltered `SELECT * FROM audit_log`, every entity type,
+ * no pagination (this story's Decision #7). The new global Audit History
+ * page's sole read; `packages/core`'s `assembleAuditHistory()` is what
+ * filters this down to the two in-scope `entityType`s (Decision #6), never
+ * this port.
+ */
+export function createAuditLogPort(database: Database = getDb()): AuditLogPort {
+  return {
+    async listAll() {
+      const rows = await database.select().from(auditLog).orderBy(asc(auditLog.createdAt));
+      return rows.map(toAuditLogEntry);
     },
   };
 }

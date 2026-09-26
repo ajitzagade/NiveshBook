@@ -11,6 +11,7 @@ import {
   RotateCcw,
   History,
   BarChart3,
+  ShieldCheck,
 } from "lucide-react";
 import { createUserPort } from "@niveshbook/db";
 import { requireOwnerAdminOrPartnerOrSubPartnerSession } from "@/lib/session-guard";
@@ -149,6 +150,27 @@ const NAV_ITEMS: readonly SidebarNavItem[] = [
     icon: <BarChart3 size={ICON_SIZE} />,
     href: "/reports",
     roles: OWNER_ADMIN_OR_PARTNER_OR_SUB_PARTNER,
+  },
+  // Story 5.9 (FR41/FR42): a genuinely NEW item -- no inert placeholder
+  // existed before this story (unlike Reports, which had one since Epic 5's
+  // shell was first widened). Owner/Admin-only (this story's Decision #3 --
+  // `EXPERIENCE.md`'s IA table, and the precedent Stories 5.5/5.6 already set
+  // by listing "Audit History" among items staying hidden for
+  // `partner`/`sub_partner`). A transaction's own Partner/Sub-partner instead
+  // gets a "View Audit History" action next to their own `money_added`/
+  // `money_withdrawn` rows on the Money History page (`money-history/page.tsx`)
+  // -- never this nav item, never this page. (Post-review fix, spec-5-9's
+  // Spec Change Log: this action originally lived on the Add Money/Withdraw
+  // Money pages, but that entire `/projects/**` subtree is Owner/Admin-only
+  // at the layout level, `projects/layout.tsx`'s `requireOwnerAdminSession()`
+  // -- unreachable by the very role this needed to serve. Money History is
+  // reachable by all three roles, per its own `roles` entry above.)
+  {
+    key: "auditHistory",
+    label: "Audit History",
+    icon: <ShieldCheck size={ICON_SIZE} />,
+    href: "/audit-history",
+    roles: OWNER_ADMIN_ONLY,
   },
 ];
 

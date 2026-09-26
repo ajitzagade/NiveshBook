@@ -22,6 +22,19 @@ vi.mock("@/lib/projects", () => ({
   listProjects: (...args: unknown[]) => listProjects(...args),
 }));
 
+// Story 5.9's post-review fix: the View Audit History action's own fetches --
+// mocked so every pre-existing test in this file (none of which assert on
+// this action) never makes an unmocked real `fetch` call.
+const getInvestmentTransactionAuditLog = vi.fn();
+vi.mock("@/lib/investment-transactions", () => ({
+  getInvestmentTransactionAuditLog: (...args: unknown[]) => getInvestmentTransactionAuditLog(...args),
+}));
+
+const getWithdrawalAuditLog = vi.fn();
+vi.mock("@/lib/withdrawal-transactions", () => ({
+  getWithdrawalAuditLog: (...args: unknown[]) => getWithdrawalAuditLog(...args),
+}));
+
 const routerPush = vi.fn();
 let mockSearchParams = new URLSearchParams();
 vi.mock("next/navigation", () => ({
@@ -104,6 +117,24 @@ const ONE_ENTRY = {
   personName: "Partner One",
   amount: "1000000",
   paymentMode: "neft",
+  from: null,
+  to: null,
+  notes: null,
+  status: "active",
+  reversalOfTransactionId: null,
+};
+
+const WITHDRAWN_ENTRY = {
+  id: "wd-audit-1",
+  type: "money_withdrawn",
+  date: "2026-09-12",
+  projectId: "project-a",
+  projectName: "Project A",
+  partyType: "partner",
+  shareId: "partner-1",
+  personName: "Partner One",
+  amount: "200000",
+  paymentMode: "cash",
   from: null,
   to: null,
   notes: null,
@@ -203,6 +234,8 @@ beforeEach(() => {
   });
   routerPush.mockReset();
   mockSearchParams = new URLSearchParams();
+  getInvestmentTransactionAuditLog.mockReset();
+  getWithdrawalAuditLog.mockReset();
   listProjects.mockReset();
   listProjects.mockResolvedValue([
     { id: "project-a", name: "Project A", description: null, createdAt: "", updatedAt: "" },
@@ -463,5 +496,150 @@ describe("MoneyHistoryPage -- 'adjustment' rows have no trace affordance (Story 
     const traceableRow = screen.getByText("Money Added").closest("tr");
     expect(adjustmentRow).not.toHaveAttribute("title");
     expect(traceableRow).toHaveAttribute("title", "View this entry's money trail");
+  });
+});
+
+/**
+ * Story 5.9's post-review fix (spec-5-9's Spec Change Log): the Partner/
+ * Sub-partner self-access "View Audit History" entry point, moved here from
+ * Add Money/Withdraw Money (unreachable by that role there -- see
+ * `apps/web/app/(dashboard)/layout.tsx`'s `auditHistory` nav item's own doc
+ * comment). Shown only for `"money_added"`/`"money_withdrawn"` rows.
+ */
+describe("MoneyHistoryPage -- View Audit History action (Story 5.9's post-review fix)", () => {
+  it("shows the action for a 'money_added' row and fetches via the flat investment route", async () => {
+    getMoneyHistory.mockResolvedValue({ entries: [ONE_ENTRY] });
+    getInvestmentTransactionAuditLog.mockResolvedValue({
+      entries: [
+        {
+          id: "audit-1",
+          entityType: "investment_transaction",
+          entityId: "inv-1",
+          action: "create",
+          actorUserId: "owner-1",
+          oldValue: null,
+          newValue: { amount: "1000000" },
+          reason: null,
+          createdAt: "2026-10-05T00:00:00.000Z",
+        },
+      ],
+      linkedTransactionId: null,
+      linkedEntries: [],
+    });
+
+    const user = userEvent.setup();
+    render(<MoneyHistoryPage />);
+    await waitFor(() => expect(screen.getByText("Money Added")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "View Audit History" }));
+
+    expect(getInvestmentTransactionAuditLog).toHaveBeenCalledWith("project-a", "inv-1");
+    await screen.findByText("Created");
+    // Clicking the action must not ALSO trigger the row's own trace
+    // navigation (`event.stopPropagation()` inside `openAuditDialog`).
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  it("shows the action for a 'money_withdrawn' row and fetches via the (already-flat) withdrawal route", async () => {
+    getMoneyHistory.mockResolvedValue({ entries: [WITHDRAWN_ENTRY] });
+    getWithdrawalAuditLog.mockResolvedValue({
+      entries: [
+        {
+          id: "audit-2",
+          entityType: "withdrawal_transaction",
+          entityId: "wd-audit-1",
+          action: "create",
+          actorUserId: "owner-1",
+          oldValue: null,
+          newValue: { amount: "200000" },
+          reason: null,
+          createdAt: "2026-10-05T00:00:00.000Z",
+        },
+      ],
+      linkedTransactionId: null,
+      linkedEntries: [],
+    });
+
+    const user = userEvent.setup();
+    render(<MoneyHistoryPage />);
+    await waitFor(() => expect(screen.getByText("Money Withdrawn")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "View Audit History" }));
+
+    expect(getWithdrawalAuditLog).toHaveBeenCalledWith("project-a", "wd-audit-1");
+    await screen.findByText("Created");
+  });
+
+  it("does not show the action for a non-auditable row type (e.g. 'moved_to_project')", async () => {
+    getMoneyHistory.mockResolvedValue({ entries: [MOVEMENT_ENTRY] });
+
+    render(<MoneyHistoryPage />);
+
+    await waitFor(() => expect(screen.getByText("Moved to Project")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "View Audit History" })).not.toBeInTheDocument();
+  });
+
+  it("renders the linked reversal section with REAL, non-empty linked entries -- not just the static header", async () => {
+    getMoneyHistory.mockResolvedValue({ entries: [ONE_ENTRY] });
+    getInvestmentTransactionAuditLog.mockResolvedValue({
+      entries: [
+        {
+          id: "audit-1",
+          entityType: "investment_transaction",
+          entityId: "inv-1",
+          action: "cancel",
+          actorUserId: "owner-1",
+          oldValue: { amount: "1000000" },
+          newValue: { amount: "1000000" },
+          reason: "recorded by mistake",
+          createdAt: "2026-10-05T00:00:00.000Z",
+        },
+      ],
+      linkedTransactionId: "inv-reversal-1",
+      linkedEntries: [
+        {
+          id: "audit-3",
+          entityType: "investment_transaction",
+          entityId: "inv-reversal-1",
+          action: "create",
+          actorUserId: "owner-1",
+          oldValue: null,
+          newValue: { amount: "1000000" },
+          reason: "reversal of inv-1",
+          createdAt: "2026-10-05T00:00:01.000Z",
+        },
+      ],
+    });
+
+    const user = userEvent.setup();
+    render(<MoneyHistoryPage />);
+    await waitFor(() => expect(screen.getByText("Money Added")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "View Audit History" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Linked Transaction (inv-reversal-1)")).toBeInTheDocument();
+    });
+    // The linked section's own real entry content actually renders -- not
+    // just its static "Linked Transaction (...)" header: its own reason
+    // text ("reversal of inv-1") and its own "Created" action label both
+    // appear, distinct from the requested transaction's own "Cancelled"/
+    // "recorded by mistake" entry above it.
+    expect(screen.getByText("Reason: reversal of inv-1")).toBeInTheDocument();
+    expect(screen.getAllByText("Created").length).toBeGreaterThan(0);
+    expect(screen.getByText("Reason: recorded by mistake")).toBeInTheDocument();
+  });
+
+  it("renders the error state if the audit-log fetch fails (e.g. a 403 for a different party's transaction)", async () => {
+    getMoneyHistory.mockResolvedValue({ entries: [ONE_ENTRY] });
+    getInvestmentTransactionAuditLog.mockRejectedValue(new Error("You are not allowed to view this."));
+
+    const user = userEvent.setup();
+    render(<MoneyHistoryPage />);
+    await waitFor(() => expect(screen.getByText("Money Added")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "View Audit History" }));
+
+    await screen.findByText("You are not allowed to view this.");
   });
 });

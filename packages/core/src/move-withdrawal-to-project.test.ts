@@ -96,6 +96,9 @@ function createFakeInvestmentTransactionPort(): InvestmentTransactionPort & {
     async listAll() {
       throw new Error("not exercised by moveWithdrawalToProject");
     },
+    async findByReversalOfTransactionId() {
+      throw new Error("not exercised by moveWithdrawalToProject");
+    },
   };
 }
 

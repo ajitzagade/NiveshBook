@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type {
+  AuditLogEntry,
   Money,
   PartnerShare,
   Percent,
@@ -28,6 +29,7 @@ import {
   WithdrawalAlreadyCancelledError,
   WithdrawalAmountLockedByAllocationError,
   WithdrawalShareNotFoundError,
+  listAuditLogForWithdrawalTransaction,
   listWithdrawalTransactions,
   recordWithdrawalTransaction,
   WITHDRAWAL_PAYMENT_MODES,
@@ -110,11 +112,17 @@ function createFakeWithdrawalTransactionPort(): WithdrawalTransactionPort & {
   editCalls: EditWithdrawalTransactionInput[];
   cancelCalls: CancelWithdrawalTransactionInput[];
   rows: WithdrawalTransaction[];
+  auditEntries: AuditLogEntry[];
 } {
   const calls: CreateWithdrawalTransactionInput[] = [];
   const editCalls: EditWithdrawalTransactionInput[] = [];
   const cancelCalls: CancelWithdrawalTransactionInput[] = [];
   const rows: WithdrawalTransaction[] = [];
+  // Story 5.9: tracks real `audit_log`-shaped entries alongside `rows`,
+  // mirroring `investment-transaction.test.ts`'s identical fake one ledger
+  // over -- proves `findAuditLogByTransactionId`/`listAuditLogForWithdrawalTransaction`
+  // against a real create+edit+cancel(+reversal) fixture, not a stub.
+  const auditEntries: AuditLogEntry[] = [];
   const appliedEditsByIdempotencyKey = new Map<string, WithdrawalTransaction>();
   const appliedCancelsByIdempotencyKey = new Map<
     string,
@@ -125,6 +133,7 @@ function createFakeWithdrawalTransactionPort(): WithdrawalTransactionPort & {
     editCalls,
     cancelCalls,
     rows,
+    auditEntries,
     async recordTransaction(input) {
       calls.push(input);
       const transaction: WithdrawalTransaction = {
@@ -144,6 +153,17 @@ function createFakeWithdrawalTransactionPort(): WithdrawalTransactionPort & {
         createdAt: new Date().toISOString(),
       };
       rows.push(transaction);
+      auditEntries.push({
+        id: `audit-${auditEntries.length + 1}`,
+        entityType: "withdrawal_transaction",
+        entityId: transaction.id,
+        action: "create",
+        actorUserId: input.actorUserId,
+        oldValue: null,
+        newValue: transaction,
+        reason: null,
+        createdAt: new Date().toISOString(),
+      });
       return { transaction, created: true };
     },
     async listByProjectId(projectId) {
@@ -177,8 +197,22 @@ function createFakeWithdrawalTransactionPort(): WithdrawalTransactionPort & {
         notes: input.notes,
       };
       rows[index] = updated;
+      auditEntries.push({
+        id: `audit-${auditEntries.length + 1}`,
+        entityType: "withdrawal_transaction",
+        entityId: updated.id,
+        action: "edit",
+        actorUserId: input.actorUserId,
+        oldValue: existing,
+        newValue: updated,
+        reason: input.reason,
+        createdAt: new Date().toISOString(),
+      });
       appliedEditsByIdempotencyKey.set(input.idempotencyKey, updated);
       return { transaction: updated, edited: true };
+    },
+    async findAuditLogByTransactionId(transactionId) {
+      return auditEntries.filter((entry) => entry.entityId === transactionId);
     },
     async cancelTransaction(input) {
       cancelCalls.push(input);
@@ -209,12 +243,31 @@ function createFakeWithdrawalTransactionPort(): WithdrawalTransactionPort & {
       };
       rows.push(reversal);
 
+      // Mirrors `createInvestmentTransactionPort.cancelTransaction`'s exact
+      // atomicity contract one ledger over: exactly one `"cancel"` audit
+      // entry, against the ORIGINAL transaction's id -- the reversal row
+      // itself never gets its own `audit_log` entry.
+      auditEntries.push({
+        id: `audit-${auditEntries.length + 1}`,
+        entityType: "withdrawal_transaction",
+        entityId: updatedOriginal.id,
+        action: "cancel",
+        actorUserId: input.actorUserId,
+        oldValue: existing,
+        newValue: updatedOriginal,
+        reason: input.reason,
+        createdAt: new Date().toISOString(),
+      });
+
       const result = { originalTransaction: updatedOriginal, reversalTransaction: reversal };
       appliedCancelsByIdempotencyKey.set(input.idempotencyKey, result);
       return { ...result, cancelled: true };
     },
     async listAll() {
       return [...rows];
+    },
+    async findByReversalOfTransactionId(originalTransactionId) {
+      return rows.find((row) => row.reversalOfTransactionId === originalTransactionId) ?? null;
     },
   };
 }
@@ -929,5 +982,104 @@ describe("cancelWithdrawalTransaction — Story 4.11", () => {
         withdrawalTransactions: port,
       }),
     ).rejects.toThrow(WithdrawalAlreadyCancelledError);
+  });
+});
+
+describe("listAuditLogForWithdrawalTransaction — Story 5.9 (closes the withdrawal-side audit read gap)", () => {
+  async function seedActiveWithdrawal(
+    port: ReturnType<typeof createFakeWithdrawalTransactionPort>,
+  ): Promise<string> {
+    const { transaction } = await port.recordTransaction({
+      projectId: "project-1",
+      partyType: "partner",
+      shareId: "a",
+      sharePercentSnapshot: "50" as Percent,
+      canTakeSnapshot: "500000" as Money,
+      amount: "250000" as Money,
+      transactionDate: "2026-10-05",
+      paymentMode: "neft",
+      referenceNumber: null,
+      notes: null,
+      idempotencyKey: "create-key-1",
+      actorUserId: "actor-1",
+    });
+    return transaction.id;
+  }
+
+  it("returns the original create entry, mirroring listAuditLogForTransaction's identical shape one ledger over", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+    const transactionId = await seedActiveWithdrawal(port);
+
+    const entries = await listAuditLogForWithdrawalTransaction(transactionId, {
+      withdrawalTransactions: port,
+    });
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.action).toBe("create");
+    expect(entries[0]?.entityType).toBe("withdrawal_transaction");
+  });
+
+  it("includes a later edit entry alongside the original create", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+    const transactionId = await seedActiveWithdrawal(port);
+    await editWithdrawalTransaction(
+      transactionId,
+      {
+        amount: "300000",
+        transactionDate: "2026-10-06",
+        paymentMode: "upi",
+        referenceNumber: null,
+        notes: null,
+        idempotencyKey: "edit-key-1",
+        reason: "typo'd the original amount",
+      },
+      "actor-1",
+      { withdrawalTransactions: port, withdrawalDestinationAllocations: createFakeAllocationLister() },
+    );
+
+    const entries = await listAuditLogForWithdrawalTransaction(transactionId, {
+      withdrawalTransactions: port,
+    });
+
+    expect(entries.map((entry) => entry.action)).toEqual(["create", "edit"]);
+  });
+
+  /**
+   * A real cancelled-transaction-plus-reversal fixture (this story's own
+   * explicit correctness property #2) -- not just a happy-path single-
+   * transaction test. Proves the reversal row itself carries NO audit
+   * entries of its own (`cancelTransaction`'s atomicity contract only ever
+   * writes one `"cancel"` entry, against the ORIGINAL transaction's id) --
+   * the exact nuance the per-transaction audit-log route's
+   * `linkedTransactionId`/`linkedEntries` resolution depends on.
+   */
+  it("cancel: the ORIGINAL gets a cancel entry; the reversal transaction itself has none of its own", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+    const transactionId = await seedActiveWithdrawal(port);
+    const { reversalTransaction } = await cancelWithdrawalTransaction(
+      transactionId,
+      { idempotencyKey: "cancel-key-1", reason: "recorded by mistake" },
+      "actor-1",
+      { withdrawalTransactions: port },
+    );
+
+    const originalEntries = await listAuditLogForWithdrawalTransaction(transactionId, {
+      withdrawalTransactions: port,
+    });
+    const reversalEntries = await listAuditLogForWithdrawalTransaction(reversalTransaction.id, {
+      withdrawalTransactions: port,
+    });
+
+    expect(originalEntries.map((entry) => entry.action)).toEqual(["create", "cancel"]);
+    expect(originalEntries[1]?.reason).toBe("recorded by mistake");
+    expect(reversalEntries).toEqual([]);
+
+    // The reversal is discoverable via `findByReversalOfTransactionId`, the
+    // mechanism the audit-log route uses to resolve the linked pair --
+    // confirms `reversalOfTransactionId` (both directions) round-trips
+    // correctly through this fake port.
+    const foundReversal = await port.findByReversalOfTransactionId(transactionId);
+    expect(foundReversal?.id).toBe(reversalTransaction.id);
+    expect(reversalTransaction.reversalOfTransactionId).toBe(transactionId);
   });
 });

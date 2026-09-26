@@ -1,4 +1,4 @@
-import type { WithdrawalTransaction } from "@niveshbook/types";
+import type { AuditLogEntry, WithdrawalTransaction } from "@niveshbook/types";
 
 /**
  * Thin client-side fetch helpers for the Withdraw Money screen's Record
@@ -159,4 +159,32 @@ export async function cancelWithdrawalTransaction(
     throw new Error(await readErrorMessage(response));
   }
   return (await response.json()) as CancelWithdrawalTransactionResult;
+}
+
+/**
+ * `GET .../withdrawal-transactions/[transactionId]/audit-log`'s response
+ * shape (Story 5.9) -- mirrors `apps/web/lib/investment-transactions.ts`'s
+ * `AuditLogResponse` exactly, one ledger over. `linkedTransactionId`/
+ * `linkedEntries` resolve a cancelled withdrawal's linked reversal (or,
+ * viewed from the reversal itself, the original it reverses) -- `null`/`[]`
+ * when there's no linked withdrawal.
+ */
+export interface AuditLogResponse {
+  entries: AuditLogEntry[];
+  linkedTransactionId: string | null;
+  linkedEntries: AuditLogEntry[];
+}
+
+/** Fetches every audit-trail entry (the original `"create"` plus any `"edit"`/`"cancel"`s) for one withdrawal (Story 5.9 -- closes the read gap Story 4.11 left open). */
+export async function getWithdrawalAuditLog(
+  projectId: string,
+  transactionId: string,
+): Promise<AuditLogResponse> {
+  const response = await fetch(
+    `/api/projects/${projectId}/withdrawal-transactions/${transactionId}/audit-log`,
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as AuditLogResponse;
 }

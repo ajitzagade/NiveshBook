@@ -1023,6 +1023,108 @@ describe("authorize — investment_transactions:view_audit (Story 3.7, self-acce
   });
 });
 
+describe("authorize — withdrawal_transactions:view_audit (Story 5.9, self-access override, byte-for-byte mirrors investment_transactions:view_audit)", () => {
+  it("allows an owner_admin to view anyone's withdrawal audit trail", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "owner-1",
+      "withdrawal_transactions:view_audit",
+      { ownerId: "partner-user-1" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("allows a Partner to view their own withdrawal's audit trail (resourceRef.ownerId matches their own userId)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "partner-user-1",
+      "withdrawal_transactions:view_audit",
+      { ownerId: "partner-user-1" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("allows a Sub-partner to view their own withdrawal's audit trail (resourceRef.ownerId matches their own userId)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "sub-partner-1", role: "sub_partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "sub-partner-1",
+      "withdrawal_transactions:view_audit",
+      { ownerId: "sub-partner-1" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("matches self-access case-insensitively (UUIDs are case-insensitive)", async () => {
+    const users = createFakeUserPort([
+      makeUser({ id: "0192f5a0-1111-7000-8000-000000000001", role: "partner" }),
+    ]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "0192f5a0-1111-7000-8000-000000000001",
+      "withdrawal_transactions:view_audit",
+      { ownerId: "0192F5A0-1111-7000-8000-000000000001" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("denies a co-Partner attempting to view another Partner's withdrawal audit trail", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-a", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "partner-user-a",
+      "withdrawal_transactions:view_audit",
+      { ownerId: "partner-user-b" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies when the target share has no linked user (ownerId is empty)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-a", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "partner-user-a",
+      "withdrawal_transactions:view_audit",
+      { ownerId: "" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies an actor that no longer exists, even targeting their own (former) id", async () => {
+    const users = createFakeUserPort([]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "ghost",
+      "withdrawal_transactions:view_audit",
+      { ownerId: "someone-else" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: false });
+  });
+});
+
 describe("authorize", () => {
   it("allows an owner_admin to view any single user", async () => {
     const users = createFakeUserPort([

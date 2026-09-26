@@ -695,11 +695,6 @@ describe("WithdrawMoneyPage -- recorded-withdrawals list persists across reload 
   });
 });
 
-/**
- * Story 4.11: the Edit/Cancel affordances on `RecordedWithdrawals` --
- * mirrors `add-money/page.test.tsx`'s equivalent Edit/Cancel dialog
- * coverage one ledger over.
- */
 describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
   beforeEach(() => {
     getCanTake.mockReset();

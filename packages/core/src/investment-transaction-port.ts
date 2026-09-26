@@ -267,4 +267,16 @@ export interface InvestmentTransactionPort {
    * DB lookup.
    */
   listAll(): Promise<InvestmentTransaction[]>;
+  /**
+   * The reversal row linked to one original transaction, if it's been
+   * cancelled (`reversalOfTransactionId` pointing back at
+   * `originalTransactionId`) -- `null` if the transaction has never been
+   * cancelled. Story 5.9: a thin public wrapper over `packages/db`'s
+   * existing internal `findReversalRow` helper (Story 3.8) -- used by the
+   * per-transaction audit-log route to resolve "does this transaction have a
+   * linked reversal" (Decision #5), not a new query shape. Mirrored by
+   * `WithdrawalTransactionPort.findByReversalOfTransactionId` one ledger
+   * over.
+   */
+  findByReversalOfTransactionId(originalTransactionId: string): Promise<InvestmentTransaction | null>;
 }

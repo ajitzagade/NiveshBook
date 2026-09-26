@@ -311,6 +311,21 @@ function createFakeInvestmentTransactionPort(): InvestmentTransactionPort & {
     async listAll() {
       return [...rows];
     },
+    // Story 5.9: mirrors `packages/db`'s `findReversalRow` shape -- a plain
+    // scan of `rows` for a match, minimal and correct for this file's own
+    // tests (which never exercise this directly). NOT `audit-history.test.ts`'s
+    // job, despite an earlier version of this comment claiming so -- that
+    // file's `assembleAuditHistory()` is a pure row-in/row-out transform over
+    // already-fetched lists and never calls this method at all (it derives
+    // reversal links itself, by scanning `reversalOfTransactionId` directly).
+    // The real coverage for this method lives in the investment audit-log
+    // route's own `route.test.ts` (mocked) and, for live Postgres,
+    // `packages/db/src/audit-log-port.test.ts`'s
+    // `createInvestmentTransactionPort.findAuditLogByTransactionId/.findByReversalOfTransactionId`
+    // describe block (post-review addition).
+    async findByReversalOfTransactionId(originalTransactionId) {
+      return rows.find((row) => row.reversalOfTransactionId === originalTransactionId) ?? null;
+    },
   };
 }
 

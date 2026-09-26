@@ -1,4 +1,4 @@
-import type { Money, PaymentMode, Percent, WithdrawalTransaction } from "@niveshbook/types";
+import type { AuditLogEntry, Money, PaymentMode, Percent, WithdrawalTransaction } from "@niveshbook/types";
 
 export interface CreateWithdrawalTransactionInput {
   projectId: string;
@@ -250,4 +250,28 @@ export interface WithdrawalTransactionPort {
    * is the sole consumer.
    */
   listAll(): Promise<WithdrawalTransaction[]>;
+  /**
+   * Every `audit_log` entry for one withdrawal (`entityType:
+   * "withdrawal_transaction"`, `entityId` = `transactionId`), chronological
+   * (`createdAt` ascending) -- mirrors
+   * `InvestmentTransactionPort.findAuditLogByTransactionId`'s identical
+   * Story 3.7 shape one ledger over (Story 5.9, closing the read gap
+   * `packages/db/src/ports.ts`'s own doc comment on `createWithdrawalTransactionPort`
+   * had explicitly flagged as "Story 4.11's job", left undone until now). The
+   * original `"create"` entry plus any later `"edit"`/`"cancel"` (Story 4.11)
+   * entries -- not filtered to only edits.
+   */
+  findAuditLogByTransactionId(transactionId: string): Promise<AuditLogEntry[]>;
+  /**
+   * The reversal row linked to one original withdrawal, if it's been
+   * cancelled (`reversalOfTransactionId` pointing back at `originalTransactionId`)
+   * -- `null` if the withdrawal has never been cancelled. Story 5.9: the
+   * withdrawal-side counterpart of the identical
+   * `InvestmentTransactionPort.findByReversalOfTransactionId` lookup this
+   * story adds alongside it, both used by their own per-transaction audit-log
+   * route to resolve "does this transaction have a linked reversal" (Decision
+   * #5) -- a thin public wrapper over `packages/db`'s existing internal
+   * `findWithdrawalReversalRow` helper (Story 4.11), not a new query shape.
+   */
+  findByReversalOfTransactionId(originalTransactionId: string): Promise<WithdrawalTransaction | null>;
 }

@@ -1,13 +1,23 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type MouseEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, History, Search } from "lucide-react";
-import type { MoneyHistoryEntry, MoneyTrailNode, MoneyTrailNodeType, Project } from "@niveshbook/types";
+import { ArrowLeft, History, Search, X } from "lucide-react";
+import type {
+  AuditLogEntry,
+  MoneyHistoryEntry,
+  MoneyTrailNode,
+  MoneyTrailNodeType,
+  Project,
+} from "@niveshbook/types";
 import {
   Amount,
   Button,
   Card,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogDescription,
   EmptyState,
   Field,
   Input,
@@ -28,6 +38,8 @@ import { getMoneyHistory, getTrailStartFromEntry, type MoneyHistoryFiltersInput 
 import { getMoneyTrail } from "@/lib/money-trail";
 import { ENTRY_TYPE_LABELS, describeTrailNode, flattenTrail } from "@/lib/money-trail-view";
 import { listProjects } from "@/lib/projects";
+import { getInvestmentTransactionAuditLog } from "@/lib/investment-transactions";
+import { getWithdrawalAuditLog } from "@/lib/withdrawal-transactions";
 
 type ListState =
   | { status: "loading" }
@@ -38,6 +50,31 @@ type TraceState =
   | { status: "loading" }
   | { status: "error"; message: string }
   | { status: "loaded"; trail: MoneyTrailNode };
+
+/**
+ * Story 5.9's post-review fix (spec-5-9's Spec Change Log): the Partner/
+ * Sub-partner self-access "View Audit History" entry point, moved here from
+ * Add Money/Withdraw Money (which turned out unreachable by that role -- see
+ * `apps/web/app/(dashboard)/layout.tsx`'s `auditHistory` nav item's own doc
+ * comment for the full story). Only ever shown for a `"money_added"`/
+ * `"money_withdrawn"` row -- those are the only two `MoneyHistoryEntry` types
+ * whose `id` is a real, directly-queryable `investment_transactions`/
+ * `withdrawal_transactions` row id (every other type is leg-derived from a
+ * withdrawal, per `MoneyHistoryEntry.id`'s own doc comment -- out of scope
+ * for this fix, which only needed to restore the two entry points that
+ * existed before).
+ */
+interface AuditTarget {
+  type: "money_added" | "money_withdrawn";
+  projectId: string;
+  transactionId: string;
+}
+
+/** The View Audit History dialog's own fetch state -- mirrors the shape `add-money/page.tsx`'s dialog used before this action moved here. */
+type AuditLogState =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "loaded"; entries: AuditLogEntry[]; linkedTransactionId: string | null; linkedEntries: AuditLogEntry[] };
 
 const PAYMENT_MODE_LABELS: Record<string, string> = {
   cash: "Cash",
@@ -95,6 +132,12 @@ export default function MoneyHistoryPage() {
   const [formFilters, setFormFilters] = useState<FilterFormState>(EMPTY_FILTERS);
   const [appliedFilters, setAppliedFilters] = useState<FilterFormState>(EMPTY_FILTERS);
   const [traceState, setTraceState] = useState<TraceState>({ status: "loading" });
+
+  // Story 5.9's post-review fix: the View Audit History dialog -- read-only,
+  // no form fields of its own, mirrors `add-money/page.tsx`'s original
+  // `auditTarget`/`auditState` shape before this action moved here.
+  const [auditTarget, setAuditTarget] = useState<AuditTarget | null>(null);
+  const [auditState, setAuditState] = useState<AuditLogState>({ status: "loading" });
 
   const traceType = searchParams.get("traceType");
   const traceId = searchParams.get("traceId");
@@ -205,6 +248,49 @@ export default function MoneyHistoryPage() {
     params.delete("traceId");
     const query = params.toString();
     router.push(query ? `/money-history?${query}` : "/money-history");
+  }
+
+  /**
+   * Opens the View Audit History dialog for a `"money_added"`/
+   * `"money_withdrawn"` row (Story 5.9's post-review fix) -- calls
+   * `event.stopPropagation()` first: this button renders inside a
+   * `<TableRow>` that already has its own `onClick` (`handleTraceEntry`,
+   * for trace navigation), so without stopping propagation, clicking this
+   * button would ALSO navigate into trace mode underneath the dialog. Picks
+   * the flat investment/withdrawal audit-log route by `entry.type` -- each
+   * entry's own `id`/`projectId` (never a `requirementId`, which
+   * `MoneyHistoryEntry` doesn't carry) is enough for either.
+   */
+  function openAuditDialog(event: MouseEvent, entry: MoneyHistoryEntry) {
+    event.stopPropagation();
+    if (entry.type !== "money_added" && entry.type !== "money_withdrawn") {
+      return;
+    }
+    setAuditTarget({ type: entry.type, projectId: entry.projectId, transactionId: entry.id });
+    setAuditState({ status: "loading" });
+    const fetchAuditLog =
+      entry.type === "money_added"
+        ? getInvestmentTransactionAuditLog(entry.projectId, entry.id)
+        : getWithdrawalAuditLog(entry.projectId, entry.id);
+    fetchAuditLog
+      .then((result) => {
+        setAuditState({
+          status: "loaded",
+          entries: result.entries,
+          linkedTransactionId: result.linkedTransactionId,
+          linkedEntries: result.linkedEntries,
+        });
+      })
+      .catch((error: unknown) => {
+        setAuditState({
+          status: "error",
+          message: error instanceof Error ? error.message : "Something went wrong.",
+        });
+      });
+  }
+
+  function closeAuditDialog() {
+    setAuditTarget(null);
   }
 
   if (isTracing) {
@@ -342,6 +428,7 @@ export default function MoneyHistoryPage() {
                 <Th className="!text-left">From</Th>
                 <Th className="!text-left">To</Th>
                 <Th className="!text-left">Notes</Th>
+                <Th className="!text-left">Audit</Th>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -352,6 +439,11 @@ export default function MoneyHistoryPage() {
                 // entirely for these rows, rather than sending the actor
                 // into a trace that goes nowhere.
                 const isTraceable = entry.type !== "adjustment";
+                // Story 5.9's post-review fix: only a `"money_added"`/
+                // `"money_withdrawn"` row's `id` is a real, directly-
+                // queryable investment/withdrawal transaction id -- see
+                // `AuditTarget`'s own doc comment above.
+                const isAuditable = entry.type === "money_added" || entry.type === "money_withdrawn";
                 return (
                   <TableRow
                     key={entry.id}
@@ -381,6 +473,19 @@ export default function MoneyHistoryPage() {
                   <Td className="!text-left text-ink-soft">{entry.from ?? "—"}</Td>
                   <Td className="!text-left text-ink-soft">{entry.to ?? "—"}</Td>
                   <Td className="!text-left text-ink-soft">{entry.notes ?? "—"}</Td>
+                  <Td className="!text-left">
+                    {isAuditable ? (
+                      <Button
+                        variant="ghost"
+                        onClick={(event) => openAuditDialog(event, entry)}
+                        icon={<History size={12} />}
+                      >
+                        View Audit History
+                      </Button>
+                    ) : (
+                      <span className="text-ink-faint">—</span>
+                    )}
+                  </Td>
                   </TableRow>
                 );
               })}
@@ -388,6 +493,92 @@ export default function MoneyHistoryPage() {
           </Table>
         )}
       </Card>
+
+      <Dialog
+        open={auditTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) closeAuditDialog();
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>Audit History</DialogTitle>
+          <DialogDescription>
+            Every recorded change to this{" "}
+            {auditTarget?.type === "money_withdrawn" ? "withdrawal" : "payment"} -- who, when, and why
+            (FR41/FR42).
+          </DialogDescription>
+          <div className="mt-4">
+            <AuditHistoryEntries state={auditState} />
+          </div>
+          <div className="mt-4 flex gap-2.5">
+            <Button type="button" variant="ghost" onClick={closeAuditDialog} icon={<X size={14} />}>
+              Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
+  );
+}
+
+/**
+ * Renders one View Audit History dialog's fetched entries (Story 5.9's
+ * post-review fix) -- mirrors the shape `add-money/page.tsx`'s/
+ * `withdraw-money/page.tsx`'s own dialogs used before this action moved
+ * here (each page kept its own copy, per this codebase's established
+ * per-page local-component convention). A cancel+reversal pair (Decision
+ * #5) renders as two sections: the requested transaction's own entries and,
+ * only when a link exists, "Linked Transaction" (the reversal, or the
+ * original if the requested transaction IS a reversal).
+ */
+function AuditHistoryEntries({ state }: { state: AuditLogState }) {
+  if (state.status === "loading") {
+    return <p className="text-[13.4px] text-ink-soft">Loading audit history…</p>;
+  }
+  if (state.status === "error") {
+    return (
+      <p role="alert" className="text-[13.4px] text-danger">
+        {state.message}
+      </p>
+    );
+  }
+  if (state.entries.length === 0 && state.linkedEntries.length === 0) {
+    return <p className="text-[13.4px] text-ink-soft">No audit history yet.</p>;
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      <AuditHistoryEntryList entries={state.entries} />
+      {state.linkedTransactionId ? (
+        <div>
+          <p className="mb-1.5 text-[12.6px] font-semibold text-ink-soft">
+            Linked Transaction ({state.linkedTransactionId})
+          </p>
+          <AuditHistoryEntryList entries={state.linkedEntries} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const AUDIT_ACTION_LABEL: Record<string, string> = {
+  create: "Created",
+  edit: "Edited",
+  cancel: "Cancelled",
+};
+
+function AuditHistoryEntryList({ entries }: { entries: AuditLogEntry[] }) {
+  if (entries.length === 0) {
+    return <p className="text-[12.6px] text-ink-faint">No entries of its own.</p>;
+  }
+  return (
+    <ul className="flex flex-col gap-2">
+      {entries.map((entry) => (
+        <li key={entry.id} className="border-l-2 border-border pl-2.5 text-[12.6px]">
+          <p className="font-semibold text-ink">{AUDIT_ACTION_LABEL[entry.action] ?? entry.action}</p>
+          <p className="text-ink-soft">{new Date(entry.createdAt).toLocaleString()}</p>
+          {entry.reason ? <p className="text-ink-soft">Reason: {entry.reason}</p> : null}
+        </li>
+      ))}
+    </ul>
   );
 }

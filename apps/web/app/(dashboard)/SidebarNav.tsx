@@ -52,6 +52,8 @@ function isActive(key: SidebarNavItem["key"], pathname: string): boolean {
       return pathname === "/adjust-next-time";
     case "moneyHistory":
       return pathname === "/money-history";
+    case "auditHistory":
+      return pathname === "/audit-history";
     default:
       return false;
   }

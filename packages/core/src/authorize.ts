@@ -41,6 +41,7 @@ export type Action =
   | "withdrawal_transactions:list"
   | "withdrawal_transactions:edit"
   | "withdrawal_transactions:cancel"
+  | "withdrawal_transactions:view_audit"
   | "withdrawal_adjustments:view"
   | "withdrawal_status:view"
   | "withdrawal_destination_allocations:create"
@@ -216,6 +217,13 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // qualifier names a self-service persona for either action).
   "withdrawal_transactions:edit": new Set(["owner_admin"]),
   "withdrawal_transactions:cancel": new Set(["owner_admin"]),
+  // Story 5.9: viewing a withdrawal's audit trail -- byte-for-byte mirrors
+  // `investment_transactions:view_audit`'s exact Story 3.7 shape one ledger
+  // over (this story's Decision #4/Code Map: the withdrawal-side audit read
+  // gap Story 4.11 left open). The role-table entry here still gates the
+  // Owner/Admin-viewing-anyone's-trail path; self-access itself is admitted
+  // via `SELF_ACCESS_ACTIONS` below.
+  "withdrawal_transactions:view_audit": new Set(["owner_admin"]),
   // Story 4.3 (Epic 4): Withdrawal Adjustment (Can Take - Taken) is
   // Owner/Admin-only in this story, mirroring `investment_adjustments:view`'s
   // identical precedent (spec-4-3's Decisions) -- the AC's "As a Partner"
@@ -390,6 +398,15 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
  * to admit both "my own status" and "my own Sub-partners, as part of my own
  * view", never a separate grant for viewing someone *else's* Sub-partner
  * directly.
+ *
+ * Story 5.9 adds `withdrawal_transactions:view_audit`: byte-for-byte
+ * identical shape to `investment_transactions:view_audit` one ledger over --
+ * the withdrawal's own linked Partner/Sub-partner may view its audit trail
+ * (`resourceRef.ownerId` is the withdrawal's target share's own `userId`,
+ * resolved by the route from the Project's *current* Partner/Sub-partner
+ * Shares the same way beforehand). `withdrawal_transactions:edit`/`:cancel`
+ * are deliberately NOT in this set -- editing/cancelling stays Owner/
+ * Admin-only, gated by the role table above alone.
  */
 const SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set([
   "users:view",
@@ -400,6 +417,7 @@ const SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set([
   "investment_transactions:view_audit",
   "withdrawal_transactions:create",
   "withdrawal_status:view",
+  "withdrawal_transactions:view_audit",
 ]);
 
 /**

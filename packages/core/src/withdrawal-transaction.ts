@@ -1,4 +1,11 @@
-import type { Money, PartnerShare, PaymentMode, Percent, SubPartnerShare } from "@niveshbook/types";
+import type {
+  AuditLogEntry,
+  Money,
+  PartnerShare,
+  PaymentMode,
+  Percent,
+  SubPartnerShare,
+} from "@niveshbook/types";
 import { toMoney, InvalidMoneyError, moneyEquals } from "./decimal-math";
 import { computeCanTake } from "./can-take";
 import type {
@@ -555,4 +562,23 @@ export async function cancelWithdrawalTransaction(
   };
 
   return deps.withdrawalTransactions.cancelTransaction(portInput);
+}
+
+/**
+ * Lists every `audit_log` entry for one withdrawal -- a thin pass-through to
+ * the port, mirroring `investment-transaction.ts`'s `listAuditLogForTransaction`
+ * one ledger over (Story 5.9). Named `listAuditLogForWithdrawalTransaction`,
+ * not `listAuditLogForTransaction` -- `investment-transaction.ts` already
+ * exports that exact name, and `packages/core/src/index.ts`'s two `export *`
+ * statements would otherwise produce an ambiguous/dropped barrel export for
+ * the shared name (mirrors `InvalidWithdrawalAmountError`'s identical
+ * barrel-export-collision rationale elsewhere in this file). Callers must run
+ * `authorize()` for `"withdrawal_transactions:view_audit"` before calling
+ * this.
+ */
+export async function listAuditLogForWithdrawalTransaction(
+  transactionId: string,
+  deps: WithdrawalTransactionDeps,
+): Promise<AuditLogEntry[]> {
+  return deps.withdrawalTransactions.findAuditLogByTransactionId(transactionId);
 }

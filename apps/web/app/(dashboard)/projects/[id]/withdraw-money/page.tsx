@@ -18,7 +18,13 @@ import {
   X,
 } from "lucide-react";
 import type { PartnerCanTake, PartnerWithdrawalAdjustment } from "@niveshbook/core";
-import type { DestinationType, Money, PaymentMode, Project, WithdrawalTransaction } from "@niveshbook/types";
+import type {
+  DestinationType,
+  Money,
+  PaymentMode,
+  Project,
+  WithdrawalTransaction,
+} from "@niveshbook/types";
 import {
   Amount,
   Button,

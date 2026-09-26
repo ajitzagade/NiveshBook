@@ -69,7 +69,7 @@ describe("DashboardLayout (Story 5.5 role-based nav filtering, widened to sub_pa
     (redirect as unknown as Mock).mockClear();
   });
 
-  it("owner_admin: unchanged -- all 9 items render, in the existing order", async () => {
+  it("owner_admin: all 10 items render (Story 5.9 adds Audit History), in the existing order", async () => {
     findUserById.mockResolvedValue({ id: "user-1", role: "owner_admin", active: true });
 
     const result = await DashboardLayout({ children: <div /> });
@@ -86,6 +86,7 @@ describe("DashboardLayout (Story 5.5 role-based nav filtering, widened to sub_pa
       "adjustNextTime",
       "moneyHistory",
       "reports",
+      "auditHistory",
     ]);
   });
 
@@ -107,6 +108,18 @@ describe("DashboardLayout (Story 5.5 role-based nav filtering, widened to sub_pa
     const shell = findComponent(result, SidebarShell);
     const items = (shell?.props as { items: { key: string }[] }).items;
     expect(items.map((item) => item.key)).toEqual(["home", "adjustNextTime", "moneyHistory", "reports"]);
+  });
+
+  it("Story 5.9: partner and sub_partner sessions never see the Audit History nav item", async () => {
+    for (const role of ["partner", "sub_partner"] as const) {
+      findUserById.mockResolvedValue({ id: "user-1", role, active: true });
+
+      const result = await DashboardLayout({ children: <div /> });
+
+      const shell = findComponent(result, SidebarShell);
+      const items = (shell?.props as { items: { key: string }[] }).items;
+      expect(items.some((item) => item.key === "auditHistory")).toBe(false);
+    }
   });
 
   it("Story 5.7: Reports now carries an href (widened from the inert, Owner/Admin-only placeholder)", async () => {

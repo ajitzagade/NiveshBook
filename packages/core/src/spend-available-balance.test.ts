@@ -95,6 +95,9 @@ function createFakeInvestmentTransactionPort(): InvestmentTransactionPort & {
     async listAll() {
       throw new Error("not exercised by spendAvailableBalanceToProject");
     },
+    async findByReversalOfTransactionId() {
+      throw new Error("not exercised by spendAvailableBalanceToProject");
+    },
   };
 }
 

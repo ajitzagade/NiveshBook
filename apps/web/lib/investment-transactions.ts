@@ -95,9 +95,16 @@ export interface EditInvestmentTransactionInput {
   reason: string | null;
 }
 
-/** `GET .../transactions/[transactionId]/audit-log`'s response shape. */
+/**
+ * `GET .../transactions/[transactionId]/audit-log`'s response shape.
+ * `linkedTransactionId`/`linkedEntries` (Story 5.9) resolve a cancelled
+ * transaction's linked reversal (or, viewed from the reversal itself, the
+ * original it reverses) -- `null`/`[]` when there's no linked transaction.
+ */
 export interface AuditLogResponse {
   entries: AuditLogEntry[];
+  linkedTransactionId: string | null;
+  linkedEntries: AuditLogEntry[];
 }
 
 /**
@@ -164,7 +171,21 @@ export async function cancelInvestmentTransaction(
   return (await response.json()) as CancelInvestmentTransactionResult;
 }
 
-/** Fetches every audit-trail entry (the original `"create"` plus any `"edit"`s) for one transaction (Story 3.7). */
+/**
+ * Fetches every audit-trail entry (the original `"create"` plus any
+ * `"edit"`s) for one transaction, via the nested per-requirement route
+ * (Story 3.7). Not currently called by any page -- Story 5.9 originally
+ * wired this into `add-money/page.tsx`'s "View Audit History" action, but a
+ * post-review fix (spec-5-9's Spec Change Log) found that page unreachable
+ * by the Partner/Sub-partner self-access this needed to serve (it's nested
+ * under the Owner/Admin-only `/projects/**` subtree), and moved that entry
+ * point to the Money History page instead, which calls the flat
+ * `getInvestmentTransactionAuditLog` below (no `requirementId` needed) --
+ * mirrors this codebase's established "a route lands ahead of its own UI"
+ * pattern (e.g. the Reports nav item stayed inert for several stories). Kept
+ * here, unchanged and still fully functional/tested, for a possible future
+ * Owner/Admin per-requirement drill-down.
+ */
 export async function getAuditLog(
   projectId: string,
   requirementId: string,
@@ -172,6 +193,31 @@ export async function getAuditLog(
 ): Promise<AuditLogResponse> {
   const response = await fetch(
     `/api/projects/${projectId}/investment-requirements/${requirementId}/transactions/${transactionId}/audit-log`,
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as AuditLogResponse;
+}
+
+/**
+ * Fetches the same per-transaction audit trail as `getAuditLog` above, but
+ * via the flat `.../investment-transactions/[transactionId]/audit-log` route
+ * (Story 5.9's post-review fix) -- this is the one Money History's own
+ * "View Audit History" action actually calls: `MoneyHistoryEntry` carries a
+ * `money_added` entry's own investment transaction `id` and `projectId`, but
+ * never a `requirementId`, so the flat route (not `getAuditLog`'s nested one)
+ * is what a caller without a `requirementId` in hand needs. Same response
+ * shape, same underlying `authorize()`/`listAuditLogForTransaction` logic
+ * server-side (`listAuditLogForTransaction`'s single implementation feeds
+ * both routes) -- just a shallower URL.
+ */
+export async function getInvestmentTransactionAuditLog(
+  projectId: string,
+  transactionId: string,
+): Promise<AuditLogResponse> {
+  const response = await fetch(
+    `/api/projects/${projectId}/investment-transactions/${transactionId}/audit-log`,
   );
   if (!response.ok) {
     throw new Error(await readErrorMessage(response));

@@ -7,7 +7,6 @@ const findSessionByTokenHash = vi.fn();
 const touchSession = vi.fn();
 const findUserById = vi.fn();
 const findProjectById = vi.fn();
-const findRequirementById = vi.fn();
 const findTransactionById = vi.fn();
 const listPartnerSharesByProjectId = vi.fn();
 const listSubPartnerSharesByProjectId = vi.fn();
@@ -46,16 +45,14 @@ vi.mock("@niveshbook/db", () => ({
     listByPartnerId: vi.fn(),
     listByProjectId: listSubPartnerSharesByProjectId,
   }),
-  createInvestmentRequirementPort: () => ({
-    createInvestmentRequirement: vi.fn(),
-    listByProjectId: vi.fn(),
-    findById: findRequirementById,
-  }),
-  createInvestmentTransactionPort: () => ({
+  createWithdrawalTransactionPort: () => ({
     recordTransaction: vi.fn(),
-    listByRequirementId: vi.fn(),
+    listByProjectId: vi.fn(),
+    sumActiveAmountByProjectId: vi.fn(),
     findById: findTransactionById,
     editTransaction: vi.fn(),
+    cancelTransaction: vi.fn(),
+    listAll: vi.fn(),
     findAuditLogByTransactionId,
     findByReversalOfTransactionId,
   }),
@@ -63,24 +60,18 @@ vi.mock("@niveshbook/db", () => ({
 
 const PROJECT_ID = "0192f5a0-4444-7000-8000-000000000004";
 const OTHER_PROJECT_ID = "0192f5a0-5555-7000-8000-000000000005";
-const REQUIREMENT_ID = "0192f5a0-6666-7000-8000-000000000006";
-const OTHER_REQUIREMENT_ID = "0192f5a0-7777-7000-8000-000000000007";
 const TRANSACTION_ID = "0192f5a0-8888-7000-8000-000000000008";
 
 function makeRequest(options: { cookie?: string; transactionId?: string } = {}): NextRequest {
   const { cookie, transactionId = TRANSACTION_ID } = options;
   return new NextRequest(
-    `http://localhost/api/projects/${PROJECT_ID}/investment-requirements/${REQUIREMENT_ID}/transactions/${transactionId}/audit-log`,
+    `http://localhost/api/projects/${PROJECT_ID}/withdrawal-transactions/${transactionId}/audit-log`,
     { method: "GET", headers: cookie ? { Cookie: cookie } : undefined },
   );
 }
 
-function makeContext(
-  id: string = PROJECT_ID,
-  requirementId: string = REQUIREMENT_ID,
-  transactionId: string = TRANSACTION_ID,
-) {
-  return { params: Promise.resolve({ id, requirementId, transactionId }) };
+function makeContext(id: string = PROJECT_ID, transactionId: string = TRANSACTION_ID) {
+  return { params: Promise.resolve({ id, transactionId }) };
 }
 
 const LIVE_SESSION = {
@@ -129,28 +120,21 @@ const EXISTING_PROJECT = {
   updatedAt: new Date().toISOString(),
 };
 
-const EXISTING_REQUIREMENT = {
-  id: REQUIREMENT_ID,
-  projectId: PROJECT_ID,
-  amount: "1000000",
-  requirementDate: "2026-10-01",
-  createdAt: new Date().toISOString(),
-};
-
-// The transaction under audit belongs to Partner A (`shareId: "a"`, `userId: "partner-user-a"`).
+// The withdrawal under audit belongs to Partner A (`shareId: "a"`, `userId: "partner-user-a"`).
 const EXISTING_TRANSACTION = {
   id: TRANSACTION_ID,
-  requirementId: REQUIREMENT_ID,
   projectId: PROJECT_ID,
   partyType: "partner",
   shareId: "a",
   sharePercentSnapshot: "50",
-  shouldPaySnapshot: "500000",
-  amount: "750000",
-  transactionDate: "2026-10-06",
-  paymentMode: "upi",
-  referenceNumber: "REF-2",
-  notes: "corrected",
+  canTakeSnapshot: "500000",
+  amount: "250000",
+  transactionDate: "2026-10-05",
+  paymentMode: "neft",
+  referenceNumber: "REF-1",
+  notes: null,
+  status: "active",
+  reversalOfTransactionId: null,
   createdAt: new Date().toISOString(),
 };
 
@@ -173,24 +157,13 @@ function makePartnerShareRow(overrides: Record<string, unknown> = {}) {
 const AUDIT_ENTRIES = [
   {
     id: "audit-1",
-    entityType: "investment_transaction",
+    entityType: "withdrawal_transaction",
     entityId: TRANSACTION_ID,
     action: "create",
     actorUserId: "owner-1",
     oldValue: null,
-    newValue: { ...EXISTING_TRANSACTION, amount: "700000" },
-    reason: null,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: "audit-2",
-    entityType: "investment_transaction",
-    entityId: TRANSACTION_ID,
-    action: "edit",
-    actorUserId: "owner-1",
-    oldValue: { ...EXISTING_TRANSACTION, amount: "700000" },
     newValue: EXISTING_TRANSACTION,
-    reason: "typo'd the original amount",
+    reason: null,
     createdAt: new Date().toISOString(),
   },
 ];
@@ -202,8 +175,6 @@ function resetMocks() {
   findUserById.mockReset();
   findProjectById.mockReset();
   findProjectById.mockResolvedValue(EXISTING_PROJECT);
-  findRequirementById.mockReset();
-  findRequirementById.mockResolvedValue(EXISTING_REQUIREMENT);
   findTransactionById.mockReset();
   findTransactionById.mockResolvedValue(EXISTING_TRANSACTION);
   listPartnerSharesByProjectId.mockReset();
@@ -224,7 +195,7 @@ function ownerSession() {
   findUserById.mockResolvedValue(OWNER_USER);
 }
 
-describe("GET .../transactions/[transactionId]/audit-log", () => {
+describe("GET .../withdrawal-transactions/[transactionId]/audit-log (Story 5.9)", () => {
   beforeEach(resetMocks);
 
   it("returns 401 with no session cookie", async () => {
@@ -250,26 +221,6 @@ describe("GET .../transactions/[transactionId]/audit-log", () => {
     const response = await GET(makeRequest({ cookie: `${SESSION_COOKIE_NAME}=t` }), makeContext());
 
     expect(response.status).toBe(404);
-    expect(findRequirementById).not.toHaveBeenCalled();
-  });
-
-  it("returns 404 for a nonexistent requirement", async () => {
-    ownerSession();
-    findRequirementById.mockResolvedValue(null);
-
-    const response = await GET(makeRequest({ cookie: `${SESSION_COOKIE_NAME}=t` }), makeContext());
-
-    expect(response.status).toBe(404);
-    expect(findTransactionById).not.toHaveBeenCalled();
-  });
-
-  it("returns 404 when the requirement belongs to a different project", async () => {
-    ownerSession();
-    findRequirementById.mockResolvedValue({ ...EXISTING_REQUIREMENT, projectId: OTHER_PROJECT_ID });
-
-    const response = await GET(makeRequest({ cookie: `${SESSION_COOKIE_NAME}=t` }), makeContext());
-
-    expect(response.status).toBe(404);
     expect(findTransactionById).not.toHaveBeenCalled();
   });
 
@@ -278,7 +229,7 @@ describe("GET .../transactions/[transactionId]/audit-log", () => {
 
     const response = await GET(
       makeRequest({ cookie: `${SESSION_COOKIE_NAME}=t` }),
-      makeContext(PROJECT_ID, REQUIREMENT_ID, "not-a-uuid"),
+      makeContext(PROJECT_ID, "not-a-uuid"),
     );
 
     expect(response.status).toBe(404);
@@ -288,16 +239,6 @@ describe("GET .../transactions/[transactionId]/audit-log", () => {
   it("returns 404 for a nonexistent transaction", async () => {
     ownerSession();
     findTransactionById.mockResolvedValue(null);
-
-    const response = await GET(makeRequest({ cookie: `${SESSION_COOKIE_NAME}=t` }), makeContext());
-
-    expect(response.status).toBe(404);
-    expect(findAuditLogByTransactionId).not.toHaveBeenCalled();
-  });
-
-  it("returns 404 when the transaction belongs to a different requirement (cross-requirement mismatch)", async () => {
-    ownerSession();
-    findTransactionById.mockResolvedValue({ ...EXISTING_TRANSACTION, requirementId: OTHER_REQUIREMENT_ID });
 
     const response = await GET(makeRequest({ cookie: `${SESSION_COOKIE_NAME}=t` }), makeContext());
 
@@ -328,7 +269,7 @@ describe("GET .../transactions/[transactionId]/audit-log", () => {
     });
   });
 
-  it("returns 200 for the transaction's own linked Partner (self-access)", async () => {
+  it("returns 200 for the withdrawal's own linked Partner (self-access)", async () => {
     findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: "partner-user-a" });
     findUserById.mockResolvedValue(PARTNER_A_USER);
 
@@ -342,7 +283,7 @@ describe("GET .../transactions/[transactionId]/audit-log", () => {
     });
   });
 
-  it("returns 403 for a co-Partner not linked to this transaction's own share", async () => {
+  it("returns 403 for a co-Partner not linked to this withdrawal's own share (a different actor's userId)", async () => {
     findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: "partner-user-b" });
     findUserById.mockResolvedValue(PARTNER_B_USER);
 
@@ -353,7 +294,7 @@ describe("GET .../transactions/[transactionId]/audit-log", () => {
     expect(findAuditLogByTransactionId).not.toHaveBeenCalled();
   });
 
-  describe("Story 5.9: linked cancel/reversal pair resolution", () => {
+  describe("Story 5.9: linked cancel/reversal pair resolution (real cancelled-transaction-plus-reversal fixture)", () => {
     const REVERSAL_ID = "0192f5a0-9999-7000-8000-000000000009";
     const REVERSAL_TRANSACTION = {
       ...EXISTING_TRANSACTION,
@@ -363,8 +304,8 @@ describe("GET .../transactions/[transactionId]/audit-log", () => {
     };
     const REVERSAL_AUDIT_ENTRIES = [
       {
-        id: "audit-3",
-        entityType: "investment_transaction",
+        id: "audit-2",
+        entityType: "withdrawal_transaction",
         entityId: TRANSACTION_ID,
         action: "cancel",
         actorUserId: "owner-1",
@@ -407,7 +348,7 @@ describe("GET .../transactions/[transactionId]/audit-log", () => {
 
       const response = await GET(
         makeRequest({ cookie: `${SESSION_COOKIE_NAME}=t`, transactionId: REVERSAL_ID }),
-        makeContext(PROJECT_ID, REQUIREMENT_ID, REVERSAL_ID),
+        makeContext(PROJECT_ID, REVERSAL_ID),
       );
 
       expect(response.status).toBe(200);
@@ -416,7 +357,6 @@ describe("GET .../transactions/[transactionId]/audit-log", () => {
         linkedTransactionId: TRANSACTION_ID,
         linkedEntries: REVERSAL_AUDIT_ENTRIES,
       });
-      // Never falls through to the reverse lookup once `reversalOfTransactionId` is already set.
       expect(findByReversalOfTransactionId).not.toHaveBeenCalled();
     });
   });
