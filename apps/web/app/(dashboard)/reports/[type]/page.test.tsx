@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { render, screen, waitFor, cleanup, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ReportViewerPage from "./page";
 
@@ -62,7 +62,12 @@ describe("ReportViewerPage (Story 5.7, FR38/FR39)", () => {
 
     render(<ReportViewerPage />);
 
-    expect(await screen.findByText("Asha")).toBeInTheDocument();
+    // spec-mobile-responsive-phase2-table-cards: the RowCard stack renders
+    // the exact same rows alongside the Table (CSS-only breakpoint switch)
+    // -- scoped to the Table here, its own desktop-specific assertion; the
+    // card stack's own copy is covered by the dedicated describe block below.
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText("Asha")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Money Added" })).toBeInTheDocument();
     await waitFor(() => expect(getReport).toHaveBeenCalledWith("money-added", expect.any(Object)));
   });
@@ -105,7 +110,8 @@ describe("ReportViewerPage (Story 5.7, FR38/FR39)", () => {
 
     render(<ReportViewerPage />);
 
-    expect(await screen.findByText("Project A")).toBeInTheDocument();
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText("Project A")).toBeInTheDocument();
   });
 
   it("renders Payment Mode aggregate rows grouped by mode", async () => {
@@ -114,7 +120,8 @@ describe("ReportViewerPage (Story 5.7, FR38/FR39)", () => {
 
     render(<ReportViewerPage />);
 
-    expect(await screen.findByText("NEFT")).toBeInTheDocument();
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText("NEFT")).toBeInTheDocument();
   });
 
   // Review finding (High): `PartnerTable`, `SubPartnerTable`, and
@@ -145,10 +152,11 @@ describe("ReportViewerPage (Story 5.7, FR38/FR39)", () => {
 
     render(<ReportViewerPage />);
 
-    expect(await screen.findByText("Asha")).toBeInTheDocument();
-    expect(screen.getByText("Project A")).toBeInTheDocument();
-    expect(screen.getByText("33.33%")).toBeInTheDocument();
-    expect(screen.getByText("₹5,00,000")).toBeInTheDocument();
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText("Asha")).toBeInTheDocument();
+    expect(within(table).getByText("Project A")).toBeInTheDocument();
+    expect(within(table).getByText("33.33%")).toBeInTheDocument();
+    expect(within(table).getByText("₹5,00,000")).toBeInTheDocument();
   });
 
   it("renders Sub-partner aggregate rows with the real DOM, incl. formatSharePercent's trimmed output", async () => {
@@ -171,10 +179,11 @@ describe("ReportViewerPage (Story 5.7, FR38/FR39)", () => {
 
     render(<ReportViewerPage />);
 
-    expect(await screen.findByText("Bala")).toBeInTheDocument();
-    expect(screen.getByText("Project A")).toBeInTheDocument();
-    expect(screen.getByText("20%")).toBeInTheDocument();
-    expect(screen.getByText("₹70,000")).toBeInTheDocument();
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText("Bala")).toBeInTheDocument();
+    expect(within(table).getByText("Project A")).toBeInTheDocument();
+    expect(within(table).getByText("20%")).toBeInTheDocument();
+    expect(within(table).getByText("₹70,000")).toBeInTheDocument();
   });
 
   it("renders Available Balance aggregate rows with the real DOM, incl. name and balance", async () => {
@@ -194,9 +203,10 @@ describe("ReportViewerPage (Story 5.7, FR38/FR39)", () => {
 
     render(<ReportViewerPage />);
 
-    expect(await screen.findByText("Asha")).toBeInTheDocument();
-    expect(screen.getByText("Project A")).toBeInTheDocument();
-    expect(screen.getByText("₹5,000")).toBeInTheDocument();
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText("Asha")).toBeInTheDocument();
+    expect(within(table).getByText("Project A")).toBeInTheDocument();
+    expect(within(table).getByText("₹5,000")).toBeInTheDocument();
   });
 
   it("renders an empty state when there are zero rows", async () => {
@@ -206,6 +216,9 @@ describe("ReportViewerPage (Story 5.7, FR38/FR39)", () => {
     render(<ReportViewerPage />);
 
     expect(await screen.findByText("No Money History data yet")).toBeInTheDocument();
+    // EmptyState renders once, not duplicated for table+card (spec-mobile-
+    // responsive-phase2-table-cards' I/O matrix).
+    expect(screen.queryByTestId("reports-row-cards")).not.toBeInTheDocument();
   });
 
   it("shows the error message when the API call fails (e.g. a 403 for a report the actor isn't granted)", async () => {
@@ -215,6 +228,158 @@ describe("ReportViewerPage (Story 5.7, FR38/FR39)", () => {
     render(<ReportViewerPage />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent("You don't have permission to do that.");
+  });
+});
+
+/**
+ * spec-mobile-responsive-phase2-table-cards: below 860px, each of the 6
+ * report shapes renders a `RowCard` stack instead of a table -- both
+ * renders exist in the DOM simultaneously (CSS-only breakpoint switch),
+ * scoped here via the stack's own `data-testid` so these assertions are
+ * independent of the desktop Table's identical content.
+ */
+describe("ReportViewerPage -- below-860px RowCard stack", () => {
+  it("EntryRowsTable's card stack (via the shared money-history helper) carries every field", async () => {
+    mockType = "money-added";
+    getReport.mockResolvedValue({ rows: [MONEY_ADDED_ENTRY] });
+
+    render(<ReportViewerPage />);
+
+    const cards = await screen.findByTestId("reports-row-cards");
+    expect(within(cards).getByText("Money Added")).toBeInTheDocument();
+    expect(within(cards).getByText("Asha")).toBeInTheDocument();
+    expect(within(cards).getByText("Project A")).toBeInTheDocument();
+    expect(within(cards).getByText("NEFT")).toBeInTheDocument();
+  });
+
+  it("PaymentModeTable's card stack carries Total Amount and Entries", async () => {
+    mockType = "payment-mode";
+    getReport.mockResolvedValue({ rows: [{ paymentMode: "neft", totalAmount: "150000", entryCount: 2 }] });
+
+    render(<ReportViewerPage />);
+
+    const cards = await screen.findByTestId("reports-row-cards");
+    expect(within(cards).getByText("NEFT")).toBeInTheDocument();
+    expect(within(cards).getByText("₹1,50,000")).toBeInTheDocument();
+    expect(within(cards).getByText("2")).toBeInTheDocument();
+  });
+
+  it("ProjectMoneyTable's card stack carries Money Added/Withdrawn/Available Balance", async () => {
+    mockType = "project-money";
+    getReport.mockResolvedValue({
+      rows: [
+        {
+          projectId: "project-a",
+          projectName: "Project A",
+          totalAdded: "500000",
+          totalWithdrawn: "100000",
+          totalAvailableBalance: "50000",
+        },
+      ],
+    });
+
+    render(<ReportViewerPage />);
+
+    const cards = await screen.findByTestId("reports-row-cards");
+    expect(within(cards).getByText("Project A")).toBeInTheDocument();
+    expect(within(cards).getByText("₹5,00,000")).toBeInTheDocument();
+    expect(within(cards).getByText("₹1,00,000")).toBeInTheDocument();
+    expect(within(cards).getByText("₹50,000")).toBeInTheDocument();
+  });
+
+  it("PartnerTable's card stack carries Project/Share %/Money Added/Withdrawn/Available Balance", async () => {
+    mockType = "partner";
+    getReport.mockResolvedValue({
+      rows: [
+        {
+          partnerId: "partner-1",
+          name: "Asha",
+          projectId: "project-a",
+          projectName: "Project A",
+          sharePercent: "33.3300",
+          totalAdded: "500000",
+          totalWithdrawn: "100000",
+          totalAvailableBalance: "50000",
+        },
+      ],
+    });
+
+    render(<ReportViewerPage />);
+
+    const cards = await screen.findByTestId("reports-row-cards");
+    expect(within(cards).getByText("Asha")).toBeInTheDocument();
+    expect(within(cards).getByText("Project A")).toBeInTheDocument();
+    expect(within(cards).getByText("33.33%")).toBeInTheDocument();
+    expect(within(cards).getByText("₹5,00,000")).toBeInTheDocument();
+  });
+
+  it("SubPartnerTable's card stack carries Project/Share %/Money Added/Withdrawn/Available Balance", async () => {
+    mockType = "sub-partner";
+    getReport.mockResolvedValue({
+      rows: [
+        {
+          subPartnerId: "sub-1",
+          name: "Bala",
+          partnerId: "partner-1",
+          projectId: "project-a",
+          projectName: "Project A",
+          sharePercent: "20.0000",
+          totalAdded: "70000",
+          totalWithdrawn: "0",
+          totalAvailableBalance: "0",
+        },
+      ],
+    });
+
+    render(<ReportViewerPage />);
+
+    const cards = await screen.findByTestId("reports-row-cards");
+    expect(within(cards).getByText("Bala")).toBeInTheDocument();
+    expect(within(cards).getByText("Project A")).toBeInTheDocument();
+    expect(within(cards).getByText("20%")).toBeInTheDocument();
+    expect(within(cards).getByText("₹70,000")).toBeInTheDocument();
+  });
+
+  it("AvailableBalanceTable's card stack carries Project/Balance", async () => {
+    mockType = "available-balance";
+    getReport.mockResolvedValue({
+      rows: [
+        {
+          partyType: "partner",
+          shareId: "partner-1",
+          name: "Asha",
+          projectId: "project-a",
+          projectName: "Project A",
+          balance: "5000",
+        },
+      ],
+    });
+
+    render(<ReportViewerPage />);
+
+    const cards = await screen.findByTestId("reports-row-cards");
+    expect(within(cards).getByText("Asha")).toBeInTheDocument();
+    expect(within(cards).getByText("Project A")).toBeInTheDocument();
+    expect(within(cards).getByText("₹5,000")).toBeInTheDocument();
+  });
+
+  // Review fix: jsdom never evaluates CSS, so a swapped/dropped breakpoint
+  // class would still leave every other assertion above green. Assert the
+  // actual wiring directly, mirroring layout.test.tsx's `asideClassName`
+  // pattern.
+  it("wires the desktop Table and mobile RowCard stack to opposite ends of the 860px breakpoint", async () => {
+    mockType = "money-added";
+    getReport.mockResolvedValue({ rows: [MONEY_ADDED_ENTRY] });
+
+    render(<ReportViewerPage />);
+
+    const table = await screen.findByRole("table");
+    const tableWrapper = table.closest('[class*="860px"]');
+    expect(tableWrapper?.className).toContain("max-[860px]:hidden");
+
+    const cards = screen.getByTestId("reports-row-cards");
+    expect(cards.className).toContain("hidden");
+    expect(cards.className).toContain("max-[860px]:block");
   });
 });
 

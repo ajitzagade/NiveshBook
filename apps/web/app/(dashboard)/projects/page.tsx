@@ -9,6 +9,7 @@ import {
   Card,
   EmptyState,
   PageHeader,
+  RowCard,
   Table,
   TableHead,
   TableBody,
@@ -22,6 +23,51 @@ type ListState =
   | { status: "loading" }
   | { status: "error"; message: string }
   | { status: "loaded"; projects: Project[] };
+
+/**
+ * The 5 per-project actions (Edit/Shares/Add Money/Withdraw Money/
+ * Structure), tones per DESIGN.md's canonical nav-badge map (founder
+ * feedback 2026-09-26) -- extracted so the desktop Table cell and the
+ * below-860px `RowCard`'s own `action` slot (spec-mobile-responsive-
+ * phase2-table-cards, Decision #4) render the exact same buttons rather
+ * than duplicating this JSX twice.
+ */
+function ProjectActionButtons({ project }: { project: Project }) {
+  return (
+    <>
+      <Button asChild variant="ghost" tone="accent">
+        <Link href={`/projects/${project.id}/edit`} className="inline-flex items-center gap-1.5">
+          <Pencil size={14} />
+          Edit
+        </Link>
+      </Button>
+      <Button asChild variant="ghost" tone="info">
+        <Link href={`/projects/${project.id}/shares`} className="inline-flex items-center gap-1.5">
+          <Percent size={14} />
+          Shares
+        </Link>
+      </Button>
+      <Button asChild variant="ghost" tone="success">
+        <Link href={`/projects/${project.id}/add-money`} className="inline-flex items-center gap-1.5">
+          <Plus size={14} />
+          Add Money
+        </Link>
+      </Button>
+      <Button asChild variant="ghost" tone="danger">
+        <Link href={`/projects/${project.id}/withdraw-money`} className="inline-flex items-center gap-1.5">
+          <Minus size={14} />
+          Withdraw Money
+        </Link>
+      </Button>
+      <Button asChild variant="ghost" tone="violet">
+        <Link href={`/structure/${project.id}`} className="inline-flex items-center gap-1.5">
+          <Network size={14} />
+          Structure
+        </Link>
+      </Button>
+    </>
+  );
+}
 
 /**
  * Projects list (Story 2.1): fetches `GET /api/projects` client-side and
@@ -90,58 +136,56 @@ export default function ProjectsPage() {
             }
           />
         ) : (
-          <Table>
-            <TableHead>
-              <TableRow>
-                <Th>Name</Th>
-                <Th className="!text-left">Description</Th>
-                <Th className="!text-left">Actions</Th>
-              </TableRow>
-            </TableHead>
-            <TableBody>
+          <>
+            {/*
+              Desktop (>=860px): the existing Table, byte-for-byte unchanged
+              other than this new wrapping div (spec-mobile-responsive-
+              phase2-table-cards) -- hidden below 860px, where the RowCard
+              stack below takes over instead.
+            */}
+            <div className="max-[860px]:hidden">
+              <Table>
+                <TableHead>
+                  <TableRow>
+                    <Th>Name</Th>
+                    <Th className="!text-left">Description</Th>
+                    <Th className="!text-left">Actions</Th>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {state.projects.map((project) => (
+                    <TableRow key={project.id}>
+                      <Td className="font-semibold">{project.name}</Td>
+                      <Td className="!text-left text-ink-soft">{project.description ?? "—"}</Td>
+                      <Td className="!text-left">
+                        <div className="flex gap-1.5">
+                          <ProjectActionButtons project={project} />
+                        </div>
+                      </Td>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+
+            {/*
+              Below 860px: one RowCard per Project (Decision #4) -- title
+              carries the Name column, the single Description field mirrors
+              the table's own column, and the 5 action buttons render
+              verbatim in RowCard's flex-wrap action slot instead of being
+              trimmed or hidden.
+            */}
+            <div className="hidden max-[860px]:block" data-testid="projects-row-cards">
               {state.projects.map((project) => (
-                <TableRow key={project.id}>
-                  <Td className="font-semibold">{project.name}</Td>
-                  <Td className="!text-left text-ink-soft">{project.description ?? "—"}</Td>
-                  <Td className="!text-left">
-                    {/* Tones per DESIGN.md's canonical nav-badge map (founder feedback 2026-09-26). */}
-                    <div className="flex gap-1.5">
-                      <Button asChild variant="ghost" tone="accent">
-                        <Link href={`/projects/${project.id}/edit`} className="inline-flex items-center gap-1.5">
-                          <Pencil size={14} />
-                          Edit
-                        </Link>
-                      </Button>
-                      <Button asChild variant="ghost" tone="info">
-                        <Link href={`/projects/${project.id}/shares`} className="inline-flex items-center gap-1.5">
-                          <Percent size={14} />
-                          Shares
-                        </Link>
-                      </Button>
-                      <Button asChild variant="ghost" tone="success">
-                        <Link href={`/projects/${project.id}/add-money`} className="inline-flex items-center gap-1.5">
-                          <Plus size={14} />
-                          Add Money
-                        </Link>
-                      </Button>
-                      <Button asChild variant="ghost" tone="danger">
-                        <Link href={`/projects/${project.id}/withdraw-money`} className="inline-flex items-center gap-1.5">
-                          <Minus size={14} />
-                          Withdraw Money
-                        </Link>
-                      </Button>
-                      <Button asChild variant="ghost" tone="violet">
-                        <Link href={`/structure/${project.id}`} className="inline-flex items-center gap-1.5">
-                          <Network size={14} />
-                          Structure
-                        </Link>
-                      </Button>
-                    </div>
-                  </Td>
-                </TableRow>
+                <RowCard
+                  key={project.id}
+                  title={project.name}
+                  fields={[{ label: "Description", value: project.description ?? "—" }]}
+                  action={<ProjectActionButtons project={project} />}
+                />
               ))}
-            </TableBody>
-          </Table>
+            </div>
+          </>
         )}
       </Card>
     </div>

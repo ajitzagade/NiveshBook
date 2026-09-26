@@ -13,6 +13,7 @@ export * from "./components/share-list";
 export * from "./components/person-card";
 export * from "./components/split-row";
 export * from "./components/adjust-person-card";
+export * from "./components/row-card";
 export * from "./components/trail";
 export * from "./components/report-tile";
 export * from "./components/logo";

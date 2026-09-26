@@ -23,6 +23,7 @@ import {
   Input,
   Label,
   PageHeader,
+  RowCard,
   StatusChip,
   Table,
   TableHead,
@@ -36,6 +37,7 @@ import {
 } from "@niveshbook/ui";
 import { getMoneyHistory, getTrailStartFromEntry, type MoneyHistoryFiltersInput } from "@/lib/money-history";
 import { getMoneyTrail } from "@/lib/money-trail";
+import { mapMoneyHistoryEntryToRowCard, PAYMENT_MODE_LABELS } from "@/lib/money-history-row-card";
 import { ENTRY_TYPE_LABELS, describeTrailNode, flattenTrail } from "@/lib/money-trail-view";
 import { listProjects } from "@/lib/projects";
 import { getInvestmentTransactionAuditLog } from "@/lib/investment-transactions";
@@ -75,17 +77,6 @@ type AuditLogState =
   | { status: "loading" }
   | { status: "error"; message: string }
   | { status: "loaded"; entries: AuditLogEntry[]; linkedTransactionId: string | null; linkedEntries: AuditLogEntry[] };
-
-const PAYMENT_MODE_LABELS: Record<string, string> = {
-  cash: "Cash",
-  cheque: "Cheque",
-  neft: "NEFT",
-  rtgs: "RTGS",
-  imps: "IMPS",
-  upi: "UPI",
-  bank_transfer: "Bank Transfer",
-  other: "Other",
-};
 
 interface FilterFormState {
   dateFrom: string;
@@ -416,84 +407,139 @@ export default function MoneyHistoryPage() {
             description="Add Money, Withdraw Money, Movement, and Available Balance activity will show up here as it happens."
           />
         ) : (
-          <Table>
-            <TableHead>
-              <TableRow>
-                <Th className="!text-left">Date</Th>
-                <Th className="!text-left">What Happened</Th>
-                <Th className="!text-left">Project</Th>
-                <Th className="!text-left">Person</Th>
-                <Th>Amount</Th>
-                <Th className="!text-left">Payment Mode</Th>
-                <Th className="!text-left">From</Th>
-                <Th className="!text-left">To</Th>
-                <Th className="!text-left">Notes</Th>
-                <Th className="!text-left">Audit</Th>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {state.entries.map((entry) => {
-                // Story 5.3 (FR33/FR34, AD-4): an "adjustment" entry (a
-                // netting audit record) has no linked money movement to
-                // trace -- omit the row's click/hover trace affordance
-                // entirely for these rows, rather than sending the actor
-                // into a trace that goes nowhere.
-                const isTraceable = entry.type !== "adjustment";
-                // Story 5.9's post-review fix: only a `"money_added"`/
-                // `"money_withdrawn"` row's `id` is a real, directly-
-                // queryable investment/withdrawal transaction id -- see
-                // `AuditTarget`'s own doc comment above.
-                const isAuditable = entry.type === "money_added" || entry.type === "money_withdrawn";
-                return (
-                  <TableRow
-                    key={entry.id}
-                    className={isTraceable ? "cursor-pointer hover:bg-surface-alt" : undefined}
-                    onClick={isTraceable ? () => handleTraceEntry(entry) : undefined}
-                    title={isTraceable ? "View this entry's money trail" : undefined}
-                  >
-                  <Td className="!text-left text-ink-soft">{entry.date}</Td>
-                  <Td className="!text-left">
-                    <span className="inline-flex items-center gap-1.5">
-                      {ENTRY_TYPE_LABELS[entry.type]}
-                      {entry.status === "cancelled" ? (
-                        <StatusChip variant="danger">
-                          Cancelled{entry.reversalOfTransactionId ? " (reversal)" : ""}
-                        </StatusChip>
-                      ) : null}
-                    </span>
-                  </Td>
-                  <Td className="!text-left">{entry.projectName}</Td>
-                  <Td className="!text-left">{entry.personName ?? "—"}</Td>
-                  <Td>
-                    <Amount value={entry.amount} size="sm" />
-                  </Td>
-                  <Td className="!text-left text-ink-soft">
-                    {entry.paymentMode ? (PAYMENT_MODE_LABELS[entry.paymentMode] ?? entry.paymentMode) : "—"}
-                  </Td>
-                  <Td className="!text-left text-ink-soft">{entry.from ?? "—"}</Td>
-                  <Td className="!text-left text-ink-soft">{entry.to ?? "—"}</Td>
-                  <Td className="!text-left text-ink-soft">{entry.notes ?? "—"}</Td>
-                  <Td className="!text-left">
-                    {isAuditable ? (
-                      // Default action -> accent (Decision 1's tone map,
-                      // founder feedback 2026-09-26).
-                      <Button
-                        variant="ghost"
-                        tone="accent"
-                        onClick={(event) => openAuditDialog(event, entry)}
-                        icon={<History size={12} />}
-                      >
-                        View Audit History
-                      </Button>
-                    ) : (
-                      <span className="text-ink-faint">—</span>
-                    )}
-                  </Td>
+          <>
+            {/*
+              Desktop (>=860px): the existing Table, byte-for-byte unchanged
+              other than this new wrapping div (spec-mobile-responsive-
+              phase2-table-cards) -- hidden below 860px, where the RowCard
+              stack below takes over instead.
+            */}
+            <div className="max-[860px]:hidden">
+              <Table>
+                <TableHead>
+                  <TableRow>
+                    <Th className="!text-left">Date</Th>
+                    <Th className="!text-left">What Happened</Th>
+                    <Th className="!text-left">Project</Th>
+                    <Th className="!text-left">Person</Th>
+                    <Th>Amount</Th>
+                    <Th className="!text-left">Payment Mode</Th>
+                    <Th className="!text-left">From</Th>
+                    <Th className="!text-left">To</Th>
+                    <Th className="!text-left">Notes</Th>
+                    <Th className="!text-left">Audit</Th>
                   </TableRow>
+                </TableHead>
+                <TableBody>
+                  {state.entries.map((entry) => {
+                    // Story 5.3 (FR33/FR34, AD-4): an "adjustment" entry (a
+                    // netting audit record) has no linked money movement to
+                    // trace -- omit the row's click/hover trace affordance
+                    // entirely for these rows, rather than sending the actor
+                    // into a trace that goes nowhere.
+                    const isTraceable = entry.type !== "adjustment";
+                    // Story 5.9's post-review fix: only a `"money_added"`/
+                    // `"money_withdrawn"` row's `id` is a real, directly-
+                    // queryable investment/withdrawal transaction id -- see
+                    // `AuditTarget`'s own doc comment above.
+                    const isAuditable = entry.type === "money_added" || entry.type === "money_withdrawn";
+                    return (
+                      <TableRow
+                        key={entry.id}
+                        className={isTraceable ? "cursor-pointer hover:bg-surface-alt" : undefined}
+                        onClick={isTraceable ? () => handleTraceEntry(entry) : undefined}
+                        title={isTraceable ? "View this entry's money trail" : undefined}
+                      >
+                      <Td className="!text-left text-ink-soft">{entry.date}</Td>
+                      <Td className="!text-left">
+                        <span className="inline-flex items-center gap-1.5">
+                          {ENTRY_TYPE_LABELS[entry.type]}
+                          {entry.status === "cancelled" ? (
+                            <StatusChip variant="danger">
+                              Cancelled{entry.reversalOfTransactionId ? " (reversal)" : ""}
+                            </StatusChip>
+                          ) : null}
+                        </span>
+                      </Td>
+                      <Td className="!text-left">{entry.projectName}</Td>
+                      <Td className="!text-left">{entry.personName ?? "—"}</Td>
+                      <Td>
+                        <Amount value={entry.amount} size="sm" />
+                      </Td>
+                      <Td className="!text-left text-ink-soft">
+                        {entry.paymentMode ? (PAYMENT_MODE_LABELS[entry.paymentMode] ?? entry.paymentMode) : "—"}
+                      </Td>
+                      <Td className="!text-left text-ink-soft">{entry.from ?? "—"}</Td>
+                      <Td className="!text-left text-ink-soft">{entry.to ?? "—"}</Td>
+                      <Td className="!text-left text-ink-soft">{entry.notes ?? "—"}</Td>
+                      <Td className="!text-left">
+                        {isAuditable ? (
+                          // Default action -> accent (Decision 1's tone map,
+                          // founder feedback 2026-09-26).
+                          <Button
+                            variant="ghost"
+                            tone="accent"
+                            onClick={(event) => openAuditDialog(event, entry)}
+                            icon={<History size={12} />}
+                          >
+                            View Audit History
+                          </Button>
+                        ) : (
+                          <span className="text-ink-faint">—</span>
+                        )}
+                      </Td>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+
+            {/*
+              Below 860px: one RowCard per entry (spec-mobile-responsive-
+              phase2-table-cards, Decision #2/#3) -- the shared
+              `mapMoneyHistoryEntryToRowCard` helper supplies the 9 columns
+              shared with Reports' `EntryRowsTable`; the "Audit" action (not
+              a shared column) is wired onto RowCard's own `action` slot
+              here, and the row-click trace navigation carries over onto
+              RowCard's `onClick`, exactly mirroring the desktop TableRow's
+              own `isTraceable`/`isAuditable` gating above.
+            */}
+            <div className="hidden max-[860px]:block" data-testid="money-history-row-cards">
+              {state.entries.map((entry) => {
+                const isTraceable = entry.type !== "adjustment";
+                const isAuditable = entry.type === "money_added" || entry.type === "money_withdrawn";
+                const { title, badge, fields } = mapMoneyHistoryEntryToRowCard(entry);
+                return (
+                  <RowCard
+                    key={entry.id}
+                    title={title}
+                    badge={badge}
+                    fields={fields}
+                    onClick={isTraceable ? () => handleTraceEntry(entry) : undefined}
+                    hint={isTraceable ? "View this entry's money trail" : undefined}
+                    action={
+                      isAuditable ? (
+                        <Button
+                          variant="ghost"
+                          tone="accent"
+                          onClick={(event) => openAuditDialog(event, entry)}
+                          icon={<History size={12} />}
+                        >
+                          View Audit History
+                        </Button>
+                      ) : (
+                        // Mirrors the desktop table's own "—" fallback for a
+                        // non-auditable row's Audit column (review fix: no
+                        // silent data loss between the two renders).
+                        <span className="text-ink-faint">—</span>
+                      )
+                    }
+                  />
                 );
               })}
-            </TableBody>
-          </Table>
+            </div>
+          </>
         )}
       </Card>
 

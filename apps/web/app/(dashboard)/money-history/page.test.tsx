@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { render, screen, waitFor, cleanup, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import MoneyHistoryPage from "./page";
 
@@ -255,12 +255,17 @@ describe("MoneyHistoryPage (Story 5.1, FR31)", () => {
 
     expect(screen.getByText(/loading money history/i)).toBeInTheDocument();
 
-    await waitFor(() => expect(screen.getByText("Money Added")).toBeInTheDocument());
-    expect(screen.getByText("Moved to Project")).toBeInTheDocument();
-    expect(screen.getAllByText("Project A").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Partner One").length).toBe(2);
-    expect(screen.getAllByText("Project B").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("NEFT").length).toBe(1);
+    // spec-mobile-responsive-phase2-table-cards: the RowCard stack renders
+    // the exact same entries alongside the Table (CSS-only breakpoint
+    // switch) -- scoped to the Table here, its own desktop-specific
+    // assertion; the card stack's own copy is covered separately below.
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText("Money Added")).toBeInTheDocument();
+    expect(within(table).getByText("Moved to Project")).toBeInTheDocument();
+    expect(within(table).getAllByText("Project A").length).toBeGreaterThan(0);
+    expect(within(table).getAllByText("Partner One").length).toBe(2);
+    expect(within(table).getAllByText("Project B").length).toBeGreaterThan(0);
+    expect(within(table).getAllByText("NEFT").length).toBe(1);
   });
 
   it("marks a cancelled original and its linked reversal distinctly -- not as two unmarked, pixel-identical rows (review round 2, item #1)", async () => {
@@ -268,13 +273,14 @@ describe("MoneyHistoryPage (Story 5.1, FR31)", () => {
 
     render(<MoneyHistoryPage />);
 
-    await waitFor(() => expect(screen.getAllByText("Money Added").length).toBe(2));
+    const table = await screen.findByRole("table");
+    await waitFor(() => expect(within(table).getAllByText("Money Added").length).toBe(2));
     // Both rows show a "Cancelled" chip -- the original AND its reversal both
     // carry `status: "cancelled"` (mirrors `RecordedPayments`' own Story 3.8
     // convention: both the voided original and its reversal are marked).
-    expect(screen.getAllByText(/^cancelled/i).length).toBe(2);
+    expect(within(table).getAllByText(/^cancelled/i).length).toBe(2);
     // Only the reversal row's chip carries the "(reversal)" suffix.
-    expect(screen.getByText(/cancelled \(reversal\)/i)).toBeInTheDocument();
+    expect(within(table).getByText(/cancelled \(reversal\)/i)).toBeInTheDocument();
   });
 
   it("shows the error state when the fetch fails", async () => {
@@ -299,7 +305,7 @@ describe("MoneyHistoryPage (Story 5.1, FR31)", () => {
 
     render(<MoneyHistoryPage />);
 
-    await waitFor(() => expect(screen.getByText("Money Added")).toBeInTheDocument());
+    await screen.findByRole("table");
     await waitFor(() => expect(listProjects).toHaveBeenCalled());
 
     await user.selectOptions(screen.getByLabelText(/^project$/i), "project-b");
@@ -363,9 +369,9 @@ describe("MoneyHistoryPage -- trail navigation (Story 5.2, FR32)", () => {
 
     render(<MoneyHistoryPage />);
 
-    await waitFor(() => expect(screen.getByText("Money Added")).toBeInTheDocument());
+    const table = await screen.findByRole("table");
 
-    await user.click(screen.getByText("Money Added"));
+    await user.click(within(table).getByText("Money Added"));
 
     expect(getTrailStartFromEntry).toHaveBeenCalledWith(ONE_ENTRY);
     expect(routerPush).toHaveBeenCalledWith("/money-history?traceType=investment_transaction&traceId=inv-1");
@@ -424,7 +430,7 @@ describe("MoneyHistoryPage -- trail navigation (Story 5.2, FR32)", () => {
 
     const { rerender } = render(<MoneyHistoryPage />);
 
-    await waitFor(() => expect(screen.getByText("Money Added")).toBeInTheDocument());
+    await screen.findByRole("table");
     await waitFor(() => expect(listProjects).toHaveBeenCalled());
 
     // Apply a real filter through the form -- this sets `formFilters`/
@@ -470,7 +476,8 @@ describe("MoneyHistoryPage -- 'adjustment' rows have no trace affordance (Story 
 
     render(<MoneyHistoryPage />);
 
-    await waitFor(() => expect(screen.getByText("Adjustment")).toBeInTheDocument());
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText("Adjustment")).toBeInTheDocument();
   });
 
   it("clicking an adjustment row does not navigate into trace mode -- nothing to trace", async () => {
@@ -479,8 +486,8 @@ describe("MoneyHistoryPage -- 'adjustment' rows have no trace affordance (Story 
 
     render(<MoneyHistoryPage />);
 
-    await waitFor(() => expect(screen.getByText("Adjustment")).toBeInTheDocument());
-    await user.click(screen.getByText("Adjustment"));
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByText("Adjustment"));
 
     expect(routerPush).not.toHaveBeenCalled();
   });
@@ -490,10 +497,10 @@ describe("MoneyHistoryPage -- 'adjustment' rows have no trace affordance (Story 
 
     render(<MoneyHistoryPage />);
 
-    await waitFor(() => expect(screen.getByText("Adjustment")).toBeInTheDocument());
+    const table = await screen.findByRole("table");
 
-    const adjustmentRow = screen.getByText("Adjustment").closest("tr");
-    const traceableRow = screen.getByText("Money Added").closest("tr");
+    const adjustmentRow = within(table).getByText("Adjustment").closest("tr");
+    const traceableRow = within(table).getByText("Money Added").closest("tr");
     expect(adjustmentRow).not.toHaveAttribute("title");
     expect(traceableRow).toHaveAttribute("title", "View this entry's money trail");
   });
@@ -529,9 +536,9 @@ describe("MoneyHistoryPage -- View Audit History action (Story 5.9's post-review
 
     const user = userEvent.setup();
     render(<MoneyHistoryPage />);
-    await waitFor(() => expect(screen.getByText("Money Added")).toBeInTheDocument());
+    const table = await screen.findByRole("table");
 
-    await user.click(screen.getByRole("button", { name: "View Audit History" }));
+    await user.click(within(table).getByRole("button", { name: "View Audit History" }));
 
     expect(getInvestmentTransactionAuditLog).toHaveBeenCalledWith("project-a", "inv-1");
     await screen.findByText("Created");
@@ -562,9 +569,9 @@ describe("MoneyHistoryPage -- View Audit History action (Story 5.9's post-review
 
     const user = userEvent.setup();
     render(<MoneyHistoryPage />);
-    await waitFor(() => expect(screen.getByText("Money Withdrawn")).toBeInTheDocument());
+    const table = await screen.findByRole("table");
 
-    await user.click(screen.getByRole("button", { name: "View Audit History" }));
+    await user.click(within(table).getByRole("button", { name: "View Audit History" }));
 
     expect(getWithdrawalAuditLog).toHaveBeenCalledWith("project-a", "wd-audit-1");
     await screen.findByText("Created");
@@ -575,7 +582,8 @@ describe("MoneyHistoryPage -- View Audit History action (Story 5.9's post-review
 
     render(<MoneyHistoryPage />);
 
-    await waitFor(() => expect(screen.getByText("Moved to Project")).toBeInTheDocument());
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText("Moved to Project")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "View Audit History" })).not.toBeInTheDocument();
   });
 
@@ -613,9 +621,9 @@ describe("MoneyHistoryPage -- View Audit History action (Story 5.9's post-review
 
     const user = userEvent.setup();
     render(<MoneyHistoryPage />);
-    await waitFor(() => expect(screen.getByText("Money Added")).toBeInTheDocument());
+    const table = await screen.findByRole("table");
 
-    await user.click(screen.getByRole("button", { name: "View Audit History" }));
+    await user.click(within(table).getByRole("button", { name: "View Audit History" }));
 
     await waitFor(() => {
       expect(screen.getByText("Linked Transaction (inv-reversal-1)")).toBeInTheDocument();
@@ -636,10 +644,135 @@ describe("MoneyHistoryPage -- View Audit History action (Story 5.9's post-review
 
     const user = userEvent.setup();
     render(<MoneyHistoryPage />);
-    await waitFor(() => expect(screen.getByText("Money Added")).toBeInTheDocument());
+    const table = await screen.findByRole("table");
 
-    await user.click(screen.getByRole("button", { name: "View Audit History" }));
+    await user.click(within(table).getByRole("button", { name: "View Audit History" }));
 
     await screen.findByText("You are not allowed to view this.");
+  });
+});
+
+/**
+ * spec-mobile-responsive-phase2-table-cards: below 860px, each entry
+ * renders as a `RowCard` (via the shared `mapMoneyHistoryEntryToRowCard`
+ * helper) instead of a table row -- both renders exist in the DOM
+ * simultaneously (CSS-only breakpoint switch), scoped here via the stack's
+ * own `data-testid` so these assertions are independent of the desktop
+ * Table's identical content.
+ */
+describe("MoneyHistoryPage -- below-860px RowCard stack", () => {
+  it("renders every field visible in the desktop table row on its card equivalent", async () => {
+    getMoneyHistory.mockResolvedValue({ entries: [ONE_ENTRY] });
+
+    render(<MoneyHistoryPage />);
+
+    const cards = await screen.findByTestId("money-history-row-cards");
+    expect(within(cards).getByText("Money Added")).toBeInTheDocument();
+    expect(within(cards).getByText("2026-09-01")).toBeInTheDocument();
+    expect(within(cards).getByText("Project A")).toBeInTheDocument();
+    expect(within(cards).getByText("Partner One")).toBeInTheDocument();
+    expect(within(cards).getByText("NEFT")).toBeInTheDocument();
+  });
+
+  it("a traceable card is keyboard-reachable (role=button, tabIndex=0) and carries the same hover/accessible hint the desktop row uses", async () => {
+    getMoneyHistory.mockResolvedValue({ entries: [ONE_ENTRY] });
+
+    render(<MoneyHistoryPage />);
+
+    const cards = await screen.findByTestId("money-history-row-cards");
+    const card = within(cards).getByRole("button", { name: "View this entry's money trail" });
+    expect(card).toHaveAttribute("tabIndex", "0");
+    expect(card).toHaveAttribute("title", "View this entry's money trail");
+  });
+
+  it("tapping a non-adjustment card triggers the same trace-mode navigation as a desktop row click", async () => {
+    const user = userEvent.setup();
+    getMoneyHistory.mockResolvedValue({ entries: [ONE_ENTRY] });
+
+    render(<MoneyHistoryPage />);
+
+    const cards = await screen.findByTestId("money-history-row-cards");
+    await user.click(within(cards).getByText("Money Added"));
+
+    expect(getTrailStartFromEntry).toHaveBeenCalledWith(ONE_ENTRY);
+    expect(routerPush).toHaveBeenCalledWith("/money-history?traceType=investment_transaction&traceId=inv-1");
+  });
+
+  it("tapping 'View Audit History' on a card opens the same dialog, without also triggering the card's own trace navigation", async () => {
+    const user = userEvent.setup();
+    getMoneyHistory.mockResolvedValue({ entries: [ONE_ENTRY] });
+    getInvestmentTransactionAuditLog.mockResolvedValue({
+      entries: [
+        {
+          id: "audit-1",
+          entityType: "investment_transaction",
+          entityId: "inv-1",
+          action: "create",
+          actorUserId: "owner-1",
+          oldValue: null,
+          newValue: { amount: "1000000" },
+          reason: null,
+          createdAt: "2026-10-05T00:00:00.000Z",
+        },
+      ],
+      linkedTransactionId: null,
+      linkedEntries: [],
+    });
+
+    render(<MoneyHistoryPage />);
+
+    const cards = await screen.findByTestId("money-history-row-cards");
+    await user.click(within(cards).getByRole("button", { name: "View Audit History" }));
+
+    expect(getInvestmentTransactionAuditLog).toHaveBeenCalledWith("project-a", "inv-1");
+    await screen.findByText("Created");
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  it("an adjustment-type card has no click handler (no trace to navigate to) and no Audit action", async () => {
+    const user = userEvent.setup();
+    getMoneyHistory.mockResolvedValue({ entries: [ADJUSTMENT_ENTRY] });
+
+    render(<MoneyHistoryPage />);
+
+    const cards = await screen.findByTestId("money-history-row-cards");
+    expect(within(cards).queryByRole("button", { name: "View Audit History" })).not.toBeInTheDocument();
+    // Mirrors the desktop table's own "—" fallback for the Audit column
+    // (review fix: no silent data loss between the two renders) -- scoped
+    // to RowCard's own action row (`.mt-2`, its only element with that
+    // class) since several fields also legitimately render "—".
+    const actionRow = cards.querySelector(".mt-2");
+    expect(actionRow).not.toBeNull();
+    expect(actionRow).toHaveTextContent("—");
+
+    await user.click(within(cards).getByText("Adjustment"));
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  it("renders no card stack in the empty state (EmptyState renders once, not duplicated for table+card)", async () => {
+    getMoneyHistory.mockResolvedValue({ entries: [] });
+
+    render(<MoneyHistoryPage />);
+
+    await waitFor(() => expect(screen.getByText(/no money history yet/i)).toBeInTheDocument());
+    expect(screen.queryByTestId("money-history-row-cards")).not.toBeInTheDocument();
+  });
+
+  // Review fix: jsdom never evaluates CSS, so a swapped/dropped breakpoint
+  // class would still leave every other assertion above green. Assert the
+  // actual wiring directly, mirroring layout.test.tsx's `asideClassName`
+  // pattern.
+  it("wires the desktop Table and mobile RowCard stack to opposite ends of the 860px breakpoint", async () => {
+    getMoneyHistory.mockResolvedValue({ entries: [ONE_ENTRY] });
+
+    render(<MoneyHistoryPage />);
+
+    const table = await screen.findByRole("table");
+    const tableWrapper = table.closest('[class*="860px"]');
+    expect(tableWrapper?.className).toContain("max-[860px]:hidden");
+
+    const cards = screen.getByTestId("money-history-row-cards");
+    expect(cards.className).toContain("hidden");
+    expect(cards.className).toContain("max-[860px]:block");
   });
 });

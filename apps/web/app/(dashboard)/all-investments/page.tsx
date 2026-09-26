@@ -7,6 +7,7 @@ import {
   Card,
   EmptyState,
   PageHeader,
+  RowCard,
   StatusChip,
   Table,
   TableBody,
@@ -133,63 +134,136 @@ export default function AllInvestmentsPage() {
             {entry.requirements.length === 0 ? (
               <p className="text-[12.8px] text-ink-soft">No funding requirements on this Project yet.</p>
             ) : (
-              <Table>
-                <TableHead>
-                  <tr>
-                    <Th>Requirement Date</Th>
-                    <Th>Requirement Amount</Th>
-                    <Th>My Should Pay</Th>
-                    <Th>Paid</Th>
-                    <Th className="!text-left">Status</Th>
-                    <Th>Recommended</Th>
-                  </tr>
-                </TableHead>
-                <TableBody>
+              <>
+                {/*
+                  Desktop (>=860px): the existing nested Table, byte-for-
+                  byte unchanged other than this new wrapping div (spec-
+                  mobile-responsive-phase2-table-cards, Decision #5 -- only
+                  the per-requirement rows convert; the outer Card/tint/
+                  header above is untouched).
+                */}
+                <div className="max-[860px]:hidden">
+                  <Table>
+                    <TableHead>
+                      <tr>
+                        <Th>Requirement Date</Th>
+                        <Th>Requirement Amount</Th>
+                        <Th>My Should Pay</Th>
+                        <Th>Paid</Th>
+                        <Th className="!text-left">Status</Th>
+                        <Th>Recommended</Th>
+                      </tr>
+                    </TableHead>
+                    <TableBody>
+                      {entry.requirements.map((requirement) => (
+                        <TableRow key={requirement.requirementId}>
+                          <Td className="!text-left">{requirement.requirementDate}</Td>
+                          <Td>
+                            <Amount value={requirement.requirementAmount} size="sm" />
+                          </Td>
+                          {requirement.status ? (
+                            <>
+                              <Td>
+                                <Amount value={requirement.status.shouldPay} size="sm" />
+                              </Td>
+                              <Td>
+                                <Amount value={requirement.status.actualPaid} size="sm" />
+                              </Td>
+                              <Td className="!text-left">
+                                <StatusChip variant={ADJUSTMENT_VARIANT[requirement.status.adjustmentType]}>
+                                  {ADJUSTMENT_LABEL[requirement.status.adjustmentType]}
+                                  {requirement.status.adjustmentType !== "none" ? (
+                                    <>
+                                      {" "}
+                                      <Amount value={requirement.status.adjustmentAmount} size="sm" />
+                                    </>
+                                  ) : null}
+                                </StatusChip>
+                              </Td>
+                              <Td>
+                                {requirement.status.recommendedAmount ? (
+                                  <Amount value={requirement.status.recommendedAmount} size="sm" />
+                                ) : (
+                                  <span className="text-ink-faint">—</span>
+                                )}
+                              </Td>
+                            </>
+                          ) : (
+                            // Cause-neutral: status is null for under- AND
+                            // over-allocation (and the defensive share-missing
+                            // branch), so the copy never asserts one cause.
+                            <Td colSpan={4} className="!text-left text-ink-soft">
+                              Not computable yet — this Project&apos;s share allocation needs review.
+                            </Td>
+                          )}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {/*
+                  Below 860px: one RowCard per funding requirement --
+                  Requirement Date as title, the adjustment StatusChip
+                  carried over verbatim as the badge, every other column
+                  stacked as a field. A null `status` (I/O matrix) still
+                  shows the Requirement Amount field plus the same
+                  "Not computable yet..." fallback text, never a crash.
+                */}
+                <div className="hidden max-[860px]:block" data-testid="all-investments-row-cards">
                   {entry.requirements.map((requirement) => (
-                    <TableRow key={requirement.requirementId}>
-                      <Td className="!text-left">{requirement.requirementDate}</Td>
-                      <Td>
-                        <Amount value={requirement.requirementAmount} size="sm" />
-                      </Td>
-                      {requirement.status ? (
-                        <>
-                          <Td>
-                            <Amount value={requirement.status.shouldPay} size="sm" />
-                          </Td>
-                          <Td>
-                            <Amount value={requirement.status.actualPaid} size="sm" />
-                          </Td>
-                          <Td className="!text-left">
-                            <StatusChip variant={ADJUSTMENT_VARIANT[requirement.status.adjustmentType]}>
-                              {ADJUSTMENT_LABEL[requirement.status.adjustmentType]}
-                              {requirement.status.adjustmentType !== "none" ? (
-                                <>
-                                  {" "}
-                                  <Amount value={requirement.status.adjustmentAmount} size="sm" />
-                                </>
-                              ) : null}
-                            </StatusChip>
-                          </Td>
-                          <Td>
-                            {requirement.status.recommendedAmount ? (
-                              <Amount value={requirement.status.recommendedAmount} size="sm" />
-                            ) : (
-                              <span className="text-ink-faint">—</span>
-                            )}
-                          </Td>
-                        </>
-                      ) : (
-                        // Cause-neutral: status is null for under- AND
-                        // over-allocation (and the defensive share-missing
-                        // branch), so the copy never asserts one cause.
-                        <Td colSpan={4} className="!text-left text-ink-soft">
-                          Not computable yet — this Project&apos;s share allocation needs review.
-                        </Td>
-                      )}
-                    </TableRow>
+                    <RowCard
+                      key={requirement.requirementId}
+                      title={requirement.requirementDate}
+                      badge={
+                        requirement.status ? (
+                          <StatusChip variant={ADJUSTMENT_VARIANT[requirement.status.adjustmentType]}>
+                            {ADJUSTMENT_LABEL[requirement.status.adjustmentType]}
+                            {requirement.status.adjustmentType !== "none" ? (
+                              <>
+                                {" "}
+                                <Amount value={requirement.status.adjustmentAmount} size="sm" />
+                              </>
+                            ) : null}
+                          </StatusChip>
+                        ) : null
+                      }
+                      fields={
+                        requirement.status
+                          ? [
+                              {
+                                label: "Requirement Amount",
+                                value: <Amount value={requirement.requirementAmount} size="sm" />,
+                              },
+                              {
+                                label: "My Should Pay",
+                                value: <Amount value={requirement.status.shouldPay} size="sm" />,
+                              },
+                              { label: "Paid", value: <Amount value={requirement.status.actualPaid} size="sm" /> },
+                              {
+                                label: "Recommended",
+                                value: requirement.status.recommendedAmount ? (
+                                  <Amount value={requirement.status.recommendedAmount} size="sm" />
+                                ) : (
+                                  <span className="text-ink-faint">—</span>
+                                ),
+                              },
+                            ]
+                          : [
+                              {
+                                label: "Requirement Amount",
+                                value: <Amount value={requirement.requirementAmount} size="sm" />,
+                              },
+                              {
+                                label: "Status",
+                                value: "Not computable yet — this Project's share allocation needs review.",
+                              },
+                            ]
+                      }
+                    />
                   ))}
-                </TableBody>
-              </Table>
+                </div>
+              </>
             )}
           </Card>
         ))

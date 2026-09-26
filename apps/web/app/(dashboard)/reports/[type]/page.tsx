@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useParams } from "next/navigation";
 import { ChevronDown, Search } from "lucide-react";
 import type { MoneyHistoryEntry, Project } from "@niveshbook/types";
@@ -24,6 +24,7 @@ import {
   Input,
   Label,
   PageHeader,
+  RowCard,
   StatusChip,
   Table,
   TableHead,
@@ -34,20 +35,10 @@ import {
 } from "@niveshbook/ui";
 import { getReport, type ReportFiltersInput, type ReportRow } from "@/lib/reports";
 import { getReportDefinition, type ReportSlug } from "@/lib/report-catalog";
+import { mapMoneyHistoryEntryToRowCard, PAYMENT_MODE_LABELS } from "@/lib/money-history-row-card";
 import { ENTRY_TYPE_LABELS } from "@/lib/money-trail-view";
 import { exportReportToExcel, exportReportToPdf } from "@/lib/report-export";
 import { listProjects } from "@/lib/projects";
-
-const PAYMENT_MODE_LABELS: Record<string, string> = {
-  cash: "Cash",
-  cheque: "Cheque",
-  neft: "NEFT",
-  rtgs: "RTGS",
-  imps: "IMPS",
-  upi: "UPI",
-  bank_transfer: "Bank Transfer",
-  other: "Other",
-};
 
 /**
  * Postgres's `numeric(7,4)` `sharePercent` column round-trips padded
@@ -77,202 +68,307 @@ type ViewState =
   | { status: "error"; message: string }
   | { status: "loaded"; rows: ReportRow[] };
 
+/**
+ * Below-860px counterpart of every report shape below (spec-mobile-
+ * responsive-phase2-table-cards) -- a thin wrapper so each `xTable`
+ * function's own dual desktop/mobile render stays a one-line addition
+ * rather than repeating the two breakpoint divs six times.
+ */
+function ResponsiveReport({ table, cards }: { table: ReactNode; cards: ReactNode }) {
+  return (
+    <>
+      <div className="max-[860px]:hidden">{table}</div>
+      <div className="hidden max-[860px]:block" data-testid="reports-row-cards">
+        {cards}
+      </div>
+    </>
+  );
+}
+
 function EntryRowsTable({ rows }: { rows: MoneyHistoryEntry[] }) {
   return (
-    <Table>
-      <TableHead>
-        <TableRow>
-          <Th className="!text-left">Date</Th>
-          <Th className="!text-left">What Happened</Th>
-          <Th className="!text-left">Project</Th>
-          <Th className="!text-left">Person</Th>
-          <Th>Amount</Th>
-          <Th className="!text-left">Payment Mode</Th>
-          <Th className="!text-left">From</Th>
-          <Th className="!text-left">To</Th>
-          <Th className="!text-left">Notes</Th>
-        </TableRow>
-      </TableHead>
-      <TableBody>
-        {rows.map((entry) => (
-          <TableRow key={entry.id}>
-            <Td className="!text-left text-ink-soft">{entry.date}</Td>
-            <Td className="!text-left">
-              <span className="inline-flex items-center gap-1.5">
-                {ENTRY_TYPE_LABELS[entry.type]}
-                {entry.status === "cancelled" ? (
-                  <StatusChip variant="danger">
-                    Cancelled{entry.reversalOfTransactionId ? " (reversal)" : ""}
-                  </StatusChip>
-                ) : null}
-              </span>
-            </Td>
-            <Td className="!text-left">{entry.projectName}</Td>
-            <Td className="!text-left">{entry.personName ?? "—"}</Td>
-            <Td>
-              <Amount value={entry.amount} size="sm" />
-            </Td>
-            <Td className="!text-left text-ink-soft">
-              {entry.paymentMode ? (PAYMENT_MODE_LABELS[entry.paymentMode] ?? entry.paymentMode) : "—"}
-            </Td>
-            <Td className="!text-left text-ink-soft">{entry.from ?? "—"}</Td>
-            <Td className="!text-left text-ink-soft">{entry.to ?? "—"}</Td>
-            <Td className="!text-left text-ink-soft">{entry.notes ?? "—"}</Td>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <ResponsiveReport
+      table={
+        <Table>
+          <TableHead>
+            <TableRow>
+              <Th className="!text-left">Date</Th>
+              <Th className="!text-left">What Happened</Th>
+              <Th className="!text-left">Project</Th>
+              <Th className="!text-left">Person</Th>
+              <Th>Amount</Th>
+              <Th className="!text-left">Payment Mode</Th>
+              <Th className="!text-left">From</Th>
+              <Th className="!text-left">To</Th>
+              <Th className="!text-left">Notes</Th>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {rows.map((entry) => (
+              <TableRow key={entry.id}>
+                <Td className="!text-left text-ink-soft">{entry.date}</Td>
+                <Td className="!text-left">
+                  <span className="inline-flex items-center gap-1.5">
+                    {ENTRY_TYPE_LABELS[entry.type]}
+                    {entry.status === "cancelled" ? (
+                      <StatusChip variant="danger">
+                        Cancelled{entry.reversalOfTransactionId ? " (reversal)" : ""}
+                      </StatusChip>
+                    ) : null}
+                  </span>
+                </Td>
+                <Td className="!text-left">{entry.projectName}</Td>
+                <Td className="!text-left">{entry.personName ?? "—"}</Td>
+                <Td>
+                  <Amount value={entry.amount} size="sm" />
+                </Td>
+                <Td className="!text-left text-ink-soft">
+                  {entry.paymentMode ? (PAYMENT_MODE_LABELS[entry.paymentMode] ?? entry.paymentMode) : "—"}
+                </Td>
+                <Td className="!text-left text-ink-soft">{entry.from ?? "—"}</Td>
+                <Td className="!text-left text-ink-soft">{entry.to ?? "—"}</Td>
+                <Td className="!text-left text-ink-soft">{entry.notes ?? "—"}</Td>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      }
+      cards={rows.map((entry) => {
+        // Decision #2: the same shared helper money-history/page.tsx's own
+        // card stack consumes -- this report shape is 9 of Money History's
+        // 10 columns (no "Audit" action column here).
+        const { title, badge, fields } = mapMoneyHistoryEntryToRowCard(entry);
+        return <RowCard key={entry.id} title={title} badge={badge} fields={fields} />;
+      })}
+    />
   );
 }
 
 function PaymentModeTable({ rows }: { rows: PaymentModeReportRow[] }) {
   return (
-    <Table>
-      <TableHead>
-        <TableRow>
-          <Th className="!text-left">Payment Mode</Th>
-          <Th>Total Amount</Th>
-          <Th>Entries</Th>
-        </TableRow>
-      </TableHead>
-      <TableBody>
-        {rows.map((row) => (
-          <TableRow key={row.paymentMode}>
-            <Td className="!text-left">{PAYMENT_MODE_LABELS[row.paymentMode] ?? row.paymentMode}</Td>
-            <Td>
-              <Amount value={row.totalAmount} size="sm" />
-            </Td>
-            <Td>{row.entryCount}</Td>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <ResponsiveReport
+      table={
+        <Table>
+          <TableHead>
+            <TableRow>
+              <Th className="!text-left">Payment Mode</Th>
+              <Th>Total Amount</Th>
+              <Th>Entries</Th>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {rows.map((row) => (
+              <TableRow key={row.paymentMode}>
+                <Td className="!text-left">{PAYMENT_MODE_LABELS[row.paymentMode] ?? row.paymentMode}</Td>
+                <Td>
+                  <Amount value={row.totalAmount} size="sm" />
+                </Td>
+                <Td>{row.entryCount}</Td>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      }
+      cards={rows.map((row) => (
+        <RowCard
+          key={row.paymentMode}
+          title={PAYMENT_MODE_LABELS[row.paymentMode] ?? row.paymentMode}
+          fields={[
+            { label: "Total Amount", value: <Amount value={row.totalAmount} size="sm" /> },
+            { label: "Entries", value: row.entryCount },
+          ]}
+        />
+      ))}
+    />
   );
 }
 
 function ProjectMoneyTable({ rows }: { rows: ProjectMoneyReportRow[] }) {
   return (
-    <Table>
-      <TableHead>
-        <TableRow>
-          <Th className="!text-left">Project</Th>
-          <Th>Money Added</Th>
-          <Th>Money Withdrawn</Th>
-          <Th>Available Balance</Th>
-        </TableRow>
-      </TableHead>
-      <TableBody>
-        {rows.map((row) => (
-          <TableRow key={row.projectId}>
-            <Td className="!text-left">{row.projectName}</Td>
-            <Td>
-              <Amount value={row.totalAdded} size="sm" />
-            </Td>
-            <Td>
-              <Amount value={row.totalWithdrawn} size="sm" />
-            </Td>
-            <Td>
-              <Amount value={row.totalAvailableBalance} size="sm" />
-            </Td>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <ResponsiveReport
+      table={
+        <Table>
+          <TableHead>
+            <TableRow>
+              <Th className="!text-left">Project</Th>
+              <Th>Money Added</Th>
+              <Th>Money Withdrawn</Th>
+              <Th>Available Balance</Th>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {rows.map((row) => (
+              <TableRow key={row.projectId}>
+                <Td className="!text-left">{row.projectName}</Td>
+                <Td>
+                  <Amount value={row.totalAdded} size="sm" />
+                </Td>
+                <Td>
+                  <Amount value={row.totalWithdrawn} size="sm" />
+                </Td>
+                <Td>
+                  <Amount value={row.totalAvailableBalance} size="sm" />
+                </Td>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      }
+      cards={rows.map((row) => (
+        <RowCard
+          key={row.projectId}
+          title={row.projectName}
+          fields={[
+            { label: "Money Added", value: <Amount value={row.totalAdded} size="sm" /> },
+            { label: "Money Withdrawn", value: <Amount value={row.totalWithdrawn} size="sm" /> },
+            { label: "Available Balance", value: <Amount value={row.totalAvailableBalance} size="sm" /> },
+          ]}
+        />
+      ))}
+    />
   );
 }
 
 function PartnerTable({ rows }: { rows: PartnerReportRow[] }) {
   return (
-    <Table>
-      <TableHead>
-        <TableRow>
-          <Th className="!text-left">Partner</Th>
-          <Th className="!text-left">Project</Th>
-          <Th>Share %</Th>
-          <Th>Money Added</Th>
-          <Th>Money Withdrawn</Th>
-          <Th>Available Balance</Th>
-        </TableRow>
-      </TableHead>
-      <TableBody>
-        {rows.map((row) => (
-          <TableRow key={row.partnerId}>
-            <Td className="!text-left">{row.name}</Td>
-            <Td className="!text-left">{row.projectName}</Td>
-            <Td>{formatSharePercent(row.sharePercent)}%</Td>
-            <Td>
-              <Amount value={row.totalAdded} size="sm" />
-            </Td>
-            <Td>
-              <Amount value={row.totalWithdrawn} size="sm" />
-            </Td>
-            <Td>
-              <Amount value={row.totalAvailableBalance} size="sm" />
-            </Td>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <ResponsiveReport
+      table={
+        <Table>
+          <TableHead>
+            <TableRow>
+              <Th className="!text-left">Partner</Th>
+              <Th className="!text-left">Project</Th>
+              <Th>Share %</Th>
+              <Th>Money Added</Th>
+              <Th>Money Withdrawn</Th>
+              <Th>Available Balance</Th>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {rows.map((row) => (
+              <TableRow key={row.partnerId}>
+                <Td className="!text-left">{row.name}</Td>
+                <Td className="!text-left">{row.projectName}</Td>
+                <Td>{formatSharePercent(row.sharePercent)}%</Td>
+                <Td>
+                  <Amount value={row.totalAdded} size="sm" />
+                </Td>
+                <Td>
+                  <Amount value={row.totalWithdrawn} size="sm" />
+                </Td>
+                <Td>
+                  <Amount value={row.totalAvailableBalance} size="sm" />
+                </Td>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      }
+      cards={rows.map((row) => (
+        <RowCard
+          key={row.partnerId}
+          title={row.name}
+          fields={[
+            { label: "Project", value: row.projectName },
+            { label: "Share %", value: `${formatSharePercent(row.sharePercent)}%` },
+            { label: "Money Added", value: <Amount value={row.totalAdded} size="sm" /> },
+            { label: "Money Withdrawn", value: <Amount value={row.totalWithdrawn} size="sm" /> },
+            { label: "Available Balance", value: <Amount value={row.totalAvailableBalance} size="sm" /> },
+          ]}
+        />
+      ))}
+    />
   );
 }
 
 function SubPartnerTable({ rows }: { rows: SubPartnerReportRow[] }) {
   return (
-    <Table>
-      <TableHead>
-        <TableRow>
-          <Th className="!text-left">Sub-partner</Th>
-          <Th className="!text-left">Project</Th>
-          <Th>Share %</Th>
-          <Th>Money Added</Th>
-          <Th>Money Withdrawn</Th>
-          <Th>Available Balance</Th>
-        </TableRow>
-      </TableHead>
-      <TableBody>
-        {rows.map((row) => (
-          <TableRow key={row.subPartnerId}>
-            <Td className="!text-left">{row.name}</Td>
-            <Td className="!text-left">{row.projectName}</Td>
-            <Td>{formatSharePercent(row.sharePercent)}%</Td>
-            <Td>
-              <Amount value={row.totalAdded} size="sm" />
-            </Td>
-            <Td>
-              <Amount value={row.totalWithdrawn} size="sm" />
-            </Td>
-            <Td>
-              <Amount value={row.totalAvailableBalance} size="sm" />
-            </Td>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <ResponsiveReport
+      table={
+        <Table>
+          <TableHead>
+            <TableRow>
+              <Th className="!text-left">Sub-partner</Th>
+              <Th className="!text-left">Project</Th>
+              <Th>Share %</Th>
+              <Th>Money Added</Th>
+              <Th>Money Withdrawn</Th>
+              <Th>Available Balance</Th>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {rows.map((row) => (
+              <TableRow key={row.subPartnerId}>
+                <Td className="!text-left">{row.name}</Td>
+                <Td className="!text-left">{row.projectName}</Td>
+                <Td>{formatSharePercent(row.sharePercent)}%</Td>
+                <Td>
+                  <Amount value={row.totalAdded} size="sm" />
+                </Td>
+                <Td>
+                  <Amount value={row.totalWithdrawn} size="sm" />
+                </Td>
+                <Td>
+                  <Amount value={row.totalAvailableBalance} size="sm" />
+                </Td>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      }
+      cards={rows.map((row) => (
+        <RowCard
+          key={row.subPartnerId}
+          title={row.name}
+          fields={[
+            { label: "Project", value: row.projectName },
+            { label: "Share %", value: `${formatSharePercent(row.sharePercent)}%` },
+            { label: "Money Added", value: <Amount value={row.totalAdded} size="sm" /> },
+            { label: "Money Withdrawn", value: <Amount value={row.totalWithdrawn} size="sm" /> },
+            { label: "Available Balance", value: <Amount value={row.totalAvailableBalance} size="sm" /> },
+          ]}
+        />
+      ))}
+    />
   );
 }
 
 function AvailableBalanceTable({ rows }: { rows: AvailableBalanceReportRow[] }) {
   return (
-    <Table>
-      <TableHead>
-        <TableRow>
-          <Th className="!text-left">Name</Th>
-          <Th className="!text-left">Project</Th>
-          <Th>Balance</Th>
-        </TableRow>
-      </TableHead>
-      <TableBody>
-        {rows.map((row) => (
-          <TableRow key={`${row.partyType}:${row.shareId}:${row.projectId}`}>
-            <Td className="!text-left">{row.name}</Td>
-            <Td className="!text-left">{row.projectName}</Td>
-            <Td>
-              <Amount value={row.balance} size="sm" />
-            </Td>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <ResponsiveReport
+      table={
+        <Table>
+          <TableHead>
+            <TableRow>
+              <Th className="!text-left">Name</Th>
+              <Th className="!text-left">Project</Th>
+              <Th>Balance</Th>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {rows.map((row) => (
+              <TableRow key={`${row.partyType}:${row.shareId}:${row.projectId}`}>
+                <Td className="!text-left">{row.name}</Td>
+                <Td className="!text-left">{row.projectName}</Td>
+                <Td>
+                  <Amount value={row.balance} size="sm" />
+                </Td>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      }
+      cards={rows.map((row) => (
+        <RowCard
+          key={`${row.partyType}:${row.shareId}:${row.projectId}`}
+          title={row.name}
+          fields={[
+            { label: "Project", value: row.projectName },
+            { label: "Balance", value: <Amount value={row.balance} size="sm" /> },
+          ]}
+        />
+      ))}
+    />
   );
 }
 

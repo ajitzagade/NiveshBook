@@ -6,7 +6,19 @@ import {
   createUserPort,
   createWithdrawalTransactionPort,
 } from "@niveshbook/db";
-import { Card, EmptyState, PageHeader, StatusChip, Table, TableHead, TableBody, TableRow, Th, Td } from "@niveshbook/ui";
+import {
+  Card,
+  EmptyState,
+  PageHeader,
+  RowCard,
+  StatusChip,
+  Table,
+  TableHead,
+  TableBody,
+  TableRow,
+  Th,
+  Td,
+} from "@niveshbook/ui";
 import { requireOwnerAdminSession } from "@/lib/session-guard";
 
 // This page's own data depends on every transaction's live audit trail --
@@ -89,38 +101,81 @@ export default async function AuditHistoryPage() {
             description="Editing or cancelling a recorded payment or withdrawal will show up here."
           />
         ) : (
-          <Table>
-            <TableHead>
-              <TableRow>
-                <Th className="!text-left">Date</Th>
-                <Th className="!text-left">Type</Th>
-                <Th className="!text-left">Action</Th>
-                <Th className="!text-left">Actor</Th>
-                <Th>Amount</Th>
-                <Th className="!text-left">Reason</Th>
-                <Th className="!text-left">Linked</Th>
-              </TableRow>
-            </TableHead>
-            <TableBody>
+          <>
+            {/*
+              Desktop (>=860px): the existing Table, byte-for-byte unchanged
+              other than this new wrapping div (spec-mobile-responsive-
+              phase2-table-cards) -- hidden below 860px, where the RowCard
+              stack below takes over instead.
+            */}
+            <div className="max-[860px]:hidden">
+              <Table>
+                <TableHead>
+                  <TableRow>
+                    <Th className="!text-left">Date</Th>
+                    <Th className="!text-left">Type</Th>
+                    <Th className="!text-left">Action</Th>
+                    <Th className="!text-left">Actor</Th>
+                    <Th>Amount</Th>
+                    <Th className="!text-left">Reason</Th>
+                    <Th className="!text-left">Linked</Th>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {rows.map((row) => (
+                    <TableRow key={row.id}>
+                      <Td className="!text-left text-ink-soft">{new Date(row.createdAt).toLocaleString()}</Td>
+                      <Td className="!text-left">{ENTITY_LABEL[row.entityType]}</Td>
+                      <Td className="!text-left">{ACTION_LABEL[row.action] ?? row.action}</Td>
+                      <Td className="!text-left">{row.actorName}</Td>
+                      <Td className="font-mono tabular-nums">{extractAmount(row)}</Td>
+                      <Td className="!text-left text-ink-soft">{row.reason ?? "—"}</Td>
+                      <Td className="!text-left">
+                        {row.linkedTransactionId ? (
+                          <StatusChip variant="danger">Reversed</StatusChip>
+                        ) : (
+                          <span className="text-ink-faint">—</span>
+                        )}
+                      </Td>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+
+            {/*
+              Below 860px: one RowCard per row -- Type as the title (the
+              row's own most-identifying column, mirroring Money History's
+              "What Happened"), the "Reversed" badge carried over verbatim,
+              and every other column stacked as a field. Non-interactive,
+              matching today's table (no onClick).
+            */}
+            <div className="hidden max-[860px]:block" data-testid="audit-history-row-cards">
               {rows.map((row) => (
-                <TableRow key={row.id}>
-                  <Td className="!text-left text-ink-soft">{new Date(row.createdAt).toLocaleString()}</Td>
-                  <Td className="!text-left">{ENTITY_LABEL[row.entityType]}</Td>
-                  <Td className="!text-left">{ACTION_LABEL[row.action] ?? row.action}</Td>
-                  <Td className="!text-left">{row.actorName}</Td>
-                  <Td className="font-mono tabular-nums">{extractAmount(row)}</Td>
-                  <Td className="!text-left text-ink-soft">{row.reason ?? "—"}</Td>
-                  <Td className="!text-left">
-                    {row.linkedTransactionId ? (
+                <RowCard
+                  key={row.id}
+                  title={ENTITY_LABEL[row.entityType]}
+                  badge={
+                    row.linkedTransactionId ? (
                       <StatusChip variant="danger">Reversed</StatusChip>
                     ) : (
+                      // Mirrors the desktop table's own "—" fallback for the
+                      // Linked column (review fix: no silent data loss
+                      // between the two renders).
                       <span className="text-ink-faint">—</span>
-                    )}
-                  </Td>
-                </TableRow>
+                    )
+                  }
+                  fields={[
+                    { label: "Date", value: new Date(row.createdAt).toLocaleString() },
+                    { label: "Action", value: ACTION_LABEL[row.action] ?? row.action },
+                    { label: "Actor", value: row.actorName },
+                    { label: "Amount", value: extractAmount(row) },
+                    { label: "Reason", value: row.reason ?? "—" },
+                  ]}
+                />
               ))}
-            </TableBody>
-          </Table>
+            </div>
+          </>
         )}
       </Card>
     </div>
