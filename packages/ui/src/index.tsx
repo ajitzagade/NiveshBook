@@ -21,6 +21,7 @@ export * from "./components/page-header";
 export * from "./components/empty-state";
 export * from "./components/helper";
 export * from "./components/dialog";
+export * from "./components/drawer";
 export * from "./components/popover";
 export * from "./components/dropdown-menu";
 export * from "./components/toast";

@@ -112,8 +112,28 @@ export function StructureCanvas({ tree, viewMode, projectName, onSelectPartner }
   );
 
   return (
-    <div className="h-[520px] w-full overflow-hidden rounded-el border border-border bg-surface-alt">
-      <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES} fitView proOptions={{ hideAttribution: true }}>
+    // spec-mobile-responsive-phase1-nav-foundation (Decision #4): a fixed
+    // 520px container went off the bottom of a 375px-tall phone viewport
+    // (minus the browser chrome/top bar/page header above it) -- 380px
+    // below 600px keeps the whole diagram, plus its Controls, on-screen at
+    // first paint. Node width (190px) stays as-is; pan/zoom (below) already
+    // handles any horizontal overflow that causes.
+    <div className="h-[520px] w-full overflow-hidden rounded-el border border-border bg-surface-alt max-[600px]:h-[380px]">
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        nodeTypes={NODE_TYPES}
+        // `fitView` alone can still crop on a narrow phone viewport if the
+        // computed fit would need to zoom in past 1x to fill it -- capping
+        // `minZoom` well below 1 (and `fitViewOptions.minZoom` to match)
+        // guarantees the initial fit can always shrink the whole tree to
+        // fit rather than crop it.
+        fitView
+        fitViewOptions={{ minZoom: 0.2, padding: 0.15 }}
+        minZoom={0.2}
+        maxZoom={1.5}
+        proOptions={{ hideAttribution: true }}
+      >
         <Background />
         <Controls showInteractive={false} />
       </ReactFlow>

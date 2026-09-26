@@ -250,9 +250,33 @@
   }
 
   /*
+   * Off-canvas drawer entrance (spec-mobile-responsive-phase1-nav-foundation)
+   * -- `@keyframes` rather than a `transition`, deliberately: Radix Dialog's
+   * `Content` isn't mounted in the DOM until `open` flips true, so there is
+   * no "previous frame" for a CSS transition to animate away from; a CSS
+   * *animation* plays on mount regardless, which is what gives the panel an
+   * actual slide-in rather than popping in at its final position.
+   */
+  @keyframes nb-drawer-slide-in {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
+  .nb-drawer-panel {
+    animation: nb-drawer-slide-in 0.2s ease-out;
+  }
+
+  /*
    * Accessibility: the founder-feedback motion (elevated-card hover lift +
    * button color transitions) is decorative -- users who ask for reduced
    * motion get the same end states with no animation and no transform.
+   * This block must come AFTER every unconditional rule it overrides (same
+   * specificity -- later source order wins); `.nb-drawer-panel` moved here
+   * after the review caught it declared earlier than its own base rule
+   * above, which made the override dead.
    */
   @media (prefers-reduced-motion: reduce) {
     .nb-btn,
@@ -261,6 +285,9 @@
     }
     .nb-card-elevated:hover {
       transform: none;
+    }
+    .nb-drawer-panel {
+      animation: none;
     }
   }
 

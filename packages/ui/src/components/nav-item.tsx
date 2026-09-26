@@ -28,6 +28,14 @@ export interface NavItemProps {
   badgeColor: string;
   label: string;
   active?: boolean;
+  /**
+   * Fires on selection whether or not `href` is also set (spec-mobile-
+   * responsive-phase1-nav-foundation, Decision #2) -- lets a consumer (e.g.
+   * a `Drawer`-hosted `SidebarNav`) close itself on nav-item selection
+   * without giving up the item's own navigation. Previously mutually
+   * exclusive with `href` (only used for the no-destination-yet "inert"
+   * item below); now attached to the `<a>` too when both are present.
+   */
   onClick?: () => void;
   href?: string;
 }
@@ -58,7 +66,7 @@ export function NavItem({ icon, badgeColor, label, active, onClick, href }: NavI
 
   if (href) {
     return (
-      <a href={href} className={className}>
+      <a href={href} onClick={onClick} className={className}>
         {content}
       </a>
     );

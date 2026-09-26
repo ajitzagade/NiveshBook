@@ -8,12 +8,18 @@ export const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger;
 export function DropdownMenuContent({
   className,
   sideOffset = 6,
+  // Defensive viewport-edge hardening (spec-mobile-responsive-phase1-nav-
+  // foundation, Decision #5) -- see `popover.tsx`'s identical rationale:
+  // 16px matches the shell's own mobile content padding, `avoidCollisions`
+  // is left at Radix's own default (`true`), never disabled.
+  collisionPadding = 16,
   ...props
 }: ComponentProps<typeof DropdownMenuPrimitive.Content>) {
   return (
     <DropdownMenuPrimitive.Portal>
       <DropdownMenuPrimitive.Content
         sideOffset={sideOffset}
+        collisionPadding={collisionPadding}
         className={cn(
           "z-50 min-w-[10rem] rounded-el border border-border bg-surface p-1 shadow-card",
           className,

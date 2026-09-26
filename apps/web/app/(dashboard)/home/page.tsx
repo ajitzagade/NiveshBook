@@ -259,7 +259,7 @@ async function PartnerDashboard({ actorUserId }: { actorUserId: string }) {
         action={<LogoutButton />}
       />
 
-      <div className="mb-5 grid grid-cols-3 gap-3 max-[760px]:grid-cols-2">
+      <div className="mb-5 grid grid-cols-3 gap-3 max-[760px]:grid-cols-2 max-[480px]:grid-cols-1">
         <StatCard label="Money Added" value={summary.totalMoneyAdded} format="money" />
         <StatCard label="Money Withdrawn" value={summary.totalMoneyWithdrawn} format="money" />
         <StatCard label="Available Balance" value={summary.totalAvailableBalance} format="money" tone="success" />
@@ -391,7 +391,7 @@ async function SubPartnerDashboard({ actorUserId }: { actorUserId: string }) {
         action={<LogoutButton />}
       />
 
-      <div className="mb-5 grid grid-cols-3 gap-3 max-[760px]:grid-cols-2">
+      <div className="mb-5 grid grid-cols-3 gap-3 max-[760px]:grid-cols-2 max-[480px]:grid-cols-1">
         <StatCard label="Money Added" value={summary.totalMoneyAdded} format="money" />
         <StatCard label="Money Withdrawn" value={summary.totalMoneyWithdrawn} format="money" />
         <StatCard label="Available Balance" value={summary.totalAvailableBalance} format="money" tone="success" />
@@ -536,7 +536,7 @@ export default async function DashboardHomePage() {
         action={<LogoutButton />}
       />
 
-      <div className="mb-5 grid grid-cols-4 gap-3 max-[760px]:grid-cols-2">
+      <div className="mb-5 grid grid-cols-4 gap-3 max-[760px]:grid-cols-2 max-[480px]:grid-cols-1">
         <StatCard label="Total Project Money" value={summary.totalProjectMoney} format="money" />
         <StatCard label="Total Added" value={summary.totalAdded} format="money" />
         <StatCard label="Total Withdrawn" value={summary.totalWithdrawn} format="money" />

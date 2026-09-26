@@ -39,7 +39,20 @@ const SCOPED_SEGMENT: Partial<Record<SidebarNavItem["key"], string>> = {
  * Once set, the sidebar's 4 Project-scoped links point straight at that
  * Project instead of falling back to the Projects list.
  */
-export function SidebarShell({ items }: { items: readonly SidebarNavItem[] }) {
+export function SidebarShell({
+  items,
+  onNavigate,
+}: {
+  items: readonly SidebarNavItem[];
+  /**
+   * Fires whenever this shell causes a navigation -- a nav-item link, a
+   * Project switch, or "All Investments" (spec-mobile-responsive-phase1-
+   * nav-foundation, Decision #2) -- so a `MobileNav`-hosted instance
+   * (inside the off-canvas `Drawer`) can close itself. The `>=860px`
+   * desktop `<aside>` instance passes nothing, so this stays a no-op there.
+   */
+  onNavigate?: () => void;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const [projects, setProjects] = useState<readonly Project[]>([]);
@@ -96,6 +109,7 @@ export function SidebarShell({ items }: { items: readonly SidebarNavItem[] }) {
     const currentSegment = /^\/projects\/[^/]+\/([a-z-]+)$/.exec(pathname)?.[1];
     const segment = currentSegment ?? "shares";
     router.push(`/projects/${projectId}/${segment}`);
+    onNavigate?.();
   }
 
   const resolvedItems: SidebarNavItem[] = items.map((item) => {
@@ -110,9 +124,12 @@ export function SidebarShell({ items }: { items: readonly SidebarNavItem[] }) {
         projects={projects}
         activeProjectId={activeProjectId}
         onSelect={selectProject}
-        onSelectAllInvestments={() => router.push("/all-investments")}
+        onSelectAllInvestments={() => {
+          router.push("/all-investments");
+          onNavigate?.();
+        }}
       />
-      <SidebarNav items={resolvedItems} />
+      <SidebarNav items={resolvedItems} onNavigate={onNavigate} />
     </div>
   );
 }

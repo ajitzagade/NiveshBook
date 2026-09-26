@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import type { ReactElement, ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { ReportTile } from "@niveshbook/ui";
+import { findAllByClassName } from "@/test/react-tree";
 import ReportsPage from "./page";
 
 const findUserById = vi.fn();
@@ -82,6 +83,19 @@ describe("ReportsPage (Story 5.7, FR38/FR39 tile grid)", () => {
     const tiles = findAllComponents(result, ReportTile);
     expect(tiles).toHaveLength(9);
     expect(tiles.map((tile) => (tile.props as { name: string }).name)).not.toContain("Money Movement");
+  });
+
+  it("the tile grid stacks to a true single column below 480px (spec-mobile-responsive-phase1-nav-foundation, Decision #3)", async () => {
+    findUserById.mockResolvedValue({ id: "user-1", role: "owner_admin", active: true });
+
+    const result = await ReportsPage();
+
+    const grids = findAllByClassName(result, "grid-cols-3 gap-3.5");
+    expect(grids).toHaveLength(1);
+    const tileGridClassName = (grids[0]?.props as { className: string }).className;
+    expect(tileGridClassName).toContain("max-[860px]:grid-cols-2");
+    expect(tileGridClassName).toContain("max-[760px]:grid-cols-1");
+    expect(tileGridClassName).toContain("max-[480px]:grid-cols-1");
   });
 
   it("redirects to / when the actor's own second lookup can't find them", async () => {

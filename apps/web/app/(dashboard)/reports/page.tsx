@@ -51,7 +51,15 @@ export default async function ReportsPage() {
         description="Permission-scoped reports — each one only ever shows what you're allowed to see."
       />
 
-      <div className="grid grid-cols-3 gap-3.5 max-[860px]:grid-cols-2 max-[760px]:grid-cols-1">
+      {/*
+        spec-mobile-responsive-phase1-nav-foundation (Decision #3): this
+        grid already collapsed to 1 column at 760px (below `home/page.tsx`'s
+        own 2-column floor) -- `max-[480px]:grid-cols-1` is added anyway for
+        an explicit, breakpoint-independent guarantee (matches `home/page.tsx`'s
+        3 stat grids byte-for-byte), rather than relying on it being an
+        incidental consequence of the 760px rule above.
+      */}
+      <div className="grid grid-cols-3 gap-3.5 max-[860px]:grid-cols-2 max-[760px]:grid-cols-1 max-[480px]:grid-cols-1">
         {visibleReports.map((report) => (
           <Link key={report.slug} href={`/reports/${report.slug}`} className="no-underline">
             <ReportTile

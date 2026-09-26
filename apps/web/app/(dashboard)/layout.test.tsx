@@ -3,6 +3,7 @@ import type { ReactElement, ReactNode } from "react";
 import { redirect } from "next/navigation";
 import DashboardLayout from "./layout";
 import { SidebarShell } from "./SidebarShell";
+import { MobileNav } from "./MobileNav";
 
 // `vi.hoisted()` genuinely runs before every `vi.mock()` factory below (unlike
 // a plain top-level `const`, which -- despite appearing earlier in this
@@ -130,6 +131,38 @@ describe("DashboardLayout (Story 5.5 role-based nav filtering, widened to sub_pa
     const shell = findComponent(result, SidebarShell);
     const items = (shell?.props as { items: { key: string; href?: string }[] }).items;
     expect(items.find((item) => item.key === "reports")?.href).toBe("/reports");
+  });
+
+  it("spec-mobile-responsive-phase1-nav-foundation: <aside> is hidden (not restacked) below 860px, and MobileNav renders the same items/appName -- regression guard for this spec's actual bug fix", async () => {
+    findUserById.mockResolvedValue({ id: "user-1", role: "owner_admin", active: true });
+
+    const result = await DashboardLayout({ children: <div /> });
+
+    const aside = findComponent(result, "aside");
+    const asideClassName = (aside?.props as { className: string }).className;
+    expect(asideClassName).toContain("max-[860px]:hidden");
+    // The old in-flow-restacking classes this spec replaced -- if either
+    // comes back, the sidebar is stacking above page content again instead
+    // of living in the drawer.
+    expect(asideClassName).not.toContain("max-[860px]:border-b");
+    expect(asideClassName).not.toContain("max-[860px]:overflow-visible");
+
+    const mobileNav = findComponent(result, MobileNav);
+    expect(mobileNav).toBeDefined();
+    const mobileNavProps = mobileNav?.props as { items: { key: string }[]; appName: string };
+    expect(mobileNavProps.appName).toBe("NiveshBook");
+    expect(mobileNavProps.items.map((item) => item.key)).toEqual([
+      "home",
+      "projects",
+      "partnerShares",
+      "addMoney",
+      "withdrawMoney",
+      "availableBalance",
+      "adjustNextTime",
+      "moneyHistory",
+      "reports",
+      "auditHistory",
+    ]);
   });
 
   it("redirects to / when the actor's own second lookup can't find them (defense-in-depth, fails closed rather than defaulting to the broader Owner/Admin item set)", async () => {

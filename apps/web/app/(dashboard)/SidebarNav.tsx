@@ -59,7 +59,20 @@ function isActive(key: SidebarNavItem["key"], pathname: string): boolean {
   }
 }
 
-export function SidebarNav({ items }: { items: readonly SidebarNavItem[] }) {
+export function SidebarNav({
+  items,
+  onNavigate,
+}: {
+  items: readonly SidebarNavItem[];
+  /**
+   * Fires when a nav item is selected (spec-mobile-responsive-phase1-nav-
+   * foundation, Decision #2) -- the `Drawer`-hosted mobile instance passes
+   * this to close itself on selection; the `>=860px` desktop instance
+   * passes nothing, so `NavItem`'s `onClick` is simply `undefined` there,
+   * a no-op.
+   */
+  onNavigate?: () => void;
+}) {
   const pathname = usePathname();
 
   return (
@@ -72,6 +85,13 @@ export function SidebarNav({ items }: { items: readonly SidebarNavItem[] }) {
           label={item.label}
           href={item.href}
           active={isActive(item.key, pathname)}
+          // Only wired when the item actually has a destination -- an
+          // unconditional `onClick` here would defeat `NavItem`'s own
+          // "no-destination-yet" inert branch (`!href && !onClick`) for any
+          // future item with no `href` (review finding: currently
+          // unreachable since every real item has one today, cheap
+          // insurance regardless).
+          onClick={item.href ? onNavigate : undefined}
         />
       ))}
     </nav>

@@ -15,6 +15,7 @@ import type {
   WithdrawalTransaction,
 } from "@niveshbook/types";
 import { Card, EmptyState, StatCard } from "@niveshbook/ui";
+import { findAllByClassName } from "@/test/react-tree";
 import DashboardHomePage, { formatSharePercent, PartnerOverviewCard, DashboardGridCard } from "./page";
 
 const investmentListAll = vi.fn();
@@ -149,33 +150,6 @@ function collectText(node: ReactNode): string {
   return collectText(element.props?.children);
 }
 
-/**
- * Every element (host or component) whose `className` contains the given
- * substring -- for asserting the dashboard sections' own 2-column/1-column
- * grid wrapper classes (founder feedback 2026-09-26, Decision 8).
- */
-function collectByClassName(node: ReactNode, substring: string, results: ReactElement[]): void {
-  if (node === null || node === undefined || typeof node !== "object") {
-    return;
-  }
-  if (Array.isArray(node)) {
-    for (const child of node) {
-      collectByClassName(child, substring, results);
-    }
-    return;
-  }
-  const element = node as ReactElement<{ className?: string; children?: ReactNode }>;
-  if (typeof element.props?.className === "string" && element.props.className.includes(substring)) {
-    results.push(element);
-  }
-  collectByClassName(element.props?.children, substring, results);
-}
-
-function findAllByClassName(node: ReactNode, substring: string): ReactElement[] {
-  const results: ReactElement[] = [];
-  collectByClassName(node, substring, results);
-  return results;
-}
 
 /**
  * Flattens a `DashboardGridCard`'s own `input` prop (a small JSX tree, e.g.
@@ -413,6 +387,15 @@ describe("DashboardHomePage (Owner/Admin Dashboard, Story 5.4, unchanged by Stor
 
     expect(containsComponent(result, EmptyState)).toBe(true);
     expect(findAllComponents(result, PartnerOverviewCard)).toHaveLength(0);
+
+    // spec-mobile-responsive-phase1-nav-foundation (Decision #3): the 4-card
+    // stat grid stacks to a true single column below 480px, on top of its
+    // existing 2-column floor below 760px.
+    const statGrids = findAllByClassName(result, "grid-cols-4 gap-3");
+    expect(statGrids).toHaveLength(1);
+    const statGridClassName = (statGrids[0]?.props as { className: string }).className;
+    expect(statGridClassName).toContain("max-[760px]:grid-cols-2");
+    expect(statGridClassName).toContain("max-[480px]:grid-cols-1");
   });
 
   it("populated case: renders correct numbers across all 5 cards, including the Sub-partner-rolls-into-parent-Partner rollup", async () => {
@@ -562,6 +545,13 @@ describe("DashboardHomePage (Partner Dashboard, Story 5.5)", () => {
 
     expect(findAllComponents(result, EmptyState)).toHaveLength(2);
     expect(findAllComponents(result, DashboardGridCard)).toHaveLength(0);
+
+    // spec-mobile-responsive-phase1-nav-foundation (Decision #3).
+    const statGrids = findAllByClassName(result, "grid-cols-3 gap-3");
+    expect(statGrids).toHaveLength(1);
+    const statGridClassName = (statGrids[0]?.props as { className: string }).className;
+    expect(statGridClassName).toContain("max-[760px]:grid-cols-2");
+    expect(statGridClassName).toContain("max-[480px]:grid-cols-1");
   });
 
   it("populated case: one linked Partner Share with activity -- correct numbers, scoped to this actor only", async () => {
@@ -731,6 +721,13 @@ describe("DashboardHomePage (Sub-partner Dashboard, Story 5.6)", () => {
 
     expect(findAllComponents(result, EmptyState)).toHaveLength(1);
     expect(findAllComponents(result, DashboardGridCard)).toHaveLength(0);
+
+    // spec-mobile-responsive-phase1-nav-foundation (Decision #3).
+    const statGrids = findAllByClassName(result, "grid-cols-3 gap-3");
+    expect(statGrids).toHaveLength(1);
+    const statGridClassName = (statGrids[0]?.props as { className: string }).className;
+    expect(statGridClassName).toContain("max-[760px]:grid-cols-2");
+    expect(statGridClassName).toContain("max-[480px]:grid-cols-1");
   });
 
   it("populated case: one linked Sub-partner Share with activity -- correct numbers, scoped to this actor only, no My Sub-partners section", async () => {

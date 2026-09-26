@@ -137,3 +137,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-partner-hierarchy-cards.md`
   summary: The new nested/role-tinted `PersonCard` hierarchy pattern (partner/sub-partner cards, colored rail) has no corresponding update to `_bmad-output/planning-artifacts/ux-designs/ux-NiveshBook-2026-09-23/DESIGN.md`/`EXPERIENCE.md`, despite `packages/ui/src/styles/tokens.css`'s own header stating it must stay in sync with those docs.
   evidence: found by Story review 2026-09-26 (blind-hunter). The pattern replaces the earlier `↳`/indent convention across six screens — a real, doc-worthy design decision. Fixing well means documenting the new pattern's screens, role-color mapping, and rail behavior, not a one-line patch.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-mobile-responsive-phase1-nav-foundation.md`
+  summary: The mobile drawer's `SidebarShell` instance re-fetches `listProjects()` on every open/close cycle (Radix `Dialog.Content` unmounts on close, so the effect re-runs on each reopen) — the desktop `<aside>`'s long-lived instance doesn't incur this.
+  evidence: found by Story review 2026-09-26 (blind-hunter). Matches the already-accepted pre-existing pattern noted earlier in this file (`SidebarShell` unconditionally calling `listProjects()` regardless of role-filtered nav visibility) — no correctness impact, just a wasted network call per drawer open. Fixing well means lifting project-list state above both `SidebarShell` instances (or caching), not a one-line patch.

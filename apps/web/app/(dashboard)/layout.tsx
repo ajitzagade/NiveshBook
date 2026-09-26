@@ -18,6 +18,7 @@ import { requireOwnerAdminOrPartnerOrSubPartnerSession } from "@/lib/session-gua
 import { getClientConfig } from "@/lib/client-config";
 import type { SidebarNavItem } from "./SidebarNav";
 import { SidebarShell } from "./SidebarShell";
+import { MobileNav } from "./MobileNav";
 
 // Guards every route in this group with a live, owner_admin OR partner OR
 // sub_partner session (via `requireOwnerAdminOrPartnerOrSubPartnerSession()`,
@@ -210,9 +211,22 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   // independently (`overflow-y-auto` on both panes) -- scrolling a long page
   // no longer drags the sidebar along. Below 860px (single-column stack) all
   // three overrides revert so the page scrolls as one, exactly as before.
+  //
+  // spec-mobile-responsive-phase1-nav-foundation (Decision #1): below 860px
+  // the `<aside>` no longer restacks in-flow above page content (that was
+  // the actual bug -- the full 10-item nav buried every page's content
+  // ~500-600px down on a phone) -- it's now simply hidden
+  // (`max-[860px]:hidden`), fully byte-identical to before at `>=860px`
+  // since that class only ever applies below it. `<MobileNav>` (a separate
+  // client component, since this layout itself is an async Server
+  // Component and the drawer needs open/close state) renders the
+  // replacement: a persistent top bar + off-canvas `Drawer`, itself hidden
+  // above 860px via its own `max-[860px]:flex` -- so at `>=860px` it
+  // contributes nothing to this grid at all.
   return (
     <div className="grid h-screen grid-cols-[236px_1fr] overflow-hidden max-[860px]:h-auto max-[860px]:min-h-screen max-[860px]:grid-cols-1 max-[860px]:overflow-visible">
-      <aside className="flex flex-col gap-5 overflow-y-auto border-r border-border bg-surface p-4 max-[860px]:overflow-visible max-[860px]:border-b max-[860px]:border-r-0">
+      <MobileNav items={visibleNavItems} appName={appName} />
+      <aside className="flex flex-col gap-5 overflow-y-auto border-r border-border bg-surface p-4 max-[860px]:hidden">
         <div className="flex items-center gap-2 px-1 pb-1 pt-0.5">
           <Logo />
           <span className="text-[15px] font-bold tracking-tight text-ink">{appName}</span>

@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import type { Project } from "@niveshbook/types";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 import { SidebarShell } from "./SidebarShell";
+import type { SidebarNavItem } from "./SidebarNav";
 
 const push = vi.fn();
 let mockPathname = "/home";
@@ -107,5 +108,53 @@ describe("SidebarShell — All Investments navigation", () => {
     await userEvent.click(await screen.findByText("All Investments"));
 
     expect(push).toHaveBeenCalledWith("/all-investments");
+  });
+});
+
+describe("SidebarShell — onNavigate (spec-mobile-responsive-phase1-nav-foundation, Decision #2)", () => {
+  const NAV_ITEMS: readonly SidebarNavItem[] = [
+    { key: "home", label: "Home", icon: <span />, href: "/home", roles: ["owner_admin"] },
+  ];
+
+  it("fires onNavigate after a Project switch (a genuine client-side router.push)", async () => {
+    const onNavigate = vi.fn();
+    listProjects.mockResolvedValue([makeProject()]);
+    render(<SidebarShell items={NAV_ITEMS} onNavigate={onNavigate} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /select a project/i }));
+    await userEvent.click(await screen.findByText("Project A"));
+
+    expect(push).toHaveBeenCalledWith("/projects/project-a/shares");
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+  });
+
+  it("fires onNavigate after All Investments is selected", async () => {
+    const onNavigate = vi.fn();
+    listProjects.mockResolvedValue([makeProject()]);
+    render(<SidebarShell items={NAV_ITEMS} onNavigate={onNavigate} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /select a project/i }));
+    await userEvent.click(await screen.findByText("All Investments"));
+
+    expect(push).toHaveBeenCalledWith("/all-investments");
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+  });
+
+  it("fires onNavigate when a nav-item link is clicked", async () => {
+    const onNavigate = vi.fn();
+    render(<SidebarShell items={NAV_ITEMS} onNavigate={onNavigate} />);
+
+    await userEvent.click(screen.getByRole("link", { name: "Home" }));
+
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+  });
+
+  it("without onNavigate (the >=860px desktop instance's own case), nothing throws on a Project switch, All Investments, or a nav-item click", async () => {
+    listProjects.mockResolvedValue([makeProject()]);
+    render(<SidebarShell items={NAV_ITEMS} />);
+
+    await userEvent.click(screen.getByRole("link", { name: "Home" }));
+    await userEvent.click(screen.getByRole("button", { name: /select a project/i }));
+    await expect(userEvent.click(await screen.findByText("All Investments"))).resolves.not.toThrow();
   });
 });
