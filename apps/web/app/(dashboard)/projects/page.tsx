@@ -149,18 +149,19 @@ export default function ProjectsPage() {
                   <TableRow>
                     <Th>Name</Th>
                     <Th className="!text-left">Description</Th>
-                    {/* Pinned to the right edge (founder feedback 2026-09-27) so 5 action buttons never require horizontal scrolling to reach. */}
-                    <Th className="nb-table-sticky-actions !text-left">Actions</Th>
+                    <Th className="!text-left">Actions</Th>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {state.projects.map((project) => (
                     <TableRow key={project.id}>
                       <Td className="font-semibold">{project.name}</Td>
-                      <Td className="!text-left text-ink-soft">{project.description ?? "—"}</Td>
-                      <Td className="nb-table-sticky-actions !text-left">
-                        {/* flex-wrap (founder feedback 2026-09-27): 5 buttons in one un-wrapped row need ~737px -- wider than the table itself at common widths, forcing horizontal scroll even with the column pinned. Wrapping keeps the column's own natural width small. */}
-                        <div className="flex max-w-[220px] flex-wrap gap-1.5">
+                      {/* Wraps instead of forcing the table wider (founder feedback 2026-09-27) -- a long description no longer pushes the Actions column off-screen. */}
+                      <Td className="!text-left text-ink-soft max-w-[280px] whitespace-normal break-words">
+                        {project.description ?? "—"}
+                      </Td>
+                      <Td className="!text-left">
+                        <div className="flex flex-wrap gap-1.5">
                           <ProjectActionButtons project={project} />
                         </div>
                       </Td>

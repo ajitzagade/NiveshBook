@@ -481,8 +481,7 @@ export default function UsersPage() {
                     <Th className="!text-left">Email</Th>
                     <Th className="!text-left">Role</Th>
                     <Th className="!text-left">Status</Th>
-                    {/* Pinned to the right edge (founder feedback 2026-09-27) so the action buttons never require horizontal scrolling to reach. */}
-                    <Th className="nb-table-sticky-actions !text-left">Actions</Th>
+                    <Th className="!text-left">Actions</Th>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -495,7 +494,7 @@ export default function UsersPage() {
                           {user.active ? "Active" : "Inactive"}
                         </StatusChip>
                       </Td>
-                      <Td className="nb-table-sticky-actions !text-left">
+                      <Td className="!text-left">
                         <div className="flex flex-wrap gap-1.5">
                           <UserActionButtons
                             user={user}
