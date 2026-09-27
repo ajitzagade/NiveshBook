@@ -338,7 +338,19 @@
 
   .nb-table {
     width: 100%;
-    border-collapse: collapse;
+    /*
+     * `border-separate` + zero spacing (founder feedback 2026-09-27,
+     * sticky-actions column fix) instead of `border-collapse: collapse` --
+     * `position: sticky` on a `<th>`/`<td>` renders broken (verified: a
+     * hugely distorted cell width/table height) under `collapse` in
+     * Chromium, a known CSS interaction. Every border in this table is
+     * `border-bottom` only (no left/right/top borders anywhere), so there is
+     * no adjacent-border-merging behavior for `collapse` to have been doing
+     * here in the first place -- this is a visually identical swap that
+     * happens to also unlock sticky columns.
+     */
+    border-collapse: separate;
+    border-spacing: 0;
     font-size: 13.3px;
   }
   .nb-table th {
@@ -367,6 +379,21 @@
     padding-left: 24px;
     color: var(--color-ink-soft);
     font-size: 12.6px;
+  }
+  /*
+   * Pins an Actions column to the table's own right edge inside its
+   * `overflow-x-auto` wrapper (founder feedback 2026-09-27): a wide action
+   * set (e.g. Projects' 5 buttons) could force horizontal scrolling just to
+   * reach it -- opt a `Th`/`Td` into this class and it stays visible
+   * regardless of scroll position. `background` matches `.nb-card`'s own
+   * `--color-surface` so scrolled-under cells never show through; the left
+   * border marks the pinned seam.
+   */
+  .nb-table-sticky-actions {
+    position: sticky;
+    right: 0;
+    background: var(--color-surface);
+    border-left: 1px solid var(--color-border);
   }
 
   .nb-distributed-check {
