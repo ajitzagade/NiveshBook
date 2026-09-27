@@ -23,14 +23,29 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   asChild?: boolean;
   /** Leading icon (lucide-react, 14px) -- see DESIGN.md.Components' `button` icon convention. */
   icon?: ReactNode;
+  /**
+   * "sm" trims padding/font-size for dense rows of many buttons (e.g. a
+   * table's per-row actions) -- omit for the normal, touch-friendly default.
+   */
+  size?: "md" | "sm";
 }
 
-export function Button({ variant = "primary", tone, asChild, icon, className, children, ...props }: ButtonProps) {
+export function Button({
+  variant = "primary",
+  tone,
+  asChild,
+  icon,
+  size = "md",
+  className,
+  children,
+  ...props
+}: ButtonProps) {
   const Comp = asChild ? Slot : "button";
   const buttonClassName = cn(
     "nb-btn",
     variant === "primary" ? "nb-btn-primary" : "nb-btn-ghost",
     variant === "ghost" && tone ? `nb-btn-tone-${tone}` : undefined,
+    size === "sm" ? "nb-btn-sm" : undefined,
     icon ? "inline-flex items-center gap-1.5" : undefined,
     className,
   );

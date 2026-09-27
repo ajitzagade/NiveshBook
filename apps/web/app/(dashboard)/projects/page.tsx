@@ -31,37 +31,44 @@ type ListState =
  * below-860px `RowCard`'s own `action` slot (spec-mobile-responsive-
  * phase2-table-cards, Decision #4) render the exact same buttons rather
  * than duplicating this JSX twice.
+ *
+ * `compact` (founder feedback 2026-09-27): the desktop Table needs all 5 on
+ * one row within the page's existing max-width, so it renders the `sm`
+ * Button size with a smaller icon; the below-860px RowCard stack has a full
+ * card row per button and stays at the normal, more touch-friendly size.
  */
-function ProjectActionButtons({ project }: { project: Project }) {
+function ProjectActionButtons({ project, compact }: { project: Project; compact?: boolean }) {
+  const size = compact ? "sm" : "md";
+  const iconSize = compact ? 12 : 14;
   return (
     <>
-      <Button asChild variant="ghost" tone="accent">
+      <Button asChild variant="ghost" tone="accent" size={size}>
         <Link href={`/projects/${project.id}/edit`} className="inline-flex items-center gap-1.5">
-          <Pencil size={14} />
+          <Pencil size={iconSize} />
           Edit
         </Link>
       </Button>
-      <Button asChild variant="ghost" tone="info">
+      <Button asChild variant="ghost" tone="info" size={size}>
         <Link href={`/projects/${project.id}/shares`} className="inline-flex items-center gap-1.5">
-          <Percent size={14} />
+          <Percent size={iconSize} />
           Partner Shares
         </Link>
       </Button>
-      <Button asChild variant="ghost" tone="success">
+      <Button asChild variant="ghost" tone="success" size={size}>
         <Link href={`/projects/${project.id}/add-money`} className="inline-flex items-center gap-1.5">
-          <Plus size={14} />
+          <Plus size={iconSize} />
           Add Money
         </Link>
       </Button>
-      <Button asChild variant="ghost" tone="danger">
+      <Button asChild variant="ghost" tone="danger" size={size}>
         <Link href={`/projects/${project.id}/withdraw-money`} className="inline-flex items-center gap-1.5">
-          <Minus size={14} />
+          <Minus size={iconSize} />
           Withdraw Money
         </Link>
       </Button>
-      <Button asChild variant="ghost" tone="violet">
+      <Button asChild variant="ghost" tone="violet" size={size}>
         <Link href={`/structure/${project.id}`} className="inline-flex items-center gap-1.5">
-          <Network size={14} />
+          <Network size={iconSize} />
           View Structure
         </Link>
       </Button>
@@ -160,7 +167,7 @@ export default function ProjectsPage() {
                       </Td>
                       <Td className="!text-left">
                         <div className="flex flex-wrap gap-1.5">
-                          <ProjectActionButtons project={project} />
+                          <ProjectActionButtons project={project} compact />
                         </div>
                       </Td>
                     </TableRow>
