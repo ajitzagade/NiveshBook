@@ -22,4 +22,6 @@ export interface InvestmentRequirementPort {
   listByProjectId(projectId: string): Promise<InvestmentRequirement[]>;
   /** A single Investment Requirement row by its own `id`, or `null` if none exists (Story 3.2, `should-pay` route) -- callers additionally check `.projectId` themselves for the cross-project-mismatch 404 case. */
   findById(id: string): Promise<InvestmentRequirement | null>;
+  /** Every Investment Requirement row across every Project, unfiltered -- mirrors every other port's identical `listAll()` shape (`InvestmentTransactionPort`, `PartnerSharePort`, etc.), used by `assembleProjectSummaries` (Projects list's per-project "N Add Money" round count) to avoid a per-project fetch. */
+  listAll(): Promise<InvestmentRequirement[]>;
 }

@@ -1,5 +1,15 @@
-import { LayoutGrid, Network, Users } from "lucide-react";
-import Link from "next/link";
+import {
+  ArrowDownCircle,
+  ArrowUpCircle,
+  Clock,
+  FolderPlus,
+  Landmark,
+  LayoutGrid,
+  TrendingDown,
+  TrendingUp,
+  Users,
+  Wallet,
+} from "lucide-react";
 import { redirect } from "next/navigation";
 import {
   assembleOwnerAdminDashboard,
@@ -22,11 +32,13 @@ import {
 } from "@niveshbook/db";
 import type { ReactNode } from "react";
 import {
+  ActionTile,
   Amount,
-  Button,
   Card,
   EmptyState,
+  HighlightStat,
   PageHeader,
+  ProjectPreviewCard,
   StatCard,
 } from "@niveshbook/ui";
 import { requireSession } from "@/lib/session-guard";
@@ -54,6 +66,21 @@ export function formatSharePercent(raw: string): string {
     return raw;
   }
   return raw.replace(/0+$/, "").replace(/\.$/, "");
+}
+
+/**
+ * Up to 2 uppercase initials from a Partner/Sub-partner's own recorded name
+ * (e.g. "Asha Kulkarni" -> "AK", "Bala" -> "B") -- the Home page's
+ * `ProjectPreviewCard` avatar. Exported for `page.test.tsx`'s own direct
+ * unit coverage, mirroring `formatSharePercent`'s identical precedent.
+ */
+export function initialsOf(name: string): string {
+  return name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((word) => word.charAt(0).toUpperCase())
+    .join("");
 }
 
 // This page's own data depends on every Project's live money state --
@@ -164,32 +191,6 @@ function sharePercentBadge(sharePercent: string) {
 }
 
 /**
- * Story 5.10 (Ownership & Money-Flow Structure Diagram): a Partner's/
- * Sub-partner's own entry point into their own scoped structure view --
- * `ShareRow`'s previously-unused `action` slot on the "My Projects" list
- * only (never "My Sub-partners", per this story's Code Map). Links to the
- * new top-level `/structure/[projectId]` page with `?partnerId=`/
- * `?subPartnerId=` set to the actor's OWN id for that row -- never the
- * unscoped Project-wide view (that query param presence is exactly what the
- * route's `authorize()` self-access check keys off of). Mirrors
- * `projects/page.tsx`'s identical `Button asChild variant="ghost"` wrapping
- * a `Link`, `lucide-react` icon pattern -- labeled "Structure" (not "View
- * Structure") to match that same action's label elsewhere and fit
- * `ShareRow`'s narrow `action` column.
- */
-function viewStructureAction(projectId: string, scope: { partnerId: string } | { subPartnerId: string }) {
-  const query = "partnerId" in scope ? `partnerId=${scope.partnerId}` : `subPartnerId=${scope.subPartnerId}`;
-  return (
-    <Button asChild variant="ghost">
-      <Link href={`/structure/${projectId}?${query}`} className="inline-flex items-center gap-1">
-        <Network size={12} />
-        Structure
-      </Link>
-    </Button>
-  );
-}
-
-/**
  * Partner Dashboard (Story 5.5, FR36) -- a Partner's own scoped view: My
  * Projects (per-Project Share %), 6 aggregate money totals across all of
  * their own Projects, and My Sub-partners. Mirrors the Owner/Admin
@@ -239,6 +240,13 @@ async function PartnerDashboard({ actorUserId }: { actorUserId: string }) {
   ]);
 
   const projectNamesById = Object.fromEntries(projects.map((project) => [project.id, project.name]));
+  // Purely presentational (spec-partner-hierarchy-cards, Home redesign) --
+  // `ProjectPreviewCard`'s description subtitle joins straight off this
+  // page's own already-fetched `projects` array, never a `packages/core`
+  // change: `assemblePartnerDashboard()`'s own summary shape is unaffected.
+  const projectDescriptionsById = Object.fromEntries(
+    projects.map((project) => [project.id, project.description]),
+  );
 
   const summary = assemblePartnerDashboard(actorUserId, {
     investmentTransactions,
@@ -260,12 +268,15 @@ async function PartnerDashboard({ actorUserId }: { actorUserId: string }) {
       />
 
       <div className="mb-5 grid grid-cols-3 gap-3 max-[760px]:grid-cols-2 max-[480px]:grid-cols-1">
-        <StatCard label="Money Added" value={summary.totalMoneyAdded} format="money" />
-        <StatCard label="Money Withdrawn" value={summary.totalMoneyWithdrawn} format="money" />
-        <StatCard label="Available Balance" value={summary.totalAvailableBalance} format="money" tone="success" />
-        <StatCard label="Pending" value={summary.totalPending} format="money" />
-        <StatCard label="Extra Paid" value={summary.totalExtraPaid} format="money" />
-        <StatCard label="Withdrawal Keep for Later" value={summary.totalKeepForLater} format="money" />
+        <StatCard label="Money Added" value={summary.totalMoneyAdded} format="money" icon={<TrendingUp size={14} />} iconTone="success" />
+        <StatCard label="Money Withdrawn" value={summary.totalMoneyWithdrawn} format="money" icon={<TrendingDown size={14} />} iconTone="danger" />
+        <StatCard label="Available Balance" value={summary.totalAvailableBalance} format="money" tone="success" icon={<Wallet size={14} />} iconTone="amber" />
+      </div>
+
+      <div className="mb-5 grid grid-cols-3 gap-3 max-[760px]:grid-cols-2 max-[480px]:grid-cols-1">
+        <HighlightStat icon={<Clock size={14} />} label="Pending" value={summary.totalPending} tone="amber" />
+        <HighlightStat icon={<ArrowDownCircle size={14} />} label="Extra Paid" value={summary.totalExtraPaid} tone="success" />
+        <HighlightStat icon={<ArrowUpCircle size={14} />} label="Keep for Later" value={summary.totalKeepForLater} tone="accent" />
       </div>
 
       <section className="mb-5">
@@ -281,12 +292,15 @@ async function PartnerDashboard({ actorUserId }: { actorUserId: string }) {
         ) : (
           <div className={DASHBOARD_CARD_GRID}>
             {summary.myProjects.map((row) => (
-              <DashboardGridCard
+              <ProjectPreviewCard
                 key={row.partnerId}
-                tint="partner"
                 name={row.projectName}
-                input={sharePercentBadge(row.sharePercent)}
-                action={viewStructureAction(row.projectId, { partnerId: row.partnerId })}
+                description={projectDescriptionsById[row.projectId]}
+                href={`/structure/${row.projectId}?partnerId=${row.partnerId}`}
+                avatarInitials={initialsOf(row.name)}
+                sharePercentLabel={`${formatSharePercent(row.sharePercent)}%`}
+                added={row.moneyAdded}
+                balance={row.availableBalance}
               />
             ))}
           </div>
@@ -372,6 +386,11 @@ async function SubPartnerDashboard({ actorUserId }: { actorUserId: string }) {
   ]);
 
   const projectNamesById = Object.fromEntries(projects.map((project) => [project.id, project.name]));
+  // Purely presentational (spec-partner-hierarchy-cards, Home redesign) --
+  // mirrors `PartnerDashboard`'s own identical `projectDescriptionsById` join.
+  const projectDescriptionsById = Object.fromEntries(
+    projects.map((project) => [project.id, project.description]),
+  );
 
   const summary = assembleSubPartnerDashboard(actorUserId, {
     investmentTransactions,
@@ -392,12 +411,15 @@ async function SubPartnerDashboard({ actorUserId }: { actorUserId: string }) {
       />
 
       <div className="mb-5 grid grid-cols-3 gap-3 max-[760px]:grid-cols-2 max-[480px]:grid-cols-1">
-        <StatCard label="Money Added" value={summary.totalMoneyAdded} format="money" />
-        <StatCard label="Money Withdrawn" value={summary.totalMoneyWithdrawn} format="money" />
-        <StatCard label="Available Balance" value={summary.totalAvailableBalance} format="money" tone="success" />
-        <StatCard label="Pending" value={summary.totalPending} format="money" />
-        <StatCard label="Extra Paid" value={summary.totalExtraPaid} format="money" />
-        <StatCard label="Withdrawal Keep for Later" value={summary.totalKeepForLater} format="money" />
+        <StatCard label="Money Added" value={summary.totalMoneyAdded} format="money" icon={<TrendingUp size={14} />} iconTone="success" />
+        <StatCard label="Money Withdrawn" value={summary.totalMoneyWithdrawn} format="money" icon={<TrendingDown size={14} />} iconTone="danger" />
+        <StatCard label="Available Balance" value={summary.totalAvailableBalance} format="money" tone="success" icon={<Wallet size={14} />} iconTone="amber" />
+      </div>
+
+      <div className="mb-5 grid grid-cols-3 gap-3 max-[760px]:grid-cols-2 max-[480px]:grid-cols-1">
+        <HighlightStat icon={<Clock size={14} />} label="Pending" value={summary.totalPending} tone="amber" />
+        <HighlightStat icon={<ArrowDownCircle size={14} />} label="Extra Paid" value={summary.totalExtraPaid} tone="success" />
+        <HighlightStat icon={<ArrowUpCircle size={14} />} label="Keep for Later" value={summary.totalKeepForLater} tone="accent" />
       </div>
 
       <section>
@@ -413,12 +435,15 @@ async function SubPartnerDashboard({ actorUserId }: { actorUserId: string }) {
         ) : (
           <div className={DASHBOARD_CARD_GRID}>
             {summary.myProjects.map((row) => (
-              <DashboardGridCard
+              <ProjectPreviewCard
                 key={row.subPartnerId}
-                tint="sub_partner"
                 name={row.projectName}
-                input={sharePercentBadge(row.sharePercent)}
-                action={viewStructureAction(row.projectId, { subPartnerId: row.subPartnerId })}
+                description={projectDescriptionsById[row.projectId]}
+                href={`/structure/${row.projectId}?subPartnerId=${row.subPartnerId}`}
+                avatarInitials={initialsOf(row.name)}
+                sharePercentLabel={`${formatSharePercent(row.sharePercent)}%`}
+                added={row.moneyAdded}
+                balance={row.availableBalance}
               />
             ))}
           </div>
@@ -537,10 +562,18 @@ export default async function DashboardHomePage() {
       />
 
       <div className="mb-5 grid grid-cols-4 gap-3 max-[760px]:grid-cols-2 max-[480px]:grid-cols-1">
-        <StatCard label="Total Project Money" value={summary.totalProjectMoney} format="money" />
-        <StatCard label="Total Added" value={summary.totalAdded} format="money" />
-        <StatCard label="Total Withdrawn" value={summary.totalWithdrawn} format="money" />
-        <StatCard label="Available Balance" value={summary.totalAvailableBalance} format="money" tone="success" />
+        <ActionTile icon={<ArrowDownCircle size={18} />} label="Add Money" tone="success" href="/projects" />
+        <ActionTile icon={<ArrowUpCircle size={18} />} label="Withdraw Money" tone="accent" href="/projects" />
+        <ActionTile icon={<FolderPlus size={18} />} label="New Project" tone="neutral" href="/projects/new" />
+        <ActionTile icon={<Wallet size={18} />} label="Available Balance" tone="amber" />
+      </div>
+
+      <div className="mb-5 grid grid-cols-5 gap-3 max-[900px]:grid-cols-3 max-[560px]:grid-cols-2 max-[380px]:grid-cols-1">
+        <StatCard label="Total Project Money" value={summary.totalProjectMoney} format="money" icon={<Landmark size={14} />} iconTone="neutral" />
+        <StatCard label="Total Added" value={summary.totalAdded} format="money" icon={<TrendingUp size={14} />} iconTone="success" />
+        <StatCard label="Total Withdrawn" value={summary.totalWithdrawn} format="money" icon={<TrendingDown size={14} />} iconTone="danger" />
+        <StatCard label="Available Balance" value={summary.totalAvailableBalance} format="money" tone="success" icon={<Wallet size={14} />} iconTone="amber" />
+        <StatCard label="Projects" value={projects.length} format="count" icon={<LayoutGrid size={14} />} iconTone="accent" />
       </div>
 
       <section>

@@ -13,14 +13,20 @@ import {
   ArrowLeft,
   Pencil,
   ArrowLeftRight,
+  Download,
 } from "lucide-react";
 import type {
   InvestmentRequirement,
   InvestmentTransaction,
+  Money,
   MoneyMovement,
   PaymentMode,
 } from "@niveshbook/types";
-import type { PartnerInvestmentAdjustment, PartnerShouldPayWithRecommended } from "@niveshbook/core";
+import type {
+  PartnerInvestmentAdjustment,
+  PartnerShouldPayWithRecommended,
+  SubPartnerInvestmentAdjustment,
+} from "@niveshbook/core";
 import {
   Amount,
   Button,
@@ -37,6 +43,7 @@ import {
   Label,
   PageHeader,
   PersonCard,
+  ProgressBar,
   ShareList,
   StatusChip,
   Table,
@@ -793,6 +800,26 @@ export default function AddMoneyPage() {
                 const expanded = expandedRequirementId === requirement.id;
                 const shouldPayState = shouldPayByRequirement[requirement.id];
                 const adjustmentsState = adjustmentsByRequirement[requirement.id];
+                // "Payment Summary" header's "N of M recorded" count
+                // (Bolt-mockup redesign, founder feedback 2026-09-27) --
+                // M is every Partner + Sub-partner row Should Pay resolved,
+                // N is however many of them have at least one recorded
+                // payment against this requirement already.
+                const totalPeople =
+                  shouldPayState && shouldPayState.status === "loaded"
+                    ? shouldPayState.partners.reduce((sum, partner) => sum + 1 + partner.subPartners.length, 0)
+                    : 0;
+                const recordedPeople =
+                  shouldPayState && shouldPayState.status === "loaded"
+                    ? shouldPayState.partners.reduce((sum, partner) => {
+                        const partnerRecorded =
+                          recordedPaymentsFor(requirement.id, "partner", partner.partnerId).length > 0 ? 1 : 0;
+                        const subsRecorded = partner.subPartners.filter(
+                          (sub) => recordedPaymentsFor(requirement.id, "sub_partner", sub.subPartnerId).length > 0,
+                        ).length;
+                        return sum + partnerRecorded + subsRecorded;
+                      }, 0)
+                    : 0;
 
                 return (
                   <Fragment key={requirement.id}>
@@ -817,6 +844,23 @@ export default function AddMoneyPage() {
                       <TableRow>
                         <Td colSpan={3} className="!text-left">
                           <div className="my-2 flex flex-col gap-2.5 border-l border-border pl-3">
+                            <div className="flex flex-wrap items-start justify-between gap-3 rounded-el border border-border bg-surface-alt px-4 py-3">
+                              <div>
+                                <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+                                  Total Amount Needed
+                                </div>
+                                <Amount value={requirement.amount} size="lg" />
+                              </div>
+                              <div className="text-right">
+                                <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+                                  Date
+                                </div>
+                                <div className="text-[13.4px] font-semibold text-ink">
+                                  {requirement.requirementDate}
+                                </div>
+                              </div>
+                            </div>
+
                             {!shouldPayState || shouldPayState.status === "loading" ? (
                               <p className="text-[12.6px] text-ink-soft">Loading Should Pay…</p>
                             ) : shouldPayState.status === "error" ? (
@@ -829,6 +873,15 @@ export default function AddMoneyPage() {
                               </p>
                             ) : (
                               <>
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <StatusChip variant="success">
+                                    <Download size={12} />
+                                    Payment Summary
+                                  </StatusChip>
+                                  <span className="text-[12px] text-ink-faint">
+                                    {recordedPeople} of {totalPeople} recorded
+                                  </span>
+                                </div>
                                 <ShareList>
                                   {/* Founder-approved hybrid (spec-partner-hierarchy-cards):
                                       each Partner is a teal-tinted `PersonCard` whose
@@ -861,9 +914,16 @@ export default function AddMoneyPage() {
                                                 }
                                                 action={<Amount value={sub.shouldPay} size="sm" />}
                                               >
-                                                <div className="mt-1">
+                                                <div className="mt-1 flex flex-wrap items-center gap-2">
                                                   <AdjustmentChip
                                                     adjustment={findSubPartnerAdjustment(
+                                                      adjustmentsState,
+                                                      partner.partnerId,
+                                                      sub.subPartnerId,
+                                                    )}
+                                                  />
+                                                  <ShouldPayProgress
+                                                    progress={subPartnerProgress(
                                                       adjustmentsState,
                                                       partner.partnerId,
                                                       sub.subPartnerId,
@@ -912,12 +972,15 @@ export default function AddMoneyPage() {
                                           : null
                                       }
                                     >
-                                      <div className="mt-1">
+                                      <div className="mt-1 flex flex-wrap items-center gap-2">
                                         <AdjustmentChip
                                           adjustment={findPartnerAdjustment(
                                             adjustmentsState,
                                             partner.partnerId,
                                           )}
+                                        />
+                                        <ShouldPayProgress
+                                          progress={partnerProgress(adjustmentsState, partner.partnerId)}
                                         />
                                       </div>
                                       {partner.subPartners.length > 0 ? (
@@ -1515,6 +1578,48 @@ function AdjustmentChip({ adjustment }: { adjustment: AdjustmentChipInfo | null 
       ) : null}
     </StatusChip>
   );
+}
+
+interface ShouldPayProgressInfo {
+  actualPaid: Money;
+  shouldPay: Money;
+}
+
+/** Mirrors `findPartnerAdjustment`'s exact lookup shape -- normalizes Partner's own `ownShouldPay` field name to the shared `shouldPay` this progress bar reads, since Should Pay progress uses the same per-person retained amount the Adjustment chip is computed against. */
+function partnerProgress(state: AdjustmentsState | undefined, partnerId: string): ShouldPayProgressInfo | null {
+  if (!state || state.status !== "loaded") return null;
+  const partner = state.partners.find((candidate) => candidate.partnerId === partnerId);
+  return partner ? { actualPaid: partner.actualPaid, shouldPay: partner.ownShouldPay } : null;
+}
+
+/** Mirrors `findSubPartnerAdjustment`'s exact lookup shape one level down. */
+function subPartnerProgress(
+  state: AdjustmentsState | undefined,
+  partnerId: string,
+  subPartnerId: string,
+): ShouldPayProgressInfo | null {
+  if (!state || state.status !== "loaded") return null;
+  const partner = state.partners.find((candidate) => candidate.partnerId === partnerId);
+  const sub = partner?.subPartners.find((candidate) => candidate.subPartnerId === subPartnerId);
+  return sub ? { actualPaid: sub.actualPaid, shouldPay: sub.shouldPay } : null;
+}
+
+/**
+ * The Should Pay progress bar shown alongside each Partner/Sub-partner row
+ * (Bolt-mockup redesign, founder feedback 2026-09-27) -- presentational only,
+ * a rounded visual percentage, never a financial computation whose result is
+ * stored or compared (AD-2's decimal-safe requirement governs actual money
+ * moved/adjusted, computed entirely in `packages/core`; this bar only ever
+ * re-derives a display percentage from that already-computed `actualPaid`/
+ * `shouldPay` pair). Renders nothing while adjustments haven't loaded yet (or
+ * errored), mirroring `AdjustmentChip`'s identical null-safety.
+ */
+function ShouldPayProgress({ progress }: { progress: ShouldPayProgressInfo | null }) {
+  if (!progress) return null;
+  const shouldPayNumber = Number(progress.shouldPay);
+  const percent = shouldPayNumber <= 0 ? 100 : (Number(progress.actualPaid) / shouldPayNumber) * 100;
+  const isComplete = percent >= 100;
+  return <ProgressBar percent={percent} tone={isComplete ? "success" : "amber"} />;
 }
 
 /**

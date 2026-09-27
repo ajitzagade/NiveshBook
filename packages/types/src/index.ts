@@ -44,6 +44,21 @@ export interface Project {
 }
 
 /**
+ * A `Project` plus its `assembleProjectSummaries` (`packages/core`) row --
+ * the Projects list card's own Partners/Sub-partners/Share%/"N Add Money"
+ * pills (founder feedback 2026-09-27). Additive over `Project` itself (never
+ * changed -- it's used broadly beyond the list screen), returned only by
+ * `GET /api/projects`.
+ */
+export interface ProjectListItem extends Project {
+  partnersCount: number;
+  subPartnersCount: number;
+  totalSharePercent: Percent;
+  isFullyAllocated: boolean;
+  addMoneyRoundCount: number;
+}
+
+/**
  * A validated, decimal-safe percentage value (AD-2), branded so a raw
  * `string` can never be assigned where a `Percent` is expected without
  * going through `packages/core/src/decimal-math.ts`'s `toPercent()` first.

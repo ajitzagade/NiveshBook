@@ -754,6 +754,10 @@ export function createInvestmentRequirementPort(
       const row = rows[0];
       return row ? toInvestmentRequirement(row) : null;
     },
+    async listAll() {
+      const rows = await database.select().from(investmentRequirements);
+      return rows.map(toInvestmentRequirement);
+    },
   };
 }
 

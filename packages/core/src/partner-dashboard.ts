@@ -47,7 +47,19 @@ export interface PartnerDashboardProjectRow {
   projectName: string;
   /** The stable `PartnerShare.partnerId` for this Project -- never `User.id` (AD-4). */
   partnerId: string;
+  /** This Partner Share's own recorded name (e.g. avatar initials on the Home page's Project preview card) -- the actor's own name only, never any other Partner's. */
+  name: string;
   sharePercent: Percent;
+  /**
+   * This Project's own share of `totalMoneyAdded` (founder feedback
+   * 2026-09-27, Home page redesign's per-project Added/Balance mini-stats) --
+   * sum of every `status: "active"` `investment_transactions.amount` row for
+   * THIS row's own `partnerId` only, unlike the summary-level
+   * `totalMoneyAdded`, which sums across every one of the actor's `partnerId`s.
+   */
+  moneyAdded: Money;
+  /** This Project's own share of `totalAvailableBalance` -- sum of every `available_balances.balance` row for THIS row's own `partnerId` only. */
+  availableBalance: Money;
 }
 
 /** One row per current Sub-partner under one of the actor's own current Partner Shares -- structural only, no financial figures (this story's frozen Decisions #5). */
@@ -118,7 +130,20 @@ export function assemblePartnerDashboard(actorUserId: string, raw: PartnerDashbo
     projectId: share.projectId,
     projectName: raw.projectNamesById[share.projectId] ?? UNKNOWN_PROJECT_NAME,
     partnerId: share.partnerId,
+    name: share.name,
     sharePercent: share.sharePercent,
+    moneyAdded: sumMoney(
+      raw.investmentTransactions
+        .filter(
+          (tx) => tx.status === "active" && tx.partyType === "partner" && tx.shareId === share.partnerId,
+        )
+        .map((tx) => tx.amount),
+    ),
+    availableBalance: sumMoney(
+      raw.availableBalances
+        .filter((balance) => balance.partyType === "partner" && balance.shareId === share.partnerId)
+        .map((balance) => balance.balance),
+    ),
   }));
 
   function isMine(partyType: "partner" | "sub_partner", shareId: string): boolean {

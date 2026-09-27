@@ -4,13 +4,35 @@ import {
   authorizeScope,
   createProject,
   InvalidProjectNameError,
+  listAllCurrentPartnerShares,
+  listAllCurrentSubPartnerShares,
+  assembleProjectSummaries,
 } from "@niveshbook/core";
-import { createSessionPort, createUserPort, createProjectPort } from "@niveshbook/db";
+import type { ProjectListItem } from "@niveshbook/types";
+import {
+  createSessionPort,
+  createUserPort,
+  createProjectPort,
+  createPartnerSharePort,
+  createSubPartnerSharePort,
+  createInvestmentRequirementPort,
+} from "@niveshbook/db";
 import { readSessionToken } from "@/lib/session";
 import { UNAUTHENTICATED_MESSAGE, FORBIDDEN_MESSAGE } from "@/lib/users";
 import { INVALID_REQUEST_MESSAGE, isValidProjectBody } from "./shared";
 
-/** Owner/Admin-only Projects list (AD-1) — proves `authorizeScope()` for a second resource beyond the user directory. */
+/**
+ * Owner/Admin-only Projects list (AD-1) — proves `authorizeScope()` for a
+ * second resource beyond the user directory. Returns `ProjectListItem[]`
+ * (founder feedback 2026-09-27) — each `Project` plus its
+ * `assembleProjectSummaries` row (Partners/Sub-partners/Share%/"N Add Money"
+ * counts) for the redesigned Projects card grid. The three summary sources
+ * (`listAllCurrentPartnerShares`/`listAllCurrentSubPartnerShares`/
+ * `InvestmentRequirementPort.listAll()`) are each a single unfiltered read,
+ * grouped in memory by `assembleProjectSummaries` — never a per-project
+ * fetch, so this stays O(1) queries regardless of how many Projects exist
+ * (NFR10).
+ */
 export async function GET(request: NextRequest) {
   const token = readSessionToken(request);
   const session = await getSession(token, { sessions: createSessionPort() });
@@ -30,8 +52,36 @@ export async function GET(request: NextRequest) {
   }
 
   const projectPort = createProjectPort();
-  const allProjects = await projectPort.listProjects();
-  return NextResponse.json(allProjects);
+  const partnerSharePort = createPartnerSharePort();
+  const subPartnerSharePort = createSubPartnerSharePort();
+  const investmentRequirementPort = createInvestmentRequirementPort();
+
+  const [allProjects, currentPartnerShares, currentSubPartnerShares, investmentRequirements] = await Promise.all([
+    projectPort.listProjects(),
+    listAllCurrentPartnerShares({ partnerShares: partnerSharePort }),
+    listAllCurrentSubPartnerShares({ subPartnerShares: subPartnerSharePort }),
+    investmentRequirementPort.listAll(),
+  ]);
+
+  const summaries = assembleProjectSummaries(
+    allProjects.map((project) => project.id),
+    { currentPartnerShares, currentSubPartnerShares, investmentRequirements },
+  );
+
+  const projectListItems: ProjectListItem[] = allProjects.map((project) => {
+    // project.id comes from the same listProjects() read assembleProjectSummaries was seeded with, so a matching row always exists
+    const summary = summaries[project.id];
+    return {
+      ...project,
+      partnersCount: summary.partnersCount,
+      subPartnersCount: summary.subPartnersCount,
+      totalSharePercent: summary.totalSharePercent,
+      isFullyAllocated: summary.isFullyAllocated,
+      addMoneyRoundCount: summary.addMoneyRoundCount,
+    };
+  });
+
+  return NextResponse.json(projectListItems);
 }
 
 /**

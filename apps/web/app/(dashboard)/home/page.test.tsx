@@ -14,9 +14,9 @@ import type {
   WithdrawalAdjustment,
   WithdrawalTransaction,
 } from "@niveshbook/types";
-import { Card, EmptyState, StatCard } from "@niveshbook/ui";
+import { Card, EmptyState, HighlightStat, ProjectPreviewCard, StatCard } from "@niveshbook/ui";
 import { findAllByClassName } from "@/test/react-tree";
-import DashboardHomePage, { formatSharePercent, PartnerOverviewCard, DashboardGridCard } from "./page";
+import DashboardHomePage, { formatSharePercent, initialsOf, PartnerOverviewCard, DashboardGridCard } from "./page";
 
 const investmentListAll = vi.fn();
 const withdrawalListAll = vi.fn();
@@ -376,26 +376,38 @@ describe("DashboardHomePage (Owner/Admin Dashboard, Story 5.4, unchanged by Stor
     expect(collectText(rendered)).toContain("Project Z");
   });
 
-  it("empty case: renders all 4 stat cards at '0' and EmptyState (not a crash) when there are zero current Partner Shares", async () => {
+  it("empty case: renders all 5 stat cards at '0' and EmptyState (not a crash) when there are zero current Partner Shares", async () => {
     const result = await DashboardHomePage();
 
     const statCards = findAllComponents(result, StatCard);
-    expect(statCards).toHaveLength(4);
+    expect(statCards).toHaveLength(5);
     for (const card of statCards) {
-      expect((card.props as { value: unknown }).value).toBe("0");
+      const value = (card.props as { value: unknown }).value;
+      // "Projects" is a `format="count"` card -- its value is the plain
+      // number `0`, unlike the other 4 money cards' `Amount`-formatted "0".
+      expect(value === "0" || value === 0).toBe(true);
     }
 
     expect(containsComponent(result, EmptyState)).toBe(true);
     expect(findAllComponents(result, PartnerOverviewCard)).toHaveLength(0);
 
-    // spec-mobile-responsive-phase1-nav-foundation (Decision #3): the 4-card
-    // stat grid stacks to a true single column below 480px, on top of its
-    // existing 2-column floor below 760px.
-    const statGrids = findAllByClassName(result, "grid-cols-4 gap-3");
+    // The Home redesign's quick-action row (founder feedback 2026-09-27)
+    // reuses the same "4-card stack to 1 column below 480px" grid shape the
+    // stat row used to occupy on its own.
+    const actionGrids = findAllByClassName(result, "grid-cols-4 gap-3");
+    expect(actionGrids).toHaveLength(1);
+    const actionGridClassName = (actionGrids[0]?.props as { className: string }).className;
+    expect(actionGridClassName).toContain("max-[760px]:grid-cols-2");
+    expect(actionGridClassName).toContain("max-[480px]:grid-cols-1");
+
+    // The stat row itself is now 5-up (Projects added), collapsing through
+    // 3/2/1 columns.
+    const statGrids = findAllByClassName(result, "grid-cols-5 gap-3");
     expect(statGrids).toHaveLength(1);
     const statGridClassName = (statGrids[0]?.props as { className: string }).className;
-    expect(statGridClassName).toContain("max-[760px]:grid-cols-2");
-    expect(statGridClassName).toContain("max-[480px]:grid-cols-1");
+    expect(statGridClassName).toContain("max-[900px]:grid-cols-3");
+    expect(statGridClassName).toContain("max-[560px]:grid-cols-2");
+    expect(statGridClassName).toContain("max-[380px]:grid-cols-1");
   });
 
   it("populated case: renders correct numbers across all 5 cards, including the Sub-partner-rolls-into-parent-Partner rollup", async () => {
@@ -435,7 +447,7 @@ describe("DashboardHomePage (Owner/Admin Dashboard, Story 5.4, unchanged by Stor
     const result = await DashboardHomePage();
 
     const statCards = findAllComponents(result, StatCard);
-    expect(statCards).toHaveLength(4);
+    expect(statCards).toHaveLength(5);
     const byLabel = Object.fromEntries(
       statCards.map((card) => [(card.props as { label: string }).label, (card.props as { value: unknown }).value]),
     );
@@ -446,6 +458,8 @@ describe("DashboardHomePage (Owner/Admin Dashboard, Story 5.4, unchanged by Stor
     expect(byLabel["Total Project Money"]).toBe("600000");
     // Available Balance = 50000 (partner) + 10000 (sub-partner) = 60000
     expect(byLabel["Available Balance"]).toBe("60000");
+    // Projects count -- one Project fetched via listProjects().
+    expect(byLabel["Projects"]).toBe(1);
 
     expect(containsComponent(result, EmptyState)).toBe(false);
     const overviewCards = findAllComponents(result, PartnerOverviewCard);
@@ -534,24 +548,33 @@ describe("DashboardHomePage (Partner Dashboard, Story 5.5)", () => {
     findUserById.mockResolvedValue({ id: "user-1", role: "partner", active: true });
   });
 
-  it("empty case: zero linked Partner Shares -- all 6 stat cards at '0', both EmptyStates render, not a crash", async () => {
+  it("empty case: zero linked Partner Shares -- all 3 stat cards and 3 highlight cards at '0', both EmptyStates render, not a crash", async () => {
     const result = await DashboardHomePage();
 
     const statCards = findAllComponents(result, StatCard);
-    expect(statCards).toHaveLength(6);
+    expect(statCards).toHaveLength(3);
     for (const card of statCards) {
+      expect((card.props as { value: unknown }).value).toBe("0");
+    }
+    const highlightStats = findAllComponents(result, HighlightStat);
+    expect(highlightStats).toHaveLength(3);
+    for (const card of highlightStats) {
       expect((card.props as { value: unknown }).value).toBe("0");
     }
 
     expect(findAllComponents(result, EmptyState)).toHaveLength(2);
     expect(findAllComponents(result, DashboardGridCard)).toHaveLength(0);
+    expect(findAllComponents(result, ProjectPreviewCard)).toHaveLength(0);
 
-    // spec-mobile-responsive-phase1-nav-foundation (Decision #3).
+    // spec-mobile-responsive-phase1-nav-foundation (Decision #3) -- now two
+    // grid-cols-3 rows (stats, then highlight cards).
     const statGrids = findAllByClassName(result, "grid-cols-3 gap-3");
-    expect(statGrids).toHaveLength(1);
-    const statGridClassName = (statGrids[0]?.props as { className: string }).className;
-    expect(statGridClassName).toContain("max-[760px]:grid-cols-2");
-    expect(statGridClassName).toContain("max-[480px]:grid-cols-1");
+    expect(statGrids).toHaveLength(2);
+    for (const grid of statGrids) {
+      const className = (grid.props as { className: string }).className;
+      expect(className).toContain("max-[760px]:grid-cols-2");
+      expect(className).toContain("max-[480px]:grid-cols-1");
+    }
   });
 
   it("populated case: one linked Partner Share with activity -- correct numbers, scoped to this actor only", async () => {
@@ -605,21 +628,33 @@ describe("DashboardHomePage (Partner Dashboard, Story 5.5)", () => {
     const result = await DashboardHomePage();
 
     const statCards = findAllComponents(result, StatCard);
-    expect(statCards).toHaveLength(6);
+    expect(statCards).toHaveLength(3);
     const byLabel = Object.fromEntries(
       statCards.map((card) => [(card.props as { label: string }).label, (card.props as { value: unknown }).value]),
     );
     expect(byLabel["Money Added"]).toBe("700000");
     expect(byLabel["Money Withdrawn"]).toBe("200000");
     expect(byLabel["Available Balance"]).toBe("50000");
-    expect(byLabel["Pending"]).toBe("30000");
-    expect(byLabel["Extra Paid"]).toBe("5000");
-    expect(byLabel["Withdrawal Keep for Later"]).toBe("15000");
-    // Extra Taken is deliberately not one of the rendered stat cards (this story's Implementation Notes).
-    expect(Object.keys(byLabel)).not.toContain("Extra Taken");
 
-    const shareRows = findAllComponents(result, DashboardGridCard);
-    expect(shareRows).toHaveLength(2); // 1 "My Projects" card + 1 "My Sub-partners" card
+    const highlightStats = findAllComponents(result, HighlightStat);
+    expect(highlightStats).toHaveLength(3);
+    const byHighlightLabel = Object.fromEntries(
+      highlightStats.map((card) => [(card.props as { label: string }).label, (card.props as { value: unknown }).value]),
+    );
+    expect(byHighlightLabel["Pending"]).toBe("30000");
+    expect(byHighlightLabel["Extra Paid"]).toBe("5000");
+    expect(byHighlightLabel["Keep for Later"]).toBe("15000");
+    // Extra Taken is deliberately not one of the rendered cards (this story's Implementation Notes).
+    expect(Object.keys(byHighlightLabel)).not.toContain("Extra Taken");
+
+    // "My Projects" now renders a `ProjectPreviewCard` (Home redesign,
+    // founder feedback 2026-09-27); "My Sub-partners" still renders the
+    // pre-existing `DashboardGridCard`.
+    const projectCards = findAllComponents(result, ProjectPreviewCard);
+    expect(projectCards).toHaveLength(1);
+    const subPartnerRows = findAllComponents(result, DashboardGridCard);
+    expect(subPartnerRows).toHaveLength(1);
+
     // Decision 8: both populated sections render their own 2-column grid
     // (1-col <860px).
     const grids = findAllByClassName(result, "grid-cols-2 gap-4");
@@ -632,30 +667,33 @@ describe("DashboardHomePage (Partner Dashboard, Story 5.5)", () => {
     // carries the ml-6 inset; My Projects (first) does not.
     expect((grids[0]?.props as { className: string }).className).not.toContain("ml-6");
     expect((grids[1]?.props as { className: string }).className).toContain("ml-6");
-    const names = shareRows.map((row) => (row.props as { name: string }).name);
-    expect(names).toContain("Project A");
-    expect(names).toContain("Bala — Project A");
 
     // "My Share %" (one of the frozen AC's 9 named data points): proves the
-    // ACTUAL rendered badge text, not just that a grid card exists -- both
+    // ACTUAL rendered badge text, not just that a card exists -- both
     // fixtures above used Postgres's own `numeric(7,4)` round-trip shape
     // ("70.0000"/"50.0000"), so this locks in `formatSharePercent()`'s
     // trailing-zero trim end-to-end, not just at the unit level.
-    const myProjectsRow = shareRows.find((row) => (row.props as { name: string }).name === "Project A");
-    const mySubPartnerRow = shareRows.find((row) => (row.props as { name: string }).name === "Bala — Project A");
-    expect(myProjectsRow && shareRowInputText(myProjectsRow)).toBe("70%");
+    const myProjectsRow = projectCards[0];
+    const mySubPartnerRow = subPartnerRows[0];
+    expect((myProjectsRow?.props as { name: string }).name).toBe("Project A");
+    expect((myProjectsRow?.props as { sharePercentLabel: string }).sharePercentLabel).toBe("70%");
+    expect((mySubPartnerRow?.props as { name: string }).name).toBe("Bala — Project A");
     expect(mySubPartnerRow && shareRowInputText(mySubPartnerRow)).toBe("50%");
 
-    // spec-partner-hierarchy-cards (2026-09-26): My Projects cards carry the
-    // partner (teal) role tint, My Sub-partners cards the sub_partner
-    // (violet) tint -- role reads from card styling alone.
-    expect((myProjectsRow?.props as { tint?: string }).tint).toBe("partner");
+    // The Project preview card's own Added/Balance mini-stats, and the
+    // actor's own avatar initials -- never any other Partner's.
+    expect((myProjectsRow?.props as { avatarInitials: string }).avatarInitials).toBe(initialsOf("Asha"));
+    expect((myProjectsRow?.props as { added: unknown }).added).toBe("700000");
+    expect((myProjectsRow?.props as { balance: unknown }).balance).toBe("50000");
+
+    // spec-partner-hierarchy-cards (2026-09-26): My Sub-partners cards still
+    // carry the sub_partner (violet) role tint.
     expect((mySubPartnerRow?.props as { tint?: string }).tint).toBe("sub_partner");
 
-    // Story 5.10: "My Projects" gets a "View Structure" action linking to
-    // this Partner's own scoped structure view; "My Sub-partners" does not
-    // (this story's Code Map -- that action slot stays unused there).
-    expect(myProjectsRow && shareRowActionHref(myProjectsRow)).toBe("/structure/project-a?partnerId=partner-1");
+    // Story 5.10: "My Projects" links to this Partner's own scoped structure
+    // view; "My Sub-partners" does not (this story's Code Map -- that action
+    // slot stays unused there).
+    expect((myProjectsRow?.props as { href?: string }).href).toBe("/structure/project-a?partnerId=partner-1");
     expect(mySubPartnerRow && shareRowActionHref(mySubPartnerRow)).toBeUndefined();
 
     expect(findAllComponents(result, EmptyState)).toHaveLength(0);
@@ -677,9 +715,16 @@ describe("DashboardHomePage (Partner Dashboard, Story 5.5)", () => {
 
     const result = await DashboardHomePage();
 
-    const shareRows = findAllComponents(result, DashboardGridCard);
-    const projectRowNames = shareRows.map((row) => (row.props as { name: string }).name);
+    const projectCards = findAllComponents(result, ProjectPreviewCard);
+    const projectRowNames = projectCards.map((row) => (row.props as { name: string }).name);
     expect(projectRowNames).toEqual(expect.arrayContaining(["Project A", "Project B"]));
+
+    // Each card's own `added` is scoped to THAT Project only -- never the
+    // "350000" aggregate every row would show if this were a bug that summed
+    // across both.
+    const byName = Object.fromEntries(projectCards.map((row) => [(row.props as { name: string }).name, row]));
+    expect((byName["Project A"]?.props as { added: unknown }).added).toBe("100000");
+    expect((byName["Project B"]?.props as { added: unknown }).added).toBe("250000");
 
     const statCards = findAllComponents(result, StatCard);
     const byLabel = Object.fromEntries(
@@ -710,24 +755,33 @@ describe("DashboardHomePage (Sub-partner Dashboard, Story 5.6)", () => {
     findUserById.mockResolvedValue({ id: "user-1", role: "sub_partner", active: true });
   });
 
-  it("empty case: zero linked Sub-partner Shares -- all 6 stat cards at '0', EmptyState renders, not a crash", async () => {
+  it("empty case: zero linked Sub-partner Shares -- all 3 stat cards and 3 highlight cards at '0', EmptyState renders, not a crash", async () => {
     const result = await DashboardHomePage();
 
     const statCards = findAllComponents(result, StatCard);
-    expect(statCards).toHaveLength(6);
+    expect(statCards).toHaveLength(3);
     for (const card of statCards) {
+      expect((card.props as { value: unknown }).value).toBe("0");
+    }
+    const highlightStats = findAllComponents(result, HighlightStat);
+    expect(highlightStats).toHaveLength(3);
+    for (const card of highlightStats) {
       expect((card.props as { value: unknown }).value).toBe("0");
     }
 
     expect(findAllComponents(result, EmptyState)).toHaveLength(1);
     expect(findAllComponents(result, DashboardGridCard)).toHaveLength(0);
+    expect(findAllComponents(result, ProjectPreviewCard)).toHaveLength(0);
 
-    // spec-mobile-responsive-phase1-nav-foundation (Decision #3).
+    // spec-mobile-responsive-phase1-nav-foundation (Decision #3) -- now two
+    // grid-cols-3 rows (stats, then highlight cards).
     const statGrids = findAllByClassName(result, "grid-cols-3 gap-3");
-    expect(statGrids).toHaveLength(1);
-    const statGridClassName = (statGrids[0]?.props as { className: string }).className;
-    expect(statGridClassName).toContain("max-[760px]:grid-cols-2");
-    expect(statGridClassName).toContain("max-[480px]:grid-cols-1");
+    expect(statGrids).toHaveLength(2);
+    for (const grid of statGrids) {
+      const className = (grid.props as { className: string }).className;
+      expect(className).toContain("max-[760px]:grid-cols-2");
+      expect(className).toContain("max-[480px]:grid-cols-1");
+    }
   });
 
   it("populated case: one linked Sub-partner Share with activity -- correct numbers, scoped to this actor only, no My Sub-partners section", async () => {
@@ -786,36 +840,45 @@ describe("DashboardHomePage (Sub-partner Dashboard, Story 5.6)", () => {
     const result = await DashboardHomePage();
 
     const statCards = findAllComponents(result, StatCard);
-    expect(statCards).toHaveLength(6);
+    expect(statCards).toHaveLength(3);
     const byLabel = Object.fromEntries(
       statCards.map((card) => [(card.props as { label: string }).label, (card.props as { value: unknown }).value]),
     );
     expect(byLabel["Money Added"]).toBe("500000");
     expect(byLabel["Money Withdrawn"]).toBe("150000");
     expect(byLabel["Available Balance"]).toBe("25000");
-    expect(byLabel["Pending"]).toBe("20000");
-    expect(byLabel["Extra Paid"]).toBe("3000");
-    expect(byLabel["Withdrawal Keep for Later"]).toBe("8000");
-    expect(Object.keys(byLabel)).not.toContain("Extra Taken");
 
-    const shareRows = findAllComponents(result, DashboardGridCard);
-    expect(shareRows).toHaveLength(1); // Only "My Projects" -- no "My Sub-partners" section for this role (Decisions #3)
+    const highlightStats = findAllComponents(result, HighlightStat);
+    expect(highlightStats).toHaveLength(3);
+    const byHighlightLabel = Object.fromEntries(
+      highlightStats.map((card) => [(card.props as { label: string }).label, (card.props as { value: unknown }).value]),
+    );
+    expect(byHighlightLabel["Pending"]).toBe("20000");
+    expect(byHighlightLabel["Extra Paid"]).toBe("3000");
+    expect(byHighlightLabel["Keep for Later"]).toBe("8000");
+    expect(Object.keys(byHighlightLabel)).not.toContain("Extra Taken");
+
+    // No "My Sub-partners" section for this role (Decisions #3) -- the
+    // `DashboardGridCard` component has no consumer left on this dashboard.
+    expect(findAllComponents(result, DashboardGridCard)).toHaveLength(0);
+    const projectCards = findAllComponents(result, ProjectPreviewCard);
+    expect(projectCards).toHaveLength(1);
     // Decision 8: the one populated section renders a 2-column grid (1-col <860px).
     const grids = findAllByClassName(result, "grid-cols-2 gap-4");
     expect(grids).toHaveLength(1);
     expect((grids[0]?.props as { className: string }).className).toContain("max-[860px]:grid-cols-1");
-    expect((shareRows[0]?.props as { name: string }).name).toBe("Project A");
-    expect(shareRowInputText(shareRows[0]!)).toBe("40%");
+    expect((projectCards[0]?.props as { name: string }).name).toBe("Project A");
+    expect((projectCards[0]?.props as { sharePercentLabel: string }).sharePercentLabel).toBe("40%");
 
-    // spec-partner-hierarchy-cards (2026-09-26): the Sub-partner dashboard's
-    // own "My Projects" cards carry the sub_partner (violet) role tint --
-    // this actor's own role is unambiguous even though no parent Partner
-    // card is present here (frozen I/O matrix row 3).
-    expect((shareRows[0]?.props as { tint?: string }).tint).toBe("sub_partner");
+    // The Project preview card's own Added/Balance mini-stats, and the
+    // actor's own avatar initials -- never the sibling Sub-partner's.
+    expect((projectCards[0]?.props as { avatarInitials: string }).avatarInitials).toBe(initialsOf("Bala"));
+    expect((projectCards[0]?.props as { added: unknown }).added).toBe("500000");
+    expect((projectCards[0]?.props as { balance: unknown }).balance).toBe("25000");
 
     // Story 5.10: links to this Sub-partner's own scoped structure view --
     // `?subPartnerId=`, never `?partnerId=` (their own even-narrower slice).
-    expect(shareRowActionHref(shareRows[0]!)).toBe("/structure/project-a?subPartnerId=sub-1");
+    expect((projectCards[0]?.props as { href?: string }).href).toBe("/structure/project-a?subPartnerId=sub-1");
 
     expect(findAllComponents(result, EmptyState)).toHaveLength(0);
   });
@@ -856,9 +919,16 @@ describe("DashboardHomePage (Sub-partner Dashboard, Story 5.6)", () => {
 
     const result = await DashboardHomePage();
 
-    const shareRows = findAllComponents(result, DashboardGridCard);
-    const projectRowNames = shareRows.map((row) => (row.props as { name: string }).name);
+    const projectCards = findAllComponents(result, ProjectPreviewCard);
+    const projectRowNames = projectCards.map((row) => (row.props as { name: string }).name);
     expect(projectRowNames).toEqual(expect.arrayContaining(["Project A", "Project B"]));
+
+    // Each card's own `added` is scoped to THAT Project only -- never the
+    // "350000" aggregate every row would show if this were a bug that summed
+    // across both.
+    const byName = Object.fromEntries(projectCards.map((row) => [(row.props as { name: string }).name, row]));
+    expect((byName["Project A"]?.props as { added: unknown }).added).toBe("100000");
+    expect((byName["Project B"]?.props as { added: unknown }).added).toBe("250000");
 
     const statCards = findAllComponents(result, StatCard);
     const byLabel = Object.fromEntries(

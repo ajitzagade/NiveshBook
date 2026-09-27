@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { render, screen, cleanup, within } from "@testing-library/react";
+import { render, screen, cleanup } from "@testing-library/react";
 import ProjectsPage from "./page";
 
 const listProjects = vi.fn();
@@ -13,8 +13,13 @@ const PROJECT = {
   id: "project-1",
   name: "Sunrise Towers",
   description: "A residential project",
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
+  createdAt: "2026-03-15T00:00:00.000Z",
+  updatedAt: "2026-03-15T00:00:00.000Z",
+  partnersCount: 3,
+  subPartnersCount: 1,
+  totalSharePercent: "100",
+  isFullyAllocated: true,
+  addMoneyRoundCount: 2,
 };
 
 afterEach(() => {
@@ -22,18 +27,13 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("ProjectsPage (Story 2.1, Structure action added by Story 5.10)", () => {
-  it("renders a 'Structure' action per row, linking to /structure/[id] (Code Map: mirrors Edit/Shares/Add Money/Withdraw Money's exact pattern)", async () => {
+describe("ProjectsPage (Story 2.1, card grid redesign founder feedback 2026-09-27)", () => {
+  it("renders a 'Structure' action per card, linking to /structure/[id] (Code Map: mirrors Edit/Shares/Add Money/Withdraw Money's exact pattern)", async () => {
     listProjects.mockResolvedValue([PROJECT]);
 
     render(<ProjectsPage />);
 
-    // spec-mobile-responsive-phase2-table-cards: the desktop Table and the
-    // below-860px RowCard stack both render every action -- scoped to the
-    // Table here (its own, desktop-specific assertion), the RowCard stack's
-    // own copy is covered by the dedicated describe block below.
-    const table = await screen.findByRole("table");
-    const structureLink = within(table).getByRole("link", { name: /Structure/ });
+    const structureLink = await screen.findByRole("link", { name: /Structure/ });
     expect(structureLink).toHaveAttribute("href", "/structure/project-1");
   });
 
@@ -42,15 +42,14 @@ describe("ProjectsPage (Story 2.1, Structure action added by Story 5.10)", () =>
 
     render(<ProjectsPage />);
 
-    const table = await screen.findByRole("table");
-    within(table).getByRole("link", { name: /Structure/ });
-    expect(within(table).getByRole("link", { name: /Edit/ })).toHaveAttribute("href", "/projects/project-1/edit");
-    expect(within(table).getByRole("link", { name: /Shares/ })).toHaveAttribute("href", "/projects/project-1/shares");
-    expect(within(table).getByRole("link", { name: /Add Money/ })).toHaveAttribute(
+    await screen.findByRole("link", { name: /Structure/ });
+    expect(screen.getByRole("link", { name: /Edit/ })).toHaveAttribute("href", "/projects/project-1/edit");
+    expect(screen.getByRole("link", { name: /Shares/ })).toHaveAttribute("href", "/projects/project-1/shares");
+    expect(screen.getByRole("link", { name: /Add Money/ })).toHaveAttribute(
       "href",
       "/projects/project-1/add-money",
     );
-    expect(within(table).getByRole("link", { name: /Withdraw Money/ })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /Withdraw Money/ })).toHaveAttribute(
       "href",
       "/projects/project-1/withdraw-money",
     );
@@ -64,69 +63,66 @@ describe("ProjectsPage (Story 2.1, Structure action added by Story 5.10)", () =>
     expect(await screen.findByText("No Projects yet")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Structure/ })).not.toBeInTheDocument();
   });
-});
 
-/**
- * spec-mobile-responsive-phase2-table-cards: below 860px, each Project
- * renders as a `RowCard` (Name as title, all 5 actions carried over
- * verbatim) instead of a table row -- both renders exist in the DOM
- * simultaneously (CSS-only breakpoint switch, Phase 1's convention),
- * scoped here via the stack's own `data-testid` so these assertions are
- * independent of the desktop Table's identical content. No Description
- * field (founder feedback 2026-09-27 -- dropped from the list view
- * entirely, still editable on the Project's own Edit page).
- */
-describe("ProjectsPage -- below-860px RowCard stack", () => {
-  it("renders one RowCard per Project with Name as title and all 5 actions reachable", async () => {
+  it("renders the Project's name and description", async () => {
     listProjects.mockResolvedValue([PROJECT]);
 
     render(<ProjectsPage />);
 
-    const cards = await screen.findByTestId("projects-row-cards");
-    expect(within(cards).getByText("Sunrise Towers")).toBeInTheDocument();
-    expect(within(cards).getByRole("link", { name: /Edit/ })).toHaveAttribute("href", "/projects/project-1/edit");
-    expect(within(cards).getByRole("link", { name: /Shares/ })).toHaveAttribute(
-      "href",
-      "/projects/project-1/shares",
-    );
-    expect(within(cards).getByRole("link", { name: /Add Money/ })).toHaveAttribute(
-      "href",
-      "/projects/project-1/add-money",
-    );
-    expect(within(cards).getByRole("link", { name: /Withdraw Money/ })).toHaveAttribute(
-      "href",
-      "/projects/project-1/withdraw-money",
-    );
-    expect(within(cards).getByRole("link", { name: /Structure/ })).toHaveAttribute(
-      "href",
-      "/structure/project-1",
-    );
+    expect(await screen.findByText("Sunrise Towers")).toBeInTheDocument();
+    expect(screen.getByText("A residential project")).toBeInTheDocument();
   });
 
-  it("renders no card stack in the empty state (EmptyState renders once, not duplicated for table+card)", async () => {
-    listProjects.mockResolvedValue([]);
+  it("omits the description line when a Project has none", async () => {
+    listProjects.mockResolvedValue([{ ...PROJECT, description: null }]);
 
     render(<ProjectsPage />);
 
-    expect(await screen.findByText("No Projects yet")).toBeInTheDocument();
-    expect(screen.queryByTestId("projects-row-cards")).not.toBeInTheDocument();
+    expect(await screen.findByText("Sunrise Towers")).toBeInTheDocument();
+    expect(screen.queryByText("A residential project")).not.toBeInTheDocument();
   });
 
-  // Review fix: jsdom never evaluates CSS, so a swapped/dropped breakpoint
-  // class would still leave every other assertion above green. Assert the
-  // actual wiring directly, mirroring layout.test.tsx's `asideClassName`
-  // pattern.
-  it("wires the desktop Table and mobile RowCard stack to opposite ends of the 860px breakpoint", async () => {
+  it("renders the Partners/Sub-partners/Share stat pills from the summary aggregate", async () => {
     listProjects.mockResolvedValue([PROJECT]);
 
     render(<ProjectsPage />);
 
-    const table = await screen.findByRole("table");
-    const tableWrapper = table.closest('[class*="860px"]');
-    expect(tableWrapper?.className).toContain("max-[860px]:hidden");
+    await screen.findByText("Sunrise Towers");
+    expect(screen.getByText("Partners")).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getByText("Sub-partners")).toBeInTheDocument();
+    expect(screen.getByText("1")).toBeInTheDocument();
+  });
 
-    const cards = screen.getByTestId("projects-row-cards");
-    expect(cards.className).toContain("hidden");
-    expect(cards.className).toContain("max-[860px]:block");
+  it("renders a success 'Shares: 100% ✓' chip when fully allocated", async () => {
+    listProjects.mockResolvedValue([PROJECT]);
+
+    render(<ProjectsPage />);
+
+    expect(await screen.findByText("Shares: 100% ✓")).toBeInTheDocument();
+  });
+
+  it("renders a danger 'Shares: X%' chip (no checkmark) when not fully allocated", async () => {
+    listProjects.mockResolvedValue([{ ...PROJECT, totalSharePercent: "60", isFullyAllocated: false }]);
+
+    render(<ProjectsPage />);
+
+    expect(await screen.findByText("Shares: 60%")).toBeInTheDocument();
+  });
+
+  it("renders the funding-round count chip", async () => {
+    listProjects.mockResolvedValue([PROJECT]);
+
+    render(<ProjectsPage />);
+
+    expect(await screen.findByText("2 Add Money")).toBeInTheDocument();
+  });
+
+  it("renders the Created date", async () => {
+    listProjects.mockResolvedValue([PROJECT]);
+
+    render(<ProjectsPage />);
+
+    expect(await screen.findByText(/Created/)).toBeInTheDocument();
   });
 });

@@ -8,6 +8,9 @@ const touchSession = vi.fn();
 const findUserById = vi.fn();
 const listProjects = vi.fn();
 const createProject = vi.fn();
+const listAllPartnerShares = vi.fn();
+const listAllSubPartnerShares = vi.fn();
+const listAllInvestmentRequirements = vi.fn();
 
 vi.mock("@niveshbook/db", () => ({
   createSessionPort: () => ({
@@ -28,6 +31,15 @@ vi.mock("@niveshbook/db", () => ({
     updateProject: vi.fn(),
     findProjectById: vi.fn(),
     listProjects,
+  }),
+  createPartnerSharePort: () => ({
+    listAll: listAllPartnerShares,
+  }),
+  createSubPartnerSharePort: () => ({
+    listAll: listAllSubPartnerShares,
+  }),
+  createInvestmentRequirementPort: () => ({
+    listAll: listAllInvestmentRequirements,
   }),
 }));
 
@@ -93,6 +105,12 @@ describe("GET /api/projects", () => {
     findUserById.mockReset();
     listProjects.mockReset();
     createProject.mockReset();
+    listAllPartnerShares.mockReset();
+    listAllPartnerShares.mockResolvedValue([]);
+    listAllSubPartnerShares.mockReset();
+    listAllSubPartnerShares.mockResolvedValue([]);
+    listAllInvestmentRequirements.mockReset();
+    listAllInvestmentRequirements.mockResolvedValue([]);
   });
 
   it("returns 401 with no session cookie", async () => {
@@ -114,7 +132,7 @@ describe("GET /api/projects", () => {
     expect(body).toEqual({ code: "forbidden", message: expect.any(String) });
   });
 
-  it("returns 200 with the project list for an owner_admin", async () => {
+  it("returns 200 with the project list, merged with a zero-valued summary when there's no share/requirement data yet", async () => {
     findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
     findUserById.mockResolvedValue(OWNER_USER);
     listProjects.mockResolvedValue([SAMPLE_PROJECT]);
@@ -123,7 +141,67 @@ describe("GET /api/projects", () => {
 
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body).toEqual([SAMPLE_PROJECT]);
+    expect(body).toEqual([
+      {
+        ...SAMPLE_PROJECT,
+        partnersCount: 0,
+        subPartnersCount: 0,
+        totalSharePercent: "0",
+        isFullyAllocated: false,
+        addMoneyRoundCount: 0,
+      },
+    ]);
+  });
+
+  it("merges each project's own Partners/Sub-partners/Share%/Add Money counts from the summary aggregate", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    listProjects.mockResolvedValue([SAMPLE_PROJECT]);
+    listAllPartnerShares.mockResolvedValue([
+      {
+        id: "share-1",
+        partnerId: "partner-1",
+        projectId: SAMPLE_PROJECT.id,
+        name: "Asha",
+        sharePercent: "100",
+        userId: null,
+        subPartnerVisibilityGrant: false,
+        effectiveFrom: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+    listAllSubPartnerShares.mockResolvedValue([
+      {
+        id: "sub-share-1",
+        subPartnerId: "sub-1",
+        partnerId: "partner-1",
+        projectId: SAMPLE_PROJECT.id,
+        name: "Bala",
+        sharePercent: "50",
+        userId: null,
+        effectiveFrom: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+    listAllInvestmentRequirements.mockResolvedValue([
+      { id: "req-1", projectId: SAMPLE_PROJECT.id, amount: "1000000", requirementDate: "2026-03-15", createdAt: new Date().toISOString() },
+      { id: "req-2", projectId: SAMPLE_PROJECT.id, amount: "500000", requirementDate: "2026-04-01", createdAt: new Date().toISOString() },
+    ]);
+
+    const response = await GET(makeGetRequest(`${SESSION_COOKIE_NAME}=some-token`));
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual([
+      {
+        ...SAMPLE_PROJECT,
+        partnersCount: 1,
+        subPartnersCount: 1,
+        totalSharePercent: "100",
+        isFullyAllocated: true,
+        addMoneyRoundCount: 2,
+      },
+    ]);
   });
 });
 

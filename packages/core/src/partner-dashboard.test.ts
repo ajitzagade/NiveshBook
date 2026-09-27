@@ -167,7 +167,15 @@ describe("assemblePartnerDashboard", () => {
     const result = assemblePartnerDashboard(ACTOR, raw);
 
     expect(result.myProjects).toEqual([
-      { projectId: "project-a", projectName: "Project A", partnerId: "partner-1", sharePercent: "60" },
+      {
+        projectId: "project-a",
+        projectName: "Project A",
+        partnerId: "partner-1",
+        name: "Asha",
+        sharePercent: "60",
+        moneyAdded: "700000",
+        availableBalance: "50000",
+      },
     ]);
     expect(result.totalMoneyAdded).toBe("700000");
     expect(result.totalMoneyWithdrawn).toBe("200000");
@@ -199,6 +207,14 @@ describe("assemblePartnerDashboard", () => {
     expect(result.myProjects).toHaveLength(3);
     expect(result.myProjects.map((row) => row.projectName).sort()).toEqual(["Project A", "Project B", "Project C"]);
     expect(result.totalMoneyAdded).toBe("600000");
+
+    // Each row's own moneyAdded is scoped to THAT Project's partnerId only --
+    // never the "600000" aggregate every row would show if this were a bug
+    // that summed across all three.
+    const rowByProject = Object.fromEntries(result.myProjects.map((row) => [row.projectName, row]));
+    expect(rowByProject["Project A"]?.moneyAdded).toBe("100000");
+    expect(rowByProject["Project B"]?.moneyAdded).toBe("200000");
+    expect(rowByProject["Project C"]?.moneyAdded).toBe("300000");
   });
 
   it("Partner with no activity yet: aggregate totals are all '0'; myProjects still shows the linked Project", () => {

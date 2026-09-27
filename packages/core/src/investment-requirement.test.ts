@@ -45,6 +45,9 @@ function createFakeInvestmentRequirementPort(seed: InvestmentRequirement[] = [])
     async findById(id: string) {
       return rows.find((r) => r.id === id) ?? null;
     },
+    async listAll() {
+      return [...rows];
+    },
   };
 }
 

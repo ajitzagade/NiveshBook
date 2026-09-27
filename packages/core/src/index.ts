@@ -48,3 +48,4 @@ export * from "./reports";
 export * from "./audit-log-port";
 export * from "./audit-history";
 export * from "./ownership-structure";
+export * from "./project-summary";

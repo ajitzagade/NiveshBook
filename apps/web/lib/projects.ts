@@ -1,4 +1,4 @@
-import type { Project } from "@niveshbook/types";
+import type { Project, ProjectListItem } from "@niveshbook/types";
 
 /**
  * Thin client-side fetch helpers for the Projects screens (Story 2.1) —
@@ -27,12 +27,12 @@ async function readErrorMessage(response: Response): Promise<string> {
   return GENERIC_ERROR_MESSAGE;
 }
 
-export async function listProjects(): Promise<Project[]> {
+export async function listProjects(): Promise<ProjectListItem[]> {
   const response = await fetch("/api/projects");
   if (!response.ok) {
     throw new Error(await readErrorMessage(response));
   }
-  return (await response.json()) as Project[];
+  return (await response.json()) as ProjectListItem[];
 }
 
 /** Fetches one Project (for the edit form's pre-fill). Throws on 404/403/etc — callers render the message. */
