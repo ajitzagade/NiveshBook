@@ -213,6 +213,85 @@ export class InvalidCreatableRoleError extends Error {
   }
 }
 
+/** The same 8-128 character bounds `createUser()`'s own route-layer validation established (spec-user-creation) -- `resetUserPassword()` reuses them, this time enforced at the domain layer itself (see that function's own doc comment for why). */
+export const MIN_PASSWORD_LENGTH = 8;
+export const MAX_PASSWORD_LENGTH = 128;
+
+/** Thrown by `resetUserPassword()` for a password under `MIN_PASSWORD_LENGTH` characters. */
+export class PasswordTooShortError extends Error {
+  constructor() {
+    super(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+    this.name = "PasswordTooShortError";
+  }
+}
+
+/**
+ * Thrown by `resetUserPassword()` for a password over `MAX_PASSWORD_LENGTH`
+ * characters -- an unbounded length reaching `argon2.hash()` is a
+ * self-inflicted hashing-cost vector (argon2's cost scales with input size),
+ * mirroring `POST /api/users`'s own identical rationale for capping
+ * `createUser()`'s password at the route layer.
+ */
+export class PasswordTooLongError extends Error {
+  constructor() {
+    super(`Password must be at most ${MAX_PASSWORD_LENGTH} characters.`);
+    this.name = "PasswordTooLongError";
+  }
+}
+
+/**
+ * Resets a user's password (spec-user-reset-deactivate) -- an Owner/Admin's
+ * replacement for direct DB access when a Partner/Sub-partner (or another
+ * Owner/Admin) forgets or compromises their password. Callers must run
+ * `authorize()` for `"users:reset-password"` before calling this (AD-1) — it
+ * performs no permission check of its own, mirroring `setUserActiveStatus()`'s/
+ * `createUser()`'s identical contract.
+ *
+ * Unlike `createUser()` (whose 8-128 length bound is enforced only at the
+ * route layer, `apps/web/app/api/users/route.ts`), this function validates
+ * `newPassword`'s length itself, throwing `PasswordTooShortError`/
+ * `PasswordTooLongError` -- this spec's Code Map calls for the domain layer
+ * to own this invariant directly rather than trusting the route alone, since
+ * a resettable password is otherwise unbounded input reaching `argon2.hash()`
+ * (a self-inflicted hashing-cost vector) with no route-level gate of its own
+ * guaranteed to exist ahead of it.
+ *
+ * `newPassword` is hashed via `argon2.hash()` (the same call shape
+ * `createUser()` already uses, no explicit cost params) -- the plaintext
+ * password is never itself stored, logged, or returned. On a successful
+ * update, every one of the target's `sessions` rows is deleted (mirrors
+ * `setUserActiveStatus()`'s true -> false session-invalidation precedent),
+ * so the reset takes effect immediately: the old password's sessions stop
+ * working right away, not just at their next natural expiry.
+ *
+ * Returns `null` if `userId` doesn't match any user, so callers can surface
+ * a 404 -- mirrors `setUserActiveStatus()`'s identical not-found contract.
+ * No `sessions.deleteAllSessionsForUser` call happens in that case.
+ */
+export async function resetUserPassword(
+  userId: string,
+  newPassword: string,
+  deps: Pick<AuthDeps, "users" | "sessions">,
+): Promise<User | null> {
+  if (newPassword.length < MIN_PASSWORD_LENGTH) {
+    throw new PasswordTooShortError();
+  }
+  if (newPassword.length > MAX_PASSWORD_LENGTH) {
+    throw new PasswordTooLongError();
+  }
+
+  const passwordHash = await argon2.hash(newPassword);
+  const updated = await deps.users.updatePassword(userId, passwordHash);
+
+  if (!updated) {
+    return null;
+  }
+
+  await deps.sessions.deleteAllSessionsForUser(userId);
+
+  return updated;
+}
+
 /**
  * Creates a new login account (spec-user-creation) -- the in-app
  * replacement for the dev-only `packages/db/src/seed.ts` script, which

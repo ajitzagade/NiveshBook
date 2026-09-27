@@ -1280,6 +1280,80 @@ describe("authorize — users:update-status (no self-access override)", () => {
   });
 });
 
+describe("authorize — users:reset-password (spec-user-reset-deactivate, no self-access override, byte-for-byte mirrors users:update-status)", () => {
+  it("allows an owner_admin to reset another user's password", async () => {
+    const users = createFakeUserPort([
+      makeUser({ id: "owner-1", role: "owner_admin" }),
+      makeUser({ id: "target-1", role: "partner" }),
+    ]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize(
+      "owner-1",
+      "users:reset-password",
+      { ownerId: "target-1" },
+      deps,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("allows an owner_admin to reset their own password (normal role check, not a self-access short-circuit)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize("owner-1", "users:reset-password", { ownerId: "owner-1" }, deps);
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it.each(["partner", "sub_partner", "project_admin"] as const)(
+    "denies a %s from resetting someone else's password",
+    async (role) => {
+      const users = createFakeUserPort([
+        makeUser({ id: "actor-1", role }),
+        makeUser({ id: "target-1", role: "partner" }),
+      ]);
+      const deps: AuthorizeDeps = { users };
+
+      const result = await authorize(
+        "actor-1",
+        "users:reset-password",
+        { ownerId: "target-1" },
+        deps,
+      );
+
+      expect(result).toEqual({ allowed: false });
+    },
+  );
+
+  it.each(["partner", "sub_partner", "project_admin"] as const)(
+    "denies a %s from resetting their OWN password — unlike users:view, there is no self-access override",
+    async (role) => {
+      const users = createFakeUserPort([makeUser({ id: "actor-1", role })]);
+      const deps: AuthorizeDeps = { users };
+
+      const result = await authorize(
+        "actor-1",
+        "users:reset-password",
+        { ownerId: "actor-1" },
+        deps,
+      );
+
+      expect(result).toEqual({ allowed: false });
+    },
+  );
+
+  it("denies an actor that no longer exists, even when targeting their own (former) id", async () => {
+    const users = createFakeUserPort([]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorize("ghost", "users:reset-password", { ownerId: "ghost" }, deps);
+
+    expect(result).toEqual({ allowed: false });
+  });
+});
+
 describe("authorizeScope — can_take:view (Story 4.1, identical shape to should_pay:view)", () => {
   it("allows an owner_admin to view Can Take", async () => {
     const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);

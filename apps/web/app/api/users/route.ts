@@ -1,21 +1,32 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getSession, authorizeScope, createUser, InvalidCreatableRoleError, UserEmailAlreadyExistsError } from "@niveshbook/core";
+import {
+  getSession,
+  authorizeScope,
+  createUser,
+  InvalidCreatableRoleError,
+  UserEmailAlreadyExistsError,
+  MIN_PASSWORD_LENGTH,
+  MAX_PASSWORD_LENGTH,
+} from "@niveshbook/core";
 import { createSessionPort, createUserPort } from "@niveshbook/db";
 import { readSessionToken } from "@/lib/session";
 import { sanitizeUser, isCreatableUserRole, UNAUTHENTICATED_MESSAGE, FORBIDDEN_MESSAGE } from "@/lib/users";
 
 const INVALID_REQUEST_MESSAGE = "Request body must be valid JSON";
 const EMAIL_INVALID_MESSAGE = "Enter a valid email address.";
-const PASSWORD_TOO_SHORT_MESSAGE = "Password must be at least 8 characters.";
-const PASSWORD_TOO_LONG_MESSAGE = "Password must be at most 128 characters.";
+const PASSWORD_TOO_SHORT_MESSAGE = `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`;
+const PASSWORD_TOO_LONG_MESSAGE = `Password must be at most ${MAX_PASSWORD_LENGTH} characters.`;
 const ROLE_INVALID_MESSAGE = "Role must be Owner/Admin, Partner, or Sub-partner.";
 const EMAIL_IN_USE_MESSAGE = "Email already in use.";
-const MIN_PASSWORD_LENGTH = 8;
-// An unbounded password length reaching `argon2.hash()` is a self-inflicted
-// hashing-cost vector (argon2's cost scales with input size), even on an
-// Owner/Admin-only endpoint -- mirrors `apps/web/app/(dashboard)/users/page.tsx`'s
-// own client-side cap (review fix).
-const MAX_PASSWORD_LENGTH = 128;
+// `MIN_PASSWORD_LENGTH`/`MAX_PASSWORD_LENGTH` now live in `@niveshbook/core`
+// (spec-user-reset-deactivate, added alongside `resetUserPassword()`) --
+// imported above rather than re-declared here, so the 8-128 bound has one
+// server-side source of truth. An unbounded password length reaching
+// `argon2.hash()` is a self-inflicted hashing-cost vector (argon2's cost
+// scales with input size), even on an Owner/Admin-only endpoint -- mirrors
+// `apps/web/app/(dashboard)/users/page.tsx`'s own client-side cap (review
+// fix), which stays a separately-declared copy for the same client-bundle
+// reason `CREATABLE_USER_ROLES` documents there.
 
 // Deliberately simple -- format validation only, never used to decide
 // deliverability. Mirrors the login form's own native `type="email"` check;

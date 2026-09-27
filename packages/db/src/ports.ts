@@ -487,6 +487,14 @@ export function createUserPort(database: Database = getDb()): UserPort {
         throw error;
       }
     },
+    async updatePassword(id, passwordHash) {
+      const [row] = await database
+        .update(users)
+        .set({ passwordHash })
+        .where(eq(users.id, id))
+        .returning();
+      return row ? toUser(row) : null;
+    },
   };
 }
 

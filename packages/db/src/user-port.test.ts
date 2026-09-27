@@ -95,3 +95,62 @@ describe("createUserPort().createUser (live Postgres)", () => {
     expect(rows).toHaveLength(1);
   });
 });
+
+/**
+ * Live-Postgres coverage for `createUserPort().updatePassword`
+ * (spec-user-reset-deactivate) -- the one new write this spec adds to
+ * `UserPort`, mirroring `setUserActive`'s own (untested-here, but identical
+ * shape) "plain update-by-id, returning null for an unmatched id" pattern.
+ */
+describe("createUserPort().updatePassword (live Postgres)", () => {
+  const seededEmails: string[] = [];
+
+  afterEach(async () => {
+    const db = getDb();
+    const emails = seededEmails.splice(0);
+    if (emails.length > 0) {
+      await db.delete(users).where(inArray(users.email, emails));
+    }
+  });
+
+  function uniqueEmail(): string {
+    const email = `user-port-update-password-test-${Date.now()}-${Math.random().toString(36).slice(2)}@niveshbook.test`;
+    seededEmails.push(email);
+    return email;
+  }
+
+  it("overwrites the stored password hash and returns the updated row", async () => {
+    const port = createUserPort();
+    const email = uniqueEmail();
+    const created = await port.createUser({ email, passwordHash: "original-hash", role: "partner" });
+
+    const updated = await port.updatePassword(created.id, "new-hash");
+
+    expect(updated?.id).toBe(created.id);
+    expect(updated?.passwordHash).toBe("new-hash");
+
+    const db = getDb();
+    const rows = await db.select().from(users).where(eq(users.id, created.id));
+    expect(rows[0]?.passwordHash).toBe("new-hash");
+  });
+
+  it("leaves every other column untouched", async () => {
+    const port = createUserPort();
+    const email = uniqueEmail();
+    const created = await port.createUser({ email, passwordHash: "original-hash", role: "owner_admin" });
+
+    const updated = await port.updatePassword(created.id, "new-hash");
+
+    expect(updated?.email).toBe(email);
+    expect(updated?.role).toBe("owner_admin");
+    expect(updated?.active).toBe(true);
+  });
+
+  it("returns null for an id that doesn't match any row", async () => {
+    const port = createUserPort();
+
+    const updated = await port.updatePassword("0192f5a0-0000-7000-8000-000000000000", "new-hash");
+
+    expect(updated).toBeNull();
+  });
+});

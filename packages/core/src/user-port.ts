@@ -62,4 +62,15 @@ export interface UserPort {
    * expected to throw; any other DB error propagates unchanged.
    */
   createUser(input: CreateUserInput): Promise<User>;
+  /**
+   * Overwrites a user's stored password hash (spec-user-reset-deactivate).
+   * `passwordHash` is already an `argon2.hash()` output by the time this
+   * reaches the port -- mirrors `CreateUserInput.passwordHash`'s identical
+   * "never sees a plaintext password" separation (hashing is
+   * `packages/core`'s `resetUserPassword()` domain function's job, never the
+   * DB layer's). Returns the updated user, or `null` if `id` doesn't match
+   * any row -- callers surface that as a 404, mirroring `setUserActive`'s
+   * identical not-found contract.
+   */
+  updatePassword(id: string, passwordHash: string): Promise<User | null>;
 }

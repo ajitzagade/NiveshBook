@@ -14,6 +14,7 @@ export type Action =
   | "users:view"
   | "users:update-status"
   | "users:create"
+  | "users:reset-password"
   | "permissions:view"
   | "permissions:manage"
   | "projects:create"
@@ -85,6 +86,15 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // `authorizeScope()` only, same as `users:list` (no single target
   // resource exists yet at create time).
   "users:create": new Set(["owner_admin"]),
+  // spec-user-reset-deactivate: an Owner/Admin resetting a Partner/Sub-
+  // partner's (or another Owner/Admin's) forgotten/compromised password --
+  // byte-for-byte mirrors `users:update-status`'s identical shape (this
+  // spec's Boundaries): owner_admin-only, no self-access override (checked
+  // via `authorize()`, not `authorizeScope()`, matching `users:update-status`'s
+  // own call shape one action over -- there IS a single target resource, an
+  // Owner/Admin resetting their OWN password still goes through this same
+  // normal role check, never a `SELF_ACCESS_ACTIONS` short-circuit).
+  "users:reset-password": new Set(["owner_admin"]),
   // Story 1.7 (FR45): the Permissions area (role-usage view + Extra
   // Withdrawal approval-authority grants). Owner/Admin-only, matching
   // users:update-status — no self-access override either.

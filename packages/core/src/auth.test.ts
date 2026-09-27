@@ -11,6 +11,9 @@ import {
   setUserActiveStatus,
   createUser,
   InvalidCreatableRoleError,
+  resetUserPassword,
+  PasswordTooShortError,
+  PasswordTooLongError,
   hashToken,
   SESSION_TTL_MS,
   type AuthDeps,
@@ -76,6 +79,15 @@ function createFakePorts(users: User[]) {
       };
       userStore.set(created.email, created);
       return created;
+    },
+    async updatePassword(id, passwordHash) {
+      const existing = [...userStore.values()].find((u) => u.id === id);
+      if (!existing) {
+        return null;
+      }
+      const updated = { ...existing, passwordHash };
+      userStore.set(existing.email, updated);
+      return updated;
     },
   };
 
@@ -576,6 +588,88 @@ describe("auth", () => {
       await expect(createUser(NEW_EMAIL, "a-different-password", "partner", deps)).rejects.toBeInstanceOf(
         UserEmailAlreadyExistsError,
       );
+    });
+  });
+
+  describe("resetUserPassword", () => {
+    const NEW_PASSWORD = "a-brand-new-password";
+
+    it("hashes the new password via argon2 and stores it, never the plaintext", async () => {
+      const updated = await resetUserPassword("user-active", NEW_PASSWORD, deps);
+
+      expect(updated?.passwordHash).not.toBe(NEW_PASSWORD);
+      expect(await argon2.verify(updated!.passwordHash, NEW_PASSWORD)).toBe(true);
+    });
+
+    it("this spec's central AC: a session created before the reset is gone after, and login works with the new password but not the old one", async () => {
+      const before = await login(ACTIVE_EMAIL, CORRECT_PASSWORD, deps);
+      if (!before.ok) throw new Error("expected login to succeed");
+
+      await resetUserPassword("user-active", NEW_PASSWORD, deps);
+
+      // Old session gone immediately.
+      expect(await getSession(before.token, deps)).toBeNull();
+      expect(await listSessions("user-active", deps)).toHaveLength(0);
+
+      // Old password no longer logs in.
+      const oldPasswordAttempt = await login(ACTIVE_EMAIL, CORRECT_PASSWORD, deps);
+      expect(oldPasswordAttempt.ok).toBe(false);
+
+      // New (and only the new) password logs in.
+      const newPasswordAttempt = await login(ACTIVE_EMAIL, NEW_PASSWORD, deps);
+      expect(newPasswordAttempt.ok).toBe(true);
+    });
+
+    it("does not delete another user's sessions", async () => {
+      const theirs = await login(OTHER_ACTIVE_EMAIL, CORRECT_PASSWORD, deps);
+      if (!theirs.ok) throw new Error("expected login to succeed");
+
+      await resetUserPassword("user-active", NEW_PASSWORD, deps);
+
+      expect(await getSession(theirs.token, deps)).not.toBeNull();
+    });
+
+    it("rejects a password under 8 characters with PasswordTooShortError, never touching the port", async () => {
+      const updatePasswordSpy = vi.spyOn(deps.users, "updatePassword");
+      const deleteAllSpy = vi.spyOn(deps.sessions, "deleteAllSessionsForUser");
+
+      await expect(resetUserPassword("user-active", "short", deps)).rejects.toBeInstanceOf(
+        PasswordTooShortError,
+      );
+
+      expect(updatePasswordSpy).not.toHaveBeenCalled();
+      expect(deleteAllSpy).not.toHaveBeenCalled();
+    });
+
+    it("rejects a password over 128 characters with PasswordTooLongError, never touching the port", async () => {
+      const updatePasswordSpy = vi.spyOn(deps.users, "updatePassword");
+
+      await expect(resetUserPassword("user-active", "a".repeat(129), deps)).rejects.toBeInstanceOf(
+        PasswordTooLongError,
+      );
+
+      expect(updatePasswordSpy).not.toHaveBeenCalled();
+    });
+
+    it("accepts a password at exactly the 8 and 128 character boundaries", async () => {
+      await expect(resetUserPassword("user-active", "a".repeat(8), deps)).resolves.not.toBeNull();
+      await expect(resetUserPassword("user-other-active", "a".repeat(128), deps)).resolves.not.toBeNull();
+    });
+
+    it("returns null for an unknown user id and never calls deleteAllSessionsForUser", async () => {
+      const deleteAllSpy = vi.spyOn(deps.sessions, "deleteAllSessionsForUser");
+
+      const updated = await resetUserPassword("no-such-user", NEW_PASSWORD, deps);
+
+      expect(updated).toBeNull();
+      expect(deleteAllSpy).not.toHaveBeenCalled();
+    });
+
+    it("resetting an already-inactive user's password still works -- login() itself already checks active separately", async () => {
+      const updated = await resetUserPassword("user-inactive", NEW_PASSWORD, deps);
+
+      expect(updated?.active).toBe(false);
+      expect(await argon2.verify(updated!.passwordHash, NEW_PASSWORD)).toBe(true);
     });
   });
 });

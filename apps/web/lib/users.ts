@@ -124,6 +124,23 @@ export async function listUsers(): Promise<SanitizedUser[]> {
   return (await response.json()) as SanitizedUser[];
 }
 
+/**
+ * `GET /api/users/me` (spec-user-reset-deactivate) -- resolves the caller's
+ * own sanitized profile, used only so the Users screen can tell "which row
+ * is mine" for its own UI-only "disable Deactivate on my own row" safeguard
+ * (Decision #2). Not used for anything permission-sensitive -- the actual
+ * self-deactivation risk this mitigates is still an accepted, unenforced
+ * risk at the API layer (Story 1.6/1.7's own precedent, this spec's
+ * Boundaries).
+ */
+export async function getCurrentUser(): Promise<SanitizedUser> {
+  const response = await fetch("/api/users/me");
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as SanitizedUser;
+}
+
 export interface CreateUserAccountInput {
   email: string;
   password: string;
@@ -136,6 +153,47 @@ export async function createUserAccount(input: CreateUserAccountInput): Promise<
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as SanitizedUser;
+}
+
+/**
+ * `PATCH /api/users/[id]` (Story 1.6, previously wired to no UI anywhere --
+ * spec-user-reset-deactivate is what finally gives it one). Throws on
+ * 401/403/404 -- the caller renders the message as a toast, mirroring this
+ * screen's existing create-error handling.
+ */
+export async function setUserActive(userId: string, active: boolean): Promise<SanitizedUser> {
+  const response = await fetch(`/api/users/${userId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ active }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as SanitizedUser;
+}
+
+export interface ResetUserPasswordInput {
+  userId: string;
+  password: string;
+}
+
+/**
+ * `POST /api/users/[id]/reset-password` (spec-user-reset-deactivate). Throws
+ * on 401/403/404/400 -- the caller renders the message inline in the still-
+ * open Reset Password dialog, mirroring `createUserAccount()`'s identical
+ * error-handling contract.
+ */
+export async function resetUserPassword({ userId, password }: ResetUserPasswordInput): Promise<SanitizedUser> {
+  const response = await fetch(`/api/users/${userId}/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
   });
   if (!response.ok) {
     throw new Error(await readErrorMessage(response));
