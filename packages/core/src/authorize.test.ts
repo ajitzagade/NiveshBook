@@ -38,6 +38,11 @@ function createFakeUserPort(users: User[]): UserPort {
       store.set(id, updated);
       return updated;
     },
+    async createUser(input) {
+      const created = makeUser({ id: `created-${store.size + 1}`, email: input.email, passwordHash: input.passwordHash, role: input.role });
+      store.set(created.id, created);
+      return created;
+    },
     setRole(id: string, role: User["role"]) {
       const existing = store.get(id);
       if (existing) {
@@ -2109,6 +2114,47 @@ describe("authorize — ownership_structure:view_partner (Story 5.10, self-acces
     const deps: AuthorizeDeps = { users };
 
     const result = await authorize("ghost", "ownership_structure:view_partner", { ownerId: "someone-else" }, deps);
+
+    expect(result).toEqual({ allowed: false });
+  });
+});
+
+describe("authorizeScope — users:create (spec-user-creation, Owner/Admin-only, mirrors users:update-status's identical shape)", () => {
+  it("allows an owner_admin to create a user", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("owner-1", "users:create", deps);
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it.each(["partner", "sub_partner", "project_admin"] as const)(
+    "denies a %s from creating a user -- Owner/Admin-only, no self/scope override",
+    async (role) => {
+      const users = createFakeUserPort([makeUser({ id: "actor-1", role })]);
+      const deps: AuthorizeDeps = { users };
+
+      const result = await authorizeScope("actor-1", "users:create", deps);
+
+      expect(result).toEqual({ allowed: false });
+    },
+  );
+
+  it("denies a partner even when their own userId is passed as scopeOwnerIds -- not a SCOPE_SELF_ACCESS_ACTIONS entry", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("partner-user-1", "users:create", deps, ["partner-user-1"]);
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies an actor that no longer exists", async () => {
+    const users = createFakeUserPort([]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("ghost", "users:create", deps);
 
     expect(result).toEqual({ allowed: false });
   });

@@ -19,6 +19,8 @@ import {
   InsufficientAvailableBalanceError,
   AvailableBalanceSpendIdempotencyKeyConflictError,
   type UserPort,
+  type CreateUserInput,
+  UserEmailAlreadyExistsError,
   type SessionPort,
   type CreateSessionInput,
   type ProjectPort,
@@ -452,6 +454,38 @@ export function createUserPort(database: Database = getDb()): UserPort {
         .where(eq(users.id, id))
         .returning();
       return row ? toUser(row) : null;
+    },
+    async createUser(input: CreateUserInput) {
+      try {
+        const [row] = await database
+          .insert(users)
+          .values({
+            id: uuidv7(),
+            email: input.email,
+            passwordHash: input.passwordHash,
+            role: input.role,
+            // FR45: never inherit the column's own `true` default here --
+            // Extra Withdrawal approval authority is an explicit, separate
+            // grant (the Permissions screen), never implied by account
+            // creation, regardless of role.
+            canApproveExtraWithdrawal: false,
+          })
+          .returning();
+        if (!row) {
+          throw new Error("Failed to create user");
+        }
+        return toUser(row);
+      } catch (error) {
+        // Race-safe backstop behind `createUser()`'s own friendly
+        // `findUserByEmail` pre-check (spec-user-creation's Boundaries) --
+        // two concurrent requests for the same email can both pass that
+        // pre-check, but only one insert wins against the `users.email`
+        // UNIQUE constraint; the loser lands here.
+        if (isUniqueViolation(error)) {
+          throw new UserEmailAlreadyExistsError(input.email);
+        }
+        throw error;
+      }
     },
   };
 }

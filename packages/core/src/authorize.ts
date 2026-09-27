@@ -13,6 +13,7 @@ export type Action =
   | "users:list"
   | "users:view"
   | "users:update-status"
+  | "users:create"
   | "permissions:view"
   | "permissions:manage"
   | "projects:create"
@@ -76,6 +77,14 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   "users:list": new Set(["owner_admin"]),
   "users:view": new Set(["owner_admin"]),
   "users:update-status": new Set(["owner_admin"]),
+  // spec-user-creation: onboarding a Partner/Sub-partner (or another Owner/
+  // Admin) login account in-app is Owner/Admin-only, no self-access
+  // override -- mirrors `users:update-status`'s identical shape exactly
+  // (an actor can never create an account for themselves via this action
+  // any more than they can deactivate their own via that one). Checked via
+  // `authorizeScope()` only, same as `users:list` (no single target
+  // resource exists yet at create time).
+  "users:create": new Set(["owner_admin"]),
   // Story 1.7 (FR45): the Permissions area (role-usage view + Extra
   // Withdrawal approval-authority grants). Owner/Admin-only, matching
   // users:update-status — no self-access override either.

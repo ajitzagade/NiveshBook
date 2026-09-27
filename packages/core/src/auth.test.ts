@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as argon2 from "argon2";
+import { uuidv7 } from "uuidv7";
 import type { User, Session } from "@niveshbook/types";
 import {
   login,
@@ -8,11 +9,14 @@ import {
   listSessions,
   revokeSession,
   setUserActiveStatus,
+  createUser,
+  InvalidCreatableRoleError,
   hashToken,
   SESSION_TTL_MS,
   type AuthDeps,
 } from "./auth";
-import type { UserPort } from "./user-port";
+import type { UserPort, CreateUserInput } from "./user-port";
+import { UserEmailAlreadyExistsError } from "./user-port";
 import type { SessionPort, CreateSessionInput } from "./session-port";
 
 const ACTIVE_EMAIL = "active@niveshbook.test";
@@ -52,6 +56,26 @@ function createFakePorts(users: User[]) {
       const updated = { ...existing, canApproveExtraWithdrawal: granted };
       userStore.set(existing.email, updated);
       return updated;
+    },
+    async createUser(input: CreateUserInput) {
+      if (userStore.has(input.email)) {
+        throw new UserEmailAlreadyExistsError(input.email);
+      }
+      const created: User = {
+        id: uuidv7(),
+        email: input.email,
+        passwordHash: input.passwordHash,
+        role: input.role,
+        active: true,
+        // Matches the real `createUserPort().createUser`'s corrected
+        // behavior (spec-user-creation review fix): never true on create,
+        // regardless of role -- FR45's grant is always a separate, explicit
+        // step afterward.
+        canApproveExtraWithdrawal: false,
+        createdAt: new Date().toISOString(),
+      };
+      userStore.set(created.email, created);
+      return created;
     },
   };
 
@@ -487,6 +511,71 @@ describe("auth", () => {
       expect(updated).toBeNull();
       expect(setActiveSpy).not.toHaveBeenCalled();
       expect(deleteAllSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("createUser", () => {
+    const NEW_EMAIL = "new-partner@niveshbook.test";
+    const NEW_PASSWORD = "a-fine-password";
+
+    it("creates an owner_admin/partner/sub_partner account, hashing the password via argon2", async () => {
+      const created = await createUser(NEW_EMAIL, NEW_PASSWORD, "partner", deps);
+
+      expect(created.email).toBe(NEW_EMAIL);
+      expect(created.role).toBe("partner");
+      expect(created.active).toBe(true);
+      // FR45 (review fix): never inherited true on create, regardless of
+      // role -- Extra Withdrawal approval authority is always a separate,
+      // explicit grant afterward.
+      expect(created.canApproveExtraWithdrawal).toBe(false);
+      expect(created.passwordHash).not.toBe(NEW_PASSWORD);
+      expect(await argon2.verify(created.passwordHash, NEW_PASSWORD)).toBe(true);
+    });
+
+    it("the created account can actually log in with the exact password it was created with (this spec's central AC)", async () => {
+      await createUser(NEW_EMAIL, NEW_PASSWORD, "partner", deps);
+
+      const result = await login(NEW_EMAIL, NEW_PASSWORD, deps);
+
+      expect(result.ok).toBe(true);
+    });
+
+    it("normalizes (trims/lowercases) the email exactly like login()'s own convention", async () => {
+      await createUser("  Mixed-Case@Niveshbook.test  ", NEW_PASSWORD, "sub_partner", deps);
+
+      const result = await login("mixed-case@niveshbook.test", NEW_PASSWORD, deps);
+
+      expect(result.ok).toBe(true);
+    });
+
+    it.each(["owner_admin", "partner", "sub_partner"] as const)(
+      "allows creating a %s account -- every role in the creatable set",
+      async (role) => {
+        const created = await createUser(`${role}@niveshbook.test`, NEW_PASSWORD, role, deps);
+        expect(created.role).toBe(role);
+      },
+    );
+
+    it("rejects project_admin with InvalidCreatableRoleError -- not in the creatable set (FR6)", async () => {
+      await expect(createUser(NEW_EMAIL, NEW_PASSWORD, "project_admin", deps)).rejects.toBeInstanceOf(
+        InvalidCreatableRoleError,
+      );
+    });
+
+    it("never calls deps.users.createUser for an uncreatable role", async () => {
+      const createSpy = vi.spyOn(deps.users, "createUser");
+
+      await expect(createUser(NEW_EMAIL, NEW_PASSWORD, "project_admin", deps)).rejects.toThrow();
+
+      expect(createSpy).not.toHaveBeenCalled();
+    });
+
+    it("propagates UserEmailAlreadyExistsError from the port unchanged for a duplicate email", async () => {
+      await createUser(NEW_EMAIL, NEW_PASSWORD, "partner", deps);
+
+      await expect(createUser(NEW_EMAIL, "a-different-password", "partner", deps)).rejects.toBeInstanceOf(
+        UserEmailAlreadyExistsError,
+      );
     });
   });
 });

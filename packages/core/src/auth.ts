@@ -1,6 +1,6 @@
 import { randomBytes, createHash } from "node:crypto";
 import * as argon2 from "argon2";
-import type { Session, User } from "@niveshbook/types";
+import type { Session, User, UserRole } from "@niveshbook/types";
 import type { UserPort } from "./user-port";
 import type { SessionPort } from "./session-port";
 
@@ -178,4 +178,76 @@ export async function setUserActiveStatus(
   }
 
   return updated;
+}
+
+/**
+ * The roles an Owner/Admin may create an account with (spec-user-creation,
+ * Decision #1) -- deliberately excludes `project_admin` (FR6): that role is
+ * valid-but-ungated everywhere else in the app (Story 1.8's job to enable
+ * per-client), so an account created with it today would be a dead end.
+ * Spelled out explicitly here (not derived from `UserRole` minus one member)
+ * so this list can never silently widen just because `UserRole` itself grows
+ * a new member elsewhere.
+ *
+ * Exported so a test can assert this set matches `apps/web/lib/users.ts`'s
+ * own separately-declared `CREATABLE_USER_ROLES` copy (that file can't
+ * import this one at runtime -- a `"use client"` page importing
+ * `@niveshbook/core` breaks the client bundle, argon2 has no browser-safe
+ * subpath export) -- catching drift between the two with a test instead of
+ * leaving it to be noticed by hand.
+ */
+export const CREATABLE_USER_ROLES: ReadonlySet<UserRole> = new Set(["owner_admin", "partner", "sub_partner"]);
+
+/**
+ * Thrown by `createUser()` when `role` isn't one of `CREATABLE_USER_ROLES` --
+ * most importantly, `project_admin` (see that constant's doc comment). The
+ * route layer validates this ahead of time too (spec-user-creation's Task
+ * list), so in practice this only fires for a caller that skips that
+ * validation -- still enforced here as the domain-layer's own invariant,
+ * never trusted to the route alone.
+ */
+export class InvalidCreatableRoleError extends Error {
+  constructor(role: string) {
+    super(`"${role}" is not a role that can be created here.`);
+    this.name = "InvalidCreatableRoleError";
+  }
+}
+
+/**
+ * Creates a new login account (spec-user-creation) -- the in-app
+ * replacement for the dev-only `packages/db/src/seed.ts` script, which
+ * always hardcoded `role: "owner_admin"`. Callers must run `authorizeScope()`
+ * for `"users:create"` before calling this (AD-1) — it performs no
+ * permission check of its own, mirroring `setUserActiveStatus()`'s identical
+ * contract.
+ *
+ * `email` is trimmed/lowercased here -- `login()` itself does NOT normalize
+ * (that happens one layer up, in `apps/web/app/api/auth/login/route.ts`,
+ * before it ever calls `login()`); this function normalizes internally
+ * instead, matching that route's own convention, so a case-differing
+ * resubmission of the same address is still caught by the `users.email`
+ * UNIQUE constraint rather than silently creating a second account.
+ * `password` is hashed via `argon2.hash()` (the same call
+ * shape `packages/db/src/seed.ts` already uses, no explicit cost params) --
+ * the plaintext password is never itself stored, logged, or returned.
+ *
+ * Throws `InvalidCreatableRoleError` for a role outside `CREATABLE_USER_ROLES`,
+ * or propagates `UserEmailAlreadyExistsError` from `deps.users.createUser()`
+ * unchanged if the email collides with an existing account (the route layer
+ * maps both to a 400 `validation_error`, never a 500).
+ */
+export async function createUser(
+  email: string,
+  password: string,
+  role: UserRole,
+  deps: Pick<AuthDeps, "users">,
+): Promise<User> {
+  if (!CREATABLE_USER_ROLES.has(role)) {
+    throw new InvalidCreatableRoleError(role);
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const passwordHash = await argon2.hash(password);
+
+  return deps.users.createUser({ email: normalizedEmail, passwordHash, role });
 }

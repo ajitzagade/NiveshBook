@@ -51,6 +51,11 @@ function createFakeUserPort(users: User[]): UserPort {
       store.set(id, updated);
       return updated;
     },
+    async createUser(input) {
+      const created = makeUser({ id: `created-${store.size + 1}`, email: input.email, passwordHash: input.passwordHash, role: input.role });
+      store.set(created.id, created);
+      return created;
+    },
   } as UserPort & {
     setRoleForTest: (id: string, role: User["role"]) => void;
     setActiveForTest: (id: string, active: boolean) => void;

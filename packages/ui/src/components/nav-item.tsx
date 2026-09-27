@@ -2,13 +2,14 @@ import type { ReactNode } from "react";
 import { cn } from "../lib/cn";
 
 /**
- * Badge colors per DESIGN.md -- only 5 of 10 nav items are semantically
+ * Badge colors per DESIGN.md -- only 5 of 11 nav items are semantically
  * colored, the rest are neutral slate. Exported so apps/web's nav list stays
  * in sync with the one source of truth instead of re-guessing colors.
  *
  * `auditHistory` (Story 5.9) added neutral, mirroring `adjustNextTime`/
  * `moneyHistory`/`reports`'s identical precedent -- no new semantic color was
- * called for by this story's own UX spec.
+ * called for by this story's own UX spec. `users` (spec-user-creation)
+ * mirrors that exact same precedent one item further.
  */
 export const NAV_BADGE_COLOR = {
   home: "var(--color-nav-neutral)",
@@ -21,6 +22,7 @@ export const NAV_BADGE_COLOR = {
   moneyHistory: "var(--color-nav-neutral)",
   reports: "var(--color-nav-neutral)",
   auditHistory: "var(--color-nav-neutral)",
+  users: "var(--color-nav-neutral)",
 } as const;
 
 export interface NavItemProps {

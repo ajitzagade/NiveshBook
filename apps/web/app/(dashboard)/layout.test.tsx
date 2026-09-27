@@ -70,7 +70,7 @@ describe("DashboardLayout (Story 5.5 role-based nav filtering, widened to sub_pa
     (redirect as unknown as Mock).mockClear();
   });
 
-  it("owner_admin: all 10 items render (Story 5.9 adds Audit History), in the existing order", async () => {
+  it("owner_admin: all 11 items render (spec-user-creation adds Users), in the existing order", async () => {
     findUserById.mockResolvedValue({ id: "user-1", role: "owner_admin", active: true });
 
     const result = await DashboardLayout({ children: <div /> });
@@ -88,6 +88,7 @@ describe("DashboardLayout (Story 5.5 role-based nav filtering, widened to sub_pa
       "moneyHistory",
       "reports",
       "auditHistory",
+      "users",
     ]);
   });
 
@@ -120,6 +121,18 @@ describe("DashboardLayout (Story 5.5 role-based nav filtering, widened to sub_pa
       const shell = findComponent(result, SidebarShell);
       const items = (shell?.props as { items: { key: string }[] }).items;
       expect(items.some((item) => item.key === "auditHistory")).toBe(false);
+    }
+  });
+
+  it("spec-user-creation: partner and sub_partner sessions never see the Users nav item", async () => {
+    for (const role of ["partner", "sub_partner"] as const) {
+      findUserById.mockResolvedValue({ id: "user-1", role, active: true });
+
+      const result = await DashboardLayout({ children: <div /> });
+
+      const shell = findComponent(result, SidebarShell);
+      const items = (shell?.props as { items: { key: string }[] }).items;
+      expect(items.some((item) => item.key === "users")).toBe(false);
     }
   });
 
@@ -162,6 +175,7 @@ describe("DashboardLayout (Story 5.5 role-based nav filtering, widened to sub_pa
       "moneyHistory",
       "reports",
       "auditHistory",
+      "users",
     ]);
   });
 

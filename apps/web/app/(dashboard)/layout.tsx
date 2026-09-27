@@ -12,6 +12,7 @@ import {
   History,
   BarChart3,
   ShieldCheck,
+  Users as UsersIcon,
 } from "lucide-react";
 import { createUserPort } from "@niveshbook/db";
 import { requireOwnerAdminOrPartnerOrSubPartnerSession } from "@/lib/session-guard";
@@ -171,6 +172,21 @@ const NAV_ITEMS: readonly SidebarNavItem[] = [
     label: "Audit History",
     icon: <ShieldCheck size={ICON_SIZE} />,
     href: "/audit-history",
+    roles: OWNER_ADMIN_ONLY,
+  },
+  // spec-user-creation: a genuinely NEW item, mirroring Audit History's own
+  // "no inert placeholder existed before this story" precedent immediately
+  // above. Owner/Admin-only (this spec's Boundaries: `users:create` is
+  // owner_admin-gated) -- `users/layout.tsx` additionally enforces this
+  // server-side for direct navigation, mirroring `projects/layout.tsx`'s
+  // identical "use client page has no guard of its own" rationale, since
+  // this new page needs interactive Dialog state and so can't be the kind
+  // of server component `audit-history/page.tsx` itself guards inline.
+  {
+    key: "users",
+    label: "Users",
+    icon: <UsersIcon size={ICON_SIZE} />,
+    href: "/users",
     roles: OWNER_ADMIN_ONLY,
   },
 ];
