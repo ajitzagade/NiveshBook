@@ -147,18 +147,16 @@ export default function ProjectsPage() {
               <Table>
                 <TableHead>
                   <TableRow>
-                    <Th>Name</Th>
-                    <Th className="!text-left">Description</Th>
+                    <Th className="w-[180px]">Name</Th>
                     <Th className="!text-left">Actions</Th>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {state.projects.map((project) => (
                     <TableRow key={project.id}>
-                      <Td className="font-semibold">{project.name}</Td>
-                      {/* Wraps instead of forcing the table wider (founder feedback 2026-09-27) -- a long description no longer pushes the Actions column off-screen. */}
-                      <Td className="!text-left text-ink-soft max-w-[280px] whitespace-normal break-words">
-                        {project.description ?? "—"}
+                      {/* Capped width (founder feedback 2026-09-27): an HTML table auto-sizes Name generously by default, starving Actions of the room its 5 buttons need for one line. truncate + title give a long name a native tooltip fallback. */}
+                      <Td className="max-w-[180px] truncate font-semibold" title={project.name}>
+                        {project.name}
                       </Td>
                       <Td className="!text-left">
                         <div className="flex flex-wrap gap-1.5">
@@ -173,19 +171,15 @@ export default function ProjectsPage() {
 
             {/*
               Below 860px: one RowCard per Project (Decision #4) -- title
-              carries the Name column, the single Description field mirrors
-              the table's own column, and the 5 action buttons render
-              verbatim in RowCard's flex-wrap action slot instead of being
-              trimmed or hidden.
+              carries the Name column; the 5 action buttons render verbatim
+              in RowCard's flex-wrap action slot instead of being trimmed or
+              hidden. No Description field (founder feedback 2026-09-27 --
+              dropped from the list view entirely, still editable on the
+              Project's own Edit page).
             */}
             <div className="hidden max-[860px]:block" data-testid="projects-row-cards">
               {state.projects.map((project) => (
-                <RowCard
-                  key={project.id}
-                  title={project.name}
-                  fields={[{ label: "Description", value: project.description ?? "—" }]}
-                  action={<ProjectActionButtons project={project} />}
-                />
+                <RowCard key={project.id} title={project.name} fields={[]} action={<ProjectActionButtons project={project} />} />
               ))}
             </div>
           </>

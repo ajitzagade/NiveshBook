@@ -68,21 +68,22 @@ describe("ProjectsPage (Story 2.1, Structure action added by Story 5.10)", () =>
 
 /**
  * spec-mobile-responsive-phase2-table-cards: below 860px, each Project
- * renders as a `RowCard` (Name as title, Description as its one field, all
- * 5 actions carried over verbatim) instead of a table row -- both renders
- * exist in the DOM simultaneously (CSS-only breakpoint switch, Phase 1's
- * convention), scoped here via the stack's own `data-testid` so these
- * assertions are independent of the desktop Table's identical content.
+ * renders as a `RowCard` (Name as title, all 5 actions carried over
+ * verbatim) instead of a table row -- both renders exist in the DOM
+ * simultaneously (CSS-only breakpoint switch, Phase 1's convention),
+ * scoped here via the stack's own `data-testid` so these assertions are
+ * independent of the desktop Table's identical content. No Description
+ * field (founder feedback 2026-09-27 -- dropped from the list view
+ * entirely, still editable on the Project's own Edit page).
  */
 describe("ProjectsPage -- below-860px RowCard stack", () => {
-  it("renders one RowCard per Project with Name as title, Description as a field, and all 5 actions reachable", async () => {
+  it("renders one RowCard per Project with Name as title and all 5 actions reachable", async () => {
     listProjects.mockResolvedValue([PROJECT]);
 
     render(<ProjectsPage />);
 
     const cards = await screen.findByTestId("projects-row-cards");
     expect(within(cards).getByText("Sunrise Towers")).toBeInTheDocument();
-    expect(within(cards).getByText("A residential project")).toBeInTheDocument();
     expect(within(cards).getByRole("link", { name: /Edit/ })).toHaveAttribute("href", "/projects/project-1/edit");
     expect(within(cards).getByRole("link", { name: /Shares/ })).toHaveAttribute(
       "href",
@@ -100,15 +101,6 @@ describe("ProjectsPage -- below-860px RowCard stack", () => {
       "href",
       "/structure/project-1",
     );
-  });
-
-  it("renders 'Description' as '—' when the Project has none, mirroring the table's own fallback", async () => {
-    listProjects.mockResolvedValue([{ ...PROJECT, description: null }]);
-
-    render(<ProjectsPage />);
-
-    const cards = await screen.findByTestId("projects-row-cards");
-    expect(within(cards).getByText("—")).toBeInTheDocument();
   });
 
   it("renders no card stack in the empty state (EmptyState renders once, not duplicated for table+card)", async () => {
