@@ -122,6 +122,16 @@ const PARTNER_USER = {
   createdAt: new Date().toISOString(),
 };
 
+const SUB_PARTNER_USER = {
+  id: "sub-partner-user-1",
+  email: "sub-partner@niveshbook.test",
+  passwordHash: "hash-should-never-leave-server",
+  role: "sub_partner" as const,
+  active: true,
+  canApproveExtraWithdrawal: false,
+  createdAt: new Date().toISOString(),
+};
+
 function makeRequirement(overrides: Record<string, unknown> = {}) {
   const now = new Date().toISOString();
   return {
@@ -144,6 +154,22 @@ function makePartnerShareRow(overrides: Record<string, unknown> = {}) {
     sharePercent: "100",
     userId: null,
     subPartnerVisibilityGrant: false,
+    effectiveFrom: now,
+    createdAt: now,
+    ...overrides,
+  };
+}
+
+function makeSubPartnerShareRow(overrides: Record<string, unknown> = {}) {
+  const now = new Date().toISOString();
+  return {
+    id: "sub-share-row-1",
+    subPartnerId: "sub-1",
+    partnerId: "partner-1",
+    projectId: PROJECT_ID,
+    name: "Sub A",
+    sharePercent: "10",
+    userId: null,
     effectiveFrom: now,
     createdAt: now,
     ...overrides,
@@ -227,15 +253,63 @@ describe("GET /api/projects/[id]/investment-requirements", () => {
     expect(listByProjectId).not.toHaveBeenCalled();
   });
 
-  it("returns 403 for a non-owner_admin, no data leaked", async () => {
+  it("returns 403 for a Partner with no current Share on this Project, no data leaked", async () => {
     findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: "partner-user-1" });
     findUserById.mockResolvedValue(PARTNER_USER);
+    // resetMocks' default Partner Share row has userId: null -- doesn't match.
 
     const response = await GET(makeGetRequest(`${SESSION_COOKIE_NAME}=some-token`), makeContext());
 
     expect(response.status).toBe(403);
     const body = await response.json();
     expect(body).toEqual({ code: "forbidden", message: expect.any(String) });
+    expect(listByProjectId).not.toHaveBeenCalled();
+  });
+
+  // 2026-09-29 (partner self-service Add Money): investment_requirements:list
+  // opened to a linked Partner/Sub-partner via SCOPE_SELF_ACCESS_ACTIONS.
+  it("returns 200 for a Partner whose userId matches a current Partner Share on this Project", async () => {
+    findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: "partner-user-1" });
+    findUserById.mockResolvedValue(PARTNER_USER);
+    listPartnerSharesByProjectId.mockResolvedValue([
+      makePartnerShareRow({ userId: "partner-user-1" }),
+    ]);
+    listByProjectId.mockResolvedValue([makeRequirement()]);
+
+    const response = await GET(makeGetRequest(`${SESSION_COOKIE_NAME}=some-token`), makeContext());
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.requirements).toHaveLength(1);
+  });
+
+  it("returns 200 for a Sub-partner whose userId matches a current Sub-partner Share on this Project (not the Partner Shares list)", async () => {
+    findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: "sub-partner-user-1" });
+    findUserById.mockResolvedValue(SUB_PARTNER_USER);
+    listPartnerSharesByProjectId.mockResolvedValue([makePartnerShareRow({ userId: null })]);
+    listSubPartnerSharesByProjectId.mockResolvedValue([
+      makeSubPartnerShareRow({ userId: "sub-partner-user-1" }),
+    ]);
+    listByProjectId.mockResolvedValue([makeRequirement()]);
+
+    const response = await GET(makeGetRequest(`${SESSION_COOKIE_NAME}=some-token`), makeContext());
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.requirements).toHaveLength(1);
+  });
+
+  it("returns 403 for a Partner linked on a DIFFERENT Project's Share, never leaking this Project's requirements", async () => {
+    findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: "partner-user-1" });
+    findUserById.mockResolvedValue(PARTNER_USER);
+    // This Project's own current Shares belong to entirely different users.
+    listPartnerSharesByProjectId.mockResolvedValue([
+      makePartnerShareRow({ userId: "someone-else" }),
+    ]);
+
+    const response = await GET(makeGetRequest(`${SESSION_COOKIE_NAME}=some-token`), makeContext());
+
+    expect(response.status).toBe(403);
     expect(listByProjectId).not.toHaveBeenCalled();
   });
 

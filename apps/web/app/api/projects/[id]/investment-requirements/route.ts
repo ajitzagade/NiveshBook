@@ -97,14 +97,25 @@ function groupAdjustmentsByShareKey(
 }
 
 /**
- * Lists every funding requirement for a Project (Story 3.1) --
- * Owner/Admin-only, gated by `authorizeScope()` for
- * `"investment_requirements:list"` with no `scopeOwnerIds` (this story's
- * Decisions: unlike `partner_shares:list`, there is no Partner/Sub-partner
- * scoped access yet). The 403 for a non-Owner/Admin is checked before the
- * Project-existence lookup even runs -- mirrors `partner-shares/route.ts`'s
- * `POST` ordering, simplified here since `GET` needs no pre-fetched data to
- * compute a scope from.
+ * Lists every funding requirement for a Project (Story 3.1) -- Owner/Admin
+ * unconditionally, OR a linked Partner/Sub-partner (2026-09-29, partner
+ * self-service Add Money): gated by `authorizeScope()` for
+ * `"investment_requirements:list"` with `scopeOwnerIds` computed from the
+ * UNION of the Project's current Partner Shares' `userId`s and current
+ * Sub-partner Shares' `userId`s -- unlike `partner_shares:list` (Partner
+ * Shares only), BOTH roles need to discover what's open to pay against, via
+ * the now-wired-up `my-investment-status` self-service route. Requirement
+ * rows themselves carry no partner-specific figures, so a linked caller
+ * sees the full, unfiltered list once the membership check passes, no
+ * per-row redaction -- mirrors `partner_shares:list`'s identical AC4 shape.
+ *
+ * The Project and its current Shares are resolved *before* the
+ * authorization check (needed to compute `scopeOwnerIds`) -- but the 403
+ * for an unrelated caller is returned uniformly regardless of whether the
+ * Project actually exists, so an unrelated Partner can never use this
+ * endpoint to confirm/deny a Project id. Only once authorized does a
+ * still-missing (or malformed) Project id fall through to the 404 --
+ * mirrors `partner-shares/route.ts`'s `GET` ordering exactly.
  */
 export async function GET(request: NextRequest, { params }: RouteContext) {
   const token = readSessionToken(request);
@@ -117,23 +128,37 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     );
   }
 
+  const { id: projectId } = await params;
+
+  const projectPort = createProjectPort();
+  const partnerSharePort = createPartnerSharePort();
+  const subPartnerSharePort = createSubPartnerSharePort();
+
+  const project = isValidProjectId(projectId) ? await projectPort.findProjectById(projectId) : null;
+  const [currentPartnerShares, currentSubPartnerShares] = project
+    ? await Promise.all([
+        listCurrentPartnerShares(projectId, { partnerShares: partnerSharePort }),
+        listCurrentSubPartnerSharesForProject(projectId, { subPartnerShares: subPartnerSharePort }),
+      ])
+    : [[], []];
+
+  const scopeOwnerIds = [...currentPartnerShares, ...currentSubPartnerShares]
+    .map((share) => share.userId)
+    .filter((userId): userId is string => userId !== null);
+
   const userPort = createUserPort();
-  const { allowed } = await authorizeScope(session.userId, "investment_requirements:list", {
-    users: userPort,
-  });
+  const { allowed } = await authorizeScope(
+    session.userId,
+    "investment_requirements:list",
+    { users: userPort },
+    scopeOwnerIds,
+  );
 
   if (!allowed) {
     return NextResponse.json({ code: "forbidden", message: FORBIDDEN_MESSAGE }, { status: 403 });
   }
 
-  const { id: projectId } = await params;
-
-  if (!isValidProjectId(projectId)) {
-    return projectNotFoundResponse();
-  }
-
-  const projectPort = createProjectPort();
-  if (!(await projectPort.findProjectById(projectId))) {
+  if (!project) {
     return projectNotFoundResponse();
   }
 

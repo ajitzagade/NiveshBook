@@ -314,6 +314,8 @@ async function PartnerDashboard({ actorUserId }: { actorUserId: string }) {
                 sharePercentLabel={`${formatSharePercent(row.sharePercent)}%`}
                 added={row.moneyAdded}
                 balance={row.availableBalance}
+                addMoneyHref={`/add-money/${row.projectId}?partnerId=${row.partnerId}`}
+                withdrawMoneyHref={`/withdraw-money/${row.projectId}?partnerId=${row.partnerId}`}
               />
             ))}
           </div>
@@ -467,6 +469,8 @@ async function SubPartnerDashboard({ actorUserId }: { actorUserId: string }) {
                 sharePercentLabel={`${formatSharePercent(row.sharePercent)}%`}
                 added={row.moneyAdded}
                 balance={row.availableBalance}
+                addMoneyHref={`/add-money/${row.projectId}?subPartnerId=${row.subPartnerId}`}
+                withdrawMoneyHref={`/withdraw-money/${row.projectId}?subPartnerId=${row.subPartnerId}`}
               />
             ))}
           </div>

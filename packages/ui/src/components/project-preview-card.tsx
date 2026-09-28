@@ -1,6 +1,7 @@
-import { ChevronRight } from "lucide-react";
+import { ArrowLeftRight, ChevronRight, Wallet } from "lucide-react";
 import { Amount } from "./amount";
 import { AvatarGroup } from "./avatar-group";
+import { Button } from "./button";
 import { Card } from "./card";
 import { cn } from "../lib/cn";
 
@@ -14,6 +15,10 @@ export interface ProjectPreviewCardProps {
   sharePercentLabel: string;
   added: string | number;
   balance: string | number;
+  /** Self-service Add Money entry point (2026-09-29) -- omitted renders no button, so every existing caller (e.g. the Owner/Admin dashboard) is unaffected. */
+  addMoneyHref?: string;
+  /** Self-service Withdraw Money entry point (2026-09-29) -- same "omitted = no button" shape as `addMoneyHref`. */
+  withdrawMoneyHref?: string;
   className?: string;
 }
 
@@ -32,6 +37,8 @@ export function ProjectPreviewCard({
   sharePercentLabel,
   added,
   balance,
+  addMoneyHref,
+  withdrawMoneyHref,
   className,
 }: ProjectPreviewCardProps) {
   return (
@@ -63,6 +70,27 @@ export function ProjectPreviewCard({
           <Amount value={balance} size="sm" />
         </div>
       </div>
+
+      {addMoneyHref || withdrawMoneyHref ? (
+        <div className="flex gap-2">
+          {addMoneyHref ? (
+            <Button asChild variant="ghost" size="sm" className="flex-1">
+              <a href={addMoneyHref} className="inline-flex items-center justify-center gap-1.5">
+                <Wallet size={13} />
+                Add Money
+              </a>
+            </Button>
+          ) : null}
+          {withdrawMoneyHref ? (
+            <Button asChild variant="ghost" size="sm" className="flex-1">
+              <a href={withdrawMoneyHref} className="inline-flex items-center justify-center gap-1.5">
+                <ArrowLeftRight size={13} />
+                Withdraw
+              </a>
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
     </Card>
   );
 }

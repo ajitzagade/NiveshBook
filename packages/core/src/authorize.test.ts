@@ -525,17 +525,57 @@ describe("authorizeScope — investment_requirements:create/list (Story 3.1)", (
     },
   );
 
-  it.each(["investment_requirements:create", "investment_requirements:list"] as const)(
-    "denies a partner even when their own userId is passed as scopeOwnerIds — not a SCOPE_SELF_ACCESS_ACTIONS entry",
-    async (action) => {
-      const users = createFakeUserPort([makeUser({ id: "partner-user-1", role: "partner" })]);
+  it("denies a partner from investment_requirements:create even when their own userId is passed as scopeOwnerIds — creating a requirement stays Owner/Admin-only, no self/scope override", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("partner-user-1", "investment_requirements:create", deps, [
+      "partner-user-1",
+    ]);
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  // 2026-09-29 (partner self-service Add Money): investment_requirements:list
+  // opened via SCOPE_SELF_ACCESS_ACTIONS, unlike :create above -- a linked
+  // Partner/Sub-partner needs to discover a Project's open requirements to
+  // know what to pay against.
+  it.each(["partner", "sub_partner"] as const)(
+    "allows a %s whose own userId is a current Share's userId on this Project (scopeOwnerIds) to list investment_requirements",
+    async (role) => {
+      const users = createFakeUserPort([makeUser({ id: "linked-user-1", role })]);
       const deps: AuthorizeDeps = { users };
 
-      const result = await authorizeScope("partner-user-1", action, deps, ["partner-user-1"]);
+      const result = await authorizeScope(
+        "linked-user-1",
+        "investment_requirements:list",
+        deps,
+        ["some-other-partner-id", "linked-user-1"],
+      );
 
-      expect(result).toEqual({ allowed: false });
+      expect(result).toEqual({ allowed: true });
     },
   );
+
+  it("denies a partner from listing investment_requirements for a Project they hold no current Share on (their userId absent from scopeOwnerIds)", async () => {
+    const users = createFakeUserPort([makeUser({ id: "unrelated-partner", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("unrelated-partner", "investment_requirements:list", deps, [
+      "some-other-partner-id",
+    ]);
+
+    expect(result).toEqual({ allowed: false });
+  });
+
+  it("denies investment_requirements:list with no scopeOwnerIds passed at all, for a non-owner_admin", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    const result = await authorizeScope("partner-user-1", "investment_requirements:list", deps);
+
+    expect(result).toEqual({ allowed: false });
+  });
 });
 
 describe("authorizeScope — should_pay:view (Story 3.2)", () => {

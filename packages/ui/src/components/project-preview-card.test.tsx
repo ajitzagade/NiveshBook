@@ -96,4 +96,51 @@ describe("ProjectPreviewCard", () => {
     expect(JSON.stringify(addedBlock)).toContain("Added");
     expect(JSON.stringify(balanceBlock)).toContain("Balance");
   });
+
+  it("renders no Add Money / Withdraw buttons when both hrefs are omitted", () => {
+    const el = ProjectPreviewCard({
+      name: "Project A",
+      avatarInitials: "AK",
+      sharePercentLabel: "50%",
+      added: "0",
+      balance: "0",
+    }) as ReactElement;
+    const [, , , buttonRow] = childrenOf(el);
+    expect(buttonRow).toBeNull();
+  });
+
+  it("renders only the Add Money button when only addMoneyHref is set", () => {
+    const el = ProjectPreviewCard({
+      name: "Project A",
+      avatarInitials: "AK",
+      sharePercentLabel: "50%",
+      added: "0",
+      balance: "0",
+      addMoneyHref: "/add-money/p1?partnerId=pa1",
+    }) as ReactElement;
+    const [, , , buttonRow] = childrenOf(el) as ReactElement[];
+    const [addButton, withdrawButton] = childrenOf(buttonRow);
+    expect(addButton).not.toBeNull();
+    expect(withdrawButton).toBeNull();
+  });
+
+  it("renders both buttons with the exact hrefs passed when both are set", () => {
+    const el = ProjectPreviewCard({
+      name: "Project A",
+      avatarInitials: "AK",
+      sharePercentLabel: "50%",
+      added: "0",
+      balance: "0",
+      addMoneyHref: "/add-money/p1?partnerId=pa1",
+      withdrawMoneyHref: "/withdraw-money/p1?partnerId=pa1",
+    }) as ReactElement;
+    const [, , , buttonRow] = childrenOf(el) as ReactElement[];
+    const [addButton, withdrawButton] = childrenOf(buttonRow) as ReactElement[];
+
+    const addLink = (addButton.props as { children: ReactElement }).children;
+    expect(addLink.props).toMatchObject({ href: "/add-money/p1?partnerId=pa1" });
+
+    const withdrawLink = (withdrawButton.props as { children: ReactElement }).children;
+    expect(withdrawLink.props).toMatchObject({ href: "/withdraw-money/p1?partnerId=pa1" });
+  });
 });

@@ -145,14 +145,19 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // Sub-partner self-access is granted below via `SELF_ACCESS_ACTIONS`, not
   // by adding `sub_partner` to this Set.
   "subpartner_shares:view": new Set(["owner_admin"]),
-  // Story 3.1 (Epic 3): a funding requirement is created/listed Owner/
-  // Admin-only in this story -- no `SELF_ACCESS_ACTIONS`/
-  // `SCOPE_SELF_ACCESS_ACTIONS` entry (see spec-3-1's Decisions). How a
-  // Partner/Sub-partner eventually sees their own Should Pay (which reads
-  // this data) is Story 3.2's job, not this gate's, mirroring Epic 2's
-  // incremental-opening pattern (`partner_shares:list` started Owner/
-  // Admin-only in 2.2, only opened to a linked Partner in 2.4).
+  // Story 3.1 (Epic 3): creating a funding requirement stays Owner/Admin-
+  // only -- no self-access entry (see spec-3-1's Decisions).
   "investment_requirements:create": new Set(["owner_admin"]),
+  // 2026-09-29 (partner self-service Add Money/Withdraw Money): LISTING a
+  // Project's requirements opened via `SCOPE_SELF_ACCESS_ACTIONS` below --
+  // requirement rows carry no partner-specific figures (just amount/date),
+  // so unlike Should Pay this was never a privacy boundary, only an
+  // incremental-opening one, mirroring `partner_shares:list`'s identical
+  // "started Owner/Admin-only in 2.2, only opened to a linked Partner in
+  // 2.4" precedent. A Partner/Sub-partner needs this to even discover which
+  // requirement to pay against via the now-wired-up `my-investment-status`
+  // self-service route (Story 3.6, previously built but never called by any
+  // page). `PERMISSIONS` here still grants owner_admin unconditionally.
   "investment_requirements:list": new Set(["owner_admin"]),
   // Story 3.2: Should Pay is computed from a funding requirement's amount
   // plus the current Partner/Sub-partner Shares -- Owner/Admin-only in this
@@ -561,11 +566,26 @@ const SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set([
  * other parties it involves -- no per-node redaction, matching
  * `partner_shares:view_grant`'s "prove linkage, then show the whole linked
  * structure" precedent one level over.
+ *
+ * 2026-09-29 (partner self-service Add Money/Withdraw Money) adds
+ * `investment_requirements:list`: unlike `partner_shares:list` above,
+ * BOTH a Partner and a Sub-partner need to discover a Project's open
+ * requirements (both need to know what to pay against) -- so
+ * `scopeOwnerIds` here is the UNION of the Project's current Partner
+ * Shares' `userId`s and current Sub-partner Shares' `userId`s, not Partner
+ * Shares alone. Mirrors how `investment_transactions:create`'s own
+ * single-resource self-access already resolves a target across both share
+ * tables (`SELF_ACCESS_ACTIONS` above) -- same "both roles are eligible"
+ * shape, one level up at scope-list granularity. Requirement rows
+ * themselves carry no partner-specific figures (just amount/date), so this
+ * was never a privacy boundary the way Should Pay is, only an
+ * incremental-opening one.
  */
 const SCOPE_SELF_ACCESS_ACTIONS: ReadonlySet<Action> = new Set([
   "partner_shares:list",
   "partner_shares:view_grant",
   "money_trail:view",
+  "investment_requirements:list",
 ]);
 
 export interface AuthorizeDeps {
