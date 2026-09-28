@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useParams } from "next/navigation";
 import {
   ArrowLeft,
@@ -14,6 +14,7 @@ import {
   Save,
   ShieldCheck,
   SkipForward,
+  SplitSquareVertical,
   User,
   Wallet,
   X,
@@ -49,6 +50,7 @@ import {
   StatusChip,
   toast,
   formatAmount,
+  cn,
   type StatusChipVariant,
 } from "@niveshbook/ui";
 import { getCanTake, type PartnerCanTakeWithEffective } from "@/lib/can-take";
@@ -136,6 +138,16 @@ interface RecordWithdrawalTarget {
   partyType: "partner" | "sub_partner";
   shareId: string;
   personName: string;
+}
+
+/** One row in the "Distribute a Withdrawal" dialog -- see that dialog's own state block for why `basis` is `ownCanTake` for a Partner row and `canTake` for a Sub-partner row. */
+interface DistributeRow {
+  key: string;
+  partyType: "partner" | "sub_partner";
+  shareId: string;
+  name: string;
+  indent: boolean;
+  basis: Money;
 }
 
 /**
@@ -482,6 +494,55 @@ export default function WithdrawMoneyPage() {
   // duplicating a second copy of the form's fields.
   const [extraWithdrawalOpen, setExtraWithdrawalOpen] = useState(false);
 
+  /**
+   * "Distribute a Withdrawal" -- a collective, ownership-based split of one
+   * total withdrawal across every Partner (and, one row down, each of their
+   * own Sub-partners), suggested from the same Can Take figures already
+   * shown on this page (`ownCanTake` for a Partner row, `canTake` for a
+   * Sub-partner row -- these two always sum to that Partner's own total
+   * `canTake`, so every row's basis partitions `availableToWithdraw`
+   * exactly, with no double-counting). Purely a new client-side
+   * orchestration layer: saving loops the exact same
+   * `recordWithdrawalTransaction` call the single Record Withdrawal dialog
+   * above already makes, once per participating row, then the exact same
+   * `recordDestinationAllocation` call the "Where did this money go?"
+   * dialog below already makes, once per resulting transaction -- never a
+   * new accounting rule, and ownership percentages are never touched
+   * (matching this feature's explicit constraint). Deliberately excludes
+   * `"project"` from its own shared destination choice -- sending one of
+   * these individual withdrawals into another Project still needs that
+   * destination's own funding-requirement/Share pickers, which stay
+   * available per-transaction via the unchanged "Where did this money go?"
+   * dialog afterward, rather than duplicating that picker N times inline
+   * here (this feature's own "avoid unnecessary complexity" constraint).
+   */
+  const [distributeOpen, setDistributeOpen] = useState(false);
+  const [distributeTotal, setDistributeTotal] = useState("");
+  /** Keyed by a row's `key` (`${partyType}:${shareId}`) -- the current editable "Actual" amount, defaulting to that row's ownership-suggested amount until manually touched. */
+  const [distributeActuals, setDistributeActuals] = useState<Record<string, string>>({});
+  /** Rows the user has manually edited -- these stop auto-recomputing to the new suggestion whenever `distributeTotal` changes, exactly like a spreadsheet cell typed over. */
+  const [distributeTouched, setDistributeTouched] = useState<Set<string>>(new Set());
+  const [distributeDate, setDistributeDate] = useState("");
+  const [distributePaymentMode, setDistributePaymentMode] = useState<PaymentMode>("cash");
+  const [distributeReferenceNumber, setDistributeReferenceNumber] = useState("");
+  const [distributeNotes, setDistributeNotes] = useState("");
+  /** Shared across every participating row -- `"project"` excluded, see this state block's own doc comment. */
+  const [distributeDestinationType, setDistributeDestinationType] = useState<Exclude<DestinationType, "project">>(
+    "other",
+  );
+  const [distributeDestinationPersonName, setDistributeDestinationPersonName] = useState("");
+  const [distributeFormError, setDistributeFormError] = useState<string | null>(null);
+  const [distributeSubmitting, setDistributeSubmitting] = useState(false);
+  /** Mirrors `extraWithdrawalOpen`'s identical "Authorize Extra Withdrawal?" confirmation, opened once for every row (if any) whose Actual exceeds its own Can Take, before any row is actually submitted. */
+  const [distributeExtraAuthorizationOpen, setDistributeExtraAuthorizationOpen] = useState(false);
+  /** Per-row outcome once saving starts -- on a partial failure, shows exactly which rows already succeeded so closing/retrying never risks double-submitting those. */
+  const [distributeRowStatus, setDistributeRowStatus] = useState<Record<string, "pending" | "success" | "error">>(
+    {},
+  );
+  const [distributeRowErrors, setDistributeRowErrors] = useState<Record<string, string>>({});
+  /** One idempotency key per row, minted the first time that row is submitted and reused on any retry of that same row (AD-5) -- a `useRef`, not `useState`, since it's read/written inside an async submission loop and never itself needs to trigger a render. */
+  const distributeIdempotencyKeysRef = useRef<Record<string, string>>({});
+
   // Story 4.7 (FR27): the "Where did this money go?" destination-allocation
   // dialog, opened immediately after a Take Now save succeeds (the "next
   // step in the same flow" per epic-4-context.md) -- `allocationTarget` is
@@ -813,6 +874,251 @@ export default function WithdrawMoneyPage() {
   /** Closes just the Authorize Extra Withdrawal dialog (Story 4.5) -- the Record Withdrawal dialog underneath stays open, values untouched, so the user can adjust the amount and try again. No submission occurs. */
   function closeExtraWithdrawalDialog() {
     setExtraWithdrawalOpen(false);
+  }
+
+  function openDistributeDialog() {
+    setDistributeOpen(true);
+    setDistributeTotal("");
+    setDistributeActuals({});
+    setDistributeTouched(new Set());
+    setDistributeDate("");
+    setDistributePaymentMode("cash");
+    setDistributeReferenceNumber("");
+    setDistributeNotes("");
+    setDistributeDestinationType("other");
+    setDistributeDestinationPersonName("");
+    setDistributeFormError(null);
+    setDistributeExtraAuthorizationOpen(false);
+    setDistributeRowStatus({});
+    setDistributeRowErrors({});
+    distributeIdempotencyKeysRef.current = {};
+  }
+
+  function closeDistributeDialog() {
+    setDistributeOpen(false);
+    setDistributeExtraAuthorizationOpen(false);
+  }
+
+  /** One row per Partner, plus one row per that Partner's own current Sub-partner -- see this dialog's state block for why `ownCanTake`/`canTake` are the right, non-double-counting basis for each. `[]` before Can Take has loaded. */
+  function distributeRows(): DistributeRow[] {
+    if (state.status !== "loaded") return [];
+    const rows: DistributeRow[] = [];
+    for (const partner of state.partners) {
+      rows.push({
+        key: `partner:${partner.partnerId}`,
+        partyType: "partner",
+        shareId: partner.partnerId,
+        name: partner.name,
+        indent: false,
+        basis: partner.ownCanTake,
+      });
+      for (const sub of partner.subPartners) {
+        rows.push({
+          key: `sub_partner:${sub.subPartnerId}`,
+          partyType: "sub_partner",
+          shareId: sub.subPartnerId,
+          name: sub.name,
+          indent: true,
+          basis: sub.canTake,
+        });
+      }
+    }
+    return rows;
+  }
+
+  /**
+   * Display-only proportional suggestion -- `total * (basis /
+   * availableToWithdraw)`, mirroring `shares/page.tsx`'s `formatDifference`/
+   * `totalMessage` precedent that plain `Number()` arithmetic is fine for
+   * client-side display/defaults that are never themselves stored (every
+   * row's `actual` is freely editable, and the server's own decimal-safe
+   * `toMoney` is what actually validates each `recordWithdrawalTransaction`
+   * call). Never negative, capped at 2 decimals.
+   */
+  function suggestedAmount(basis: Money): string {
+    if (state.status !== "loaded") return "0.00";
+    const totalNum = Number(distributeTotal || "0");
+    const basisNum = Number(basis);
+    const availableNum = Number(state.availableToWithdraw);
+    if (!Number.isFinite(totalNum) || !Number.isFinite(basisNum) || !Number.isFinite(availableNum) || availableNum <= 0) {
+      return "0.00";
+    }
+    return Math.max(0, totalNum * (basisNum / availableNum)).toFixed(2);
+  }
+
+  function distributeActualFor(row: DistributeRow): string {
+    if (distributeTouched.has(row.key)) return distributeActuals[row.key] ?? "0.00";
+    return suggestedAmount(row.basis);
+  }
+
+  function handleDistributeActualChange(key: string, value: string) {
+    setDistributeTouched((prev) => new Set(prev).add(key));
+    setDistributeActuals((prev) => ({ ...prev, [key]: value }));
+  }
+
+  /** Sum of every row's current Actual, decimal-safe (mirrors `scaleMoneyForCompare`'s existing digit-scaling convention rather than a raw float sum). */
+  function distributeActualSum(): number {
+    return distributeRows().reduce((sum, row) => sum + scaleMoneyForCompare(distributeActualFor(row)), 0);
+  }
+
+  function distributeTotalScaled(): number {
+    return scaleMoneyForCompare(distributeTotal || "0");
+  }
+
+  /** `null` means the form is valid and ready to submit. Mirrors this page's existing "compute, don't throw" validation style (`exceedsCanTake`, `isAllocationLegComplete`). */
+  function distributeValidationError(): string | null {
+    if (distributeTotalScaled() <= 0) return "Enter a Total Withdrawal amount greater than zero.";
+    if (!distributeDate) return "Date is required.";
+    if (distributeActualSum() !== distributeTotalScaled()) {
+      return "The Actual amounts must add up to exactly the Total Withdrawal amount.";
+    }
+    if (distributeDestinationType === "person" && distributeDestinationPersonName.trim().length === 0) {
+      return "Enter the person's name for the Transfer destination.";
+    }
+    return null;
+  }
+
+  /** Rows whose current Actual exceeds their own Can Take -- mirrors `exceedsCanTake`'s single-target check, applied per row; `canTakeForTarget` (not this dialog's own ownership-proportional `basis`) is the real per-row ceiling, exactly like the single Record Withdrawal dialog already uses. */
+  function distributeRowsExceedingCanTake(): DistributeRow[] {
+    return distributeRows().filter((row) => {
+      const ceiling = canTakeForTarget(row.partyType, row.shareId);
+      return ceiling !== null && exceedsCanTake(distributeActualFor(row), ceiling);
+    });
+  }
+
+  function handleDistributeSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const validationError = distributeValidationError();
+    if (validationError) {
+      setDistributeFormError(validationError);
+      return;
+    }
+    setDistributeFormError(null);
+    if (distributeRowsExceedingCanTake().length > 0) {
+      setDistributeExtraAuthorizationOpen(true);
+      return;
+    }
+    void runDistributeSubmission(false);
+  }
+
+  function handleDistributeExtraAuthorizationConfirm() {
+    setDistributeExtraAuthorizationOpen(false);
+    void runDistributeSubmission(true);
+  }
+
+  /**
+   * The actual save -- loops every row with a positive Actual amount,
+   * skipping any row already marked `"success"` (a retry after a partial
+   * failure never re-submits an already-saved row). Each row is the exact
+   * same `recordWithdrawalTransaction` call the single Record Withdrawal
+   * dialog above makes; `authorizedForExtra` is only passed `true` for rows
+   * this dialog already confirmed exceed their own Can Take (Story 4.5's
+   * same gate, reused as-is). Continues past a single row's failure rather
+   * than aborting the whole batch -- these are N independent transactions,
+   * not one atomic operation (this feature's "not a new accounting system"
+   * constraint), so one Partner's save failing must never block the rest.
+   * Once every row has settled, saves each newly-created transaction's
+   * shared destination via the exact same `recordDestinationAllocation`
+   * call the "Where did this money go?" dialog below makes, one leg per
+   * transaction, then refreshes Can Take/withdrawals/adjustments exactly
+   * like `submitWithdrawal` already does.
+   */
+  async function runDistributeSubmission(authorizedForExtra: boolean) {
+    setDistributeSubmitting(true);
+    setDistributeFormError(null);
+    const rows = distributeRows().filter((row) => scaleMoneyForCompare(distributeActualFor(row)) > 0);
+    const createdTransactions: { row: DistributeRow; transaction: WithdrawalTransaction }[] = [];
+    let anyFailed = false;
+
+    for (const row of rows) {
+      if (distributeRowStatus[row.key] === "success") continue;
+      setDistributeRowStatus((prev) => ({ ...prev, [row.key]: "pending" }));
+      if (!distributeIdempotencyKeysRef.current[row.key]) {
+        distributeIdempotencyKeysRef.current[row.key] = crypto.randomUUID();
+      }
+      try {
+        const actual = distributeActualFor(row);
+        const ceiling = canTakeForTarget(row.partyType, row.shareId);
+        const rowExceeds = ceiling !== null && exceedsCanTake(actual, ceiling);
+        const transaction = await recordWithdrawalTransaction(
+          projectId,
+          {
+            partyType: row.partyType,
+            shareId: row.shareId,
+            amount: actual,
+            transactionDate: distributeDate,
+            paymentMode: distributePaymentMode,
+            referenceNumber: distributeReferenceNumber.trim().length > 0 ? distributeReferenceNumber.trim() : null,
+            notes: distributeNotes.trim().length > 0 ? distributeNotes.trim() : null,
+            extraWithdrawalAuthorized: rowExceeds ? authorizedForExtra : undefined,
+          },
+          distributeIdempotencyKeysRef.current[row.key] as string,
+        );
+        createdTransactions.push({ row, transaction });
+        setDistributeRowStatus((prev) => ({ ...prev, [row.key]: "success" }));
+      } catch (err) {
+        anyFailed = true;
+        setDistributeRowStatus((prev) => ({ ...prev, [row.key]: "error" }));
+        setDistributeRowErrors((prev) => ({
+          ...prev,
+          [row.key]: err instanceof Error ? err.message : "Something went wrong.",
+        }));
+      }
+    }
+
+    // Best-effort -- each withdrawal above is already saved regardless of
+    // whether its destination allocation succeeds; a failure here surfaces
+    // as a toast, not a blocked dialog, mirroring `submitWithdrawal`'s own
+    // "the withdrawal itself is already recorded either way" precedent.
+    for (const { row, transaction } of createdTransactions) {
+      try {
+        await recordDestinationAllocation(
+          projectId,
+          transaction.id,
+          [
+            {
+              destinationType: distributeDestinationType,
+              amount: transaction.amount,
+              destinationProjectId: null,
+              personName: distributeDestinationType === "person" ? distributeDestinationPersonName.trim() : null,
+              notes:
+                distributeDestinationType === "other"
+                  ? distributeNotes.trim().length > 0
+                    ? distributeNotes.trim()
+                    : "Personal withdrawal"
+                  : null,
+              destinationRequirementId: null,
+              destinationShareId: null,
+              destinationPartyType: null,
+            },
+          ],
+          crypto.randomUUID(),
+        );
+      } catch {
+        toast.error(`Saved ${row.name}'s withdrawal, but couldn't record its destination -- open it from the list below to add one.`);
+      }
+    }
+
+    setDistributeSubmitting(false);
+
+    if (createdTransactions.length > 0) {
+      toast.success(
+        `${createdTransactions.length} withdrawal${createdTransactions.length === 1 ? "" : "s"} recorded${
+          anyFailed ? " -- some rows still need attention" : ""
+        }`,
+      );
+    }
+    await Promise.all([
+      refreshWithdrawals().catch(() => {}),
+      refreshCanTake().catch(() => {}),
+      refreshAdjustments().catch(() => {}),
+    ]);
+
+    if (!anyFailed) {
+      closeDistributeDialog();
+    } else {
+      setDistributeFormError("Some rows couldn't be saved -- fix them below and save again (already-saved rows won't be repeated).");
+    }
   }
 
   /**
@@ -1352,6 +1658,13 @@ export default function WithdrawMoneyPage() {
         backLabel="Projects"
         title="Withdraw Money"
         description="Can Take is each Partner and Sub-partner's normal share of what can be withdrawn -- based on their Share % of this Project's available-to-withdraw amount, worked out automatically."
+        action={
+          state.status === "loaded" && state.partners.length > 0 ? (
+            <Button onClick={openDistributeDialog} icon={<SplitSquareVertical size={14} />}>
+              Distribute a Withdrawal
+            </Button>
+          ) : undefined
+        }
       />
 
       <Card>
@@ -2163,6 +2476,244 @@ export default function WithdrawMoneyPage() {
               variant="ghost"
               onClick={closeCancelWithdrawalDialog}
               disabled={cancelSubmitting}
+              icon={<ArrowLeft size={14} />}
+            >
+              Back
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={distributeOpen}
+        onOpenChange={(open) => {
+          if (!open) closeDistributeDialog();
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogTitle>Distribute a Withdrawal</DialogTitle>
+          <DialogDescription>
+            Enter the total amount being withdrawn from this Project -- each Partner&apos;s (and their own
+            Sub-partners&apos;) share is suggested automatically from their ownership. Adjust any row before
+            saving; the Actual amounts must still add up to the total.
+          </DialogDescription>
+          <form onSubmit={handleDistributeSubmit} className="mt-4">
+            <Field>
+              <Label htmlFor="distribute-total">Total Withdrawal Amount</Label>
+              <Input
+                id="distribute-total"
+                inputMode="decimal"
+                value={distributeTotal}
+                onChange={(event) => setDistributeTotal(event.target.value)}
+                required
+                autoFocus
+              />
+              {state.status === "loaded" ? (
+                <Helper>
+                  <Amount value={state.availableToWithdraw} size="sm" /> is available to withdraw from this
+                  Project.
+                </Helper>
+              ) : null}
+            </Field>
+
+            <div className="mt-2 flex flex-col gap-2">
+              <div className="grid grid-cols-[1fr_repeat(3,7.5rem)] gap-2 px-1 text-[11.6px] font-bold text-ink-soft">
+                <span>Partner / Sub-partner</span>
+                <span>Suggested</span>
+                <span>Actual</span>
+                <span>Difference</span>
+              </div>
+              {distributeRows().map((row) => {
+                const suggested = suggestedAmount(row.basis);
+                const actual = distributeActualFor(row);
+                const diff = (Number(actual) - Number(suggested)).toFixed(2);
+                const status = distributeRowStatus[row.key];
+                return (
+                  <div
+                    key={row.key}
+                    className={cn(
+                      "grid grid-cols-[1fr_repeat(3,7.5rem)] items-center gap-2 rounded-el border border-border px-2.5 py-1.5",
+                      row.indent && "ml-4 bg-surface-alt",
+                    )}
+                  >
+                    <span className="truncate text-[13px] text-ink">
+                      {row.name}
+                      {status === "success" ? (
+                        <StatusChip variant="success" className="ml-1.5">
+                          Saved
+                        </StatusChip>
+                      ) : null}
+                    </span>
+                    <Amount value={suggested} size="sm" />
+                    <Input
+                      aria-label={`Actual withdrawal (${row.name})`}
+                      inputMode="decimal"
+                      value={actual}
+                      disabled={status === "success"}
+                      onChange={(event) => handleDistributeActualChange(row.key, event.target.value)}
+                      className="py-1 text-[13px]"
+                    />
+                    <span
+                      className={cn(
+                        "text-[12px] tabular-nums",
+                        Number(diff) === 0 ? "text-ink-faint" : Number(diff) > 0 ? "text-success" : "text-danger",
+                      )}
+                    >
+                      {Number(diff) > 0 ? "+" : ""}
+                      {diff}
+                    </span>
+                    {status === "error" ? (
+                      <p role="alert" className="col-span-4 -mt-1 text-[11.6px] text-danger">
+                        {row.name}: {distributeRowErrors[row.key]}
+                      </p>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-2.5 flex items-center justify-between rounded-el bg-surface-alt px-2.5 py-1.5 text-[13px]">
+              <span className="text-ink-soft">Total of Actual amounts</span>
+              <span
+                className={cn(
+                  "font-semibold tabular-nums",
+                  distributeActualSum() === distributeTotalScaled() ? "text-success" : "text-danger",
+                )}
+              >
+                {(distributeActualSum() / 100).toFixed(2)}
+                {distributeTotal ? ` / ${(distributeTotalScaled() / 100).toFixed(2)}` : null}
+              </span>
+            </div>
+
+            <Field className="mt-3">
+              <Label htmlFor="distribute-date">Date</Label>
+              <Input
+                id="distribute-date"
+                type="date"
+                value={distributeDate}
+                onChange={(event) => setDistributeDate(event.target.value)}
+                required
+              />
+            </Field>
+            <Field>
+              <Label htmlFor="distribute-payment-mode">Payment Mode</Label>
+              <select
+                id="distribute-payment-mode"
+                className="w-full rounded-el border border-border bg-surface px-3 py-2.5 text-[14px] text-ink focus:border-accent focus:outline focus:outline-2 focus:outline-accent-soft"
+                value={distributePaymentMode}
+                onChange={(event) => setDistributePaymentMode(event.target.value as PaymentMode)}
+              >
+                {PAYMENT_MODE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field>
+              <Label htmlFor="distribute-reference">Reference Number</Label>
+              <Input
+                id="distribute-reference"
+                value={distributeReferenceNumber}
+                onChange={(event) => setDistributeReferenceNumber(event.target.value)}
+              />
+              <Helper>Optional -- e.g. a cash withdrawal often has none.</Helper>
+            </Field>
+            <Field>
+              <Label htmlFor="distribute-notes">Notes</Label>
+              <Input
+                id="distribute-notes"
+                value={distributeNotes}
+                onChange={(event) => setDistributeNotes(event.target.value)}
+              />
+            </Field>
+
+            <Field>
+              <Label htmlFor="distribute-destination">Where did this money go?</Label>
+              <select
+                id="distribute-destination"
+                className="w-full rounded-el border border-border bg-surface px-3 py-2.5 text-[14px] text-ink focus:border-accent focus:outline focus:outline-2 focus:outline-accent-soft"
+                value={distributeDestinationType}
+                onChange={(event) =>
+                  setDistributeDestinationType(event.target.value as Exclude<DestinationType, "project">)
+                }
+              >
+                <option value="other">Personal withdrawal</option>
+                <option value="person">Transfer to another person</option>
+                <option value="available_balance">Available balance for future investment</option>
+              </select>
+              <Helper>
+                Applied to every row above. Sending one of these into another Project instead? Save this
+                distribution first, then open that specific withdrawal from the list below to choose a
+                Project destination.
+              </Helper>
+            </Field>
+            {distributeDestinationType === "person" ? (
+              <Field>
+                <Label htmlFor="distribute-person-name">Person&apos;s name</Label>
+                <Input
+                  id="distribute-person-name"
+                  value={distributeDestinationPersonName}
+                  onChange={(event) => setDistributeDestinationPersonName(event.target.value)}
+                  required
+                />
+              </Field>
+            ) : null}
+
+            {distributeFormError ? (
+              <p role="alert" className="mb-4 text-[13.4px] text-danger">
+                {distributeFormError}
+              </p>
+            ) : null}
+
+            <div className="flex gap-2.5">
+              <Button type="submit" disabled={distributeSubmitting} icon={<Save size={14} />}>
+                {distributeSubmitting ? "Saving…" : "Save Distribution"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={closeDistributeDialog}
+                disabled={distributeSubmitting}
+                icon={<X size={14} />}
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={distributeExtraAuthorizationOpen}
+        onOpenChange={(open) => {
+          if (!open) setDistributeExtraAuthorizationOpen(false);
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>Authorize Extra Withdrawal?</DialogTitle>
+          <DialogDescription>
+            {distributeRowsExceedingCanTake()
+              .map((row) => row.name)
+              .join(", ")}{" "}
+            {distributeRowsExceedingCanTake().length === 1 ? "is" : "are"} taking more than their own Can
+            Take. Only an Owner/Admin allowed to approve extra withdrawals can do this. Confirming records
+            the full Actual amount for every row as entered; going back returns to the form with nothing
+            saved.
+          </DialogDescription>
+          <div className="mt-4 flex gap-2.5">
+            <Button
+              onClick={handleDistributeExtraAuthorizationConfirm}
+              disabled={distributeSubmitting}
+              icon={<ShieldCheck size={14} />}
+            >
+              {distributeSubmitting ? "Saving…" : "Confirm & Save"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setDistributeExtraAuthorizationOpen(false)}
+              disabled={distributeSubmitting}
               icon={<ArrowLeft size={14} />}
             >
               Back

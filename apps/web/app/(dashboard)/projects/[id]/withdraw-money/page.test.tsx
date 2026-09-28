@@ -1814,6 +1814,165 @@ describe("WithdrawMoneyPage -- destination-allocation dialog (Story 4.7, extende
   });
 });
 
+/**
+ * "Distribute a Withdrawal" -- the collective, ownership-based redesign.
+ * `CAN_TAKE_RESPONSE` (module-scope) gives Partner A ownCanTake=125000 (25%
+ * of the 500000 available), two Sub-partners at 62500 (12.5%) each, and
+ * Partner B ownCanTake=250000 (50%) -- these four bases already sum to
+ * exactly 500000, so a Total of "500000" gives clean, exact suggested
+ * amounts with no rounding to account for in assertions.
+ */
+describe("WithdrawMoneyPage -- Distribute a Withdrawal (Withdrawal Flow redesign)", () => {
+  beforeEach(() => {
+    getCanTake.mockReset();
+    listWithdrawalTransactions.mockReset().mockResolvedValue(EMPTY_WITHDRAWALS_RESPONSE);
+    recordWithdrawalTransaction.mockReset();
+    getWithdrawalAdjustments.mockReset().mockResolvedValue(EMPTY_ADJUSTMENTS_RESPONSE);
+    recordDestinationAllocation.mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("suggests each row's ownership-based share of the entered Total, live", async () => {
+    const user = await renderAndReady();
+
+    await user.click(screen.getByRole("button", { name: "Distribute a Withdrawal" }));
+    await user.type(screen.getByLabelText("Total Withdrawal Amount"), "500000");
+
+    expect(screen.getByLabelText("Actual withdrawal (A)")).toHaveValue("125000.00");
+    expect(screen.getByLabelText("Actual withdrawal (Sub1)")).toHaveValue("62500.00");
+    expect(screen.getByLabelText("Actual withdrawal (Sub2)")).toHaveValue("62500.00");
+    expect(screen.getByLabelText("Actual withdrawal (B)")).toHaveValue("250000.00");
+  });
+
+  it("manually adjusting one row leaves the others at their own suggested amount, and shows the difference", async () => {
+    const user = await renderAndReady();
+
+    await user.click(screen.getByRole("button", { name: "Distribute a Withdrawal" }));
+    await user.type(screen.getByLabelText("Total Withdrawal Amount"), "500000");
+
+    const aInput = screen.getByLabelText("Actual withdrawal (A)");
+    await user.clear(aInput);
+    await user.type(aInput, "150000");
+
+    expect(aInput).toHaveValue("150000");
+    expect(screen.getByLabelText("Actual withdrawal (B)")).toHaveValue("250000.00"); // untouched, still suggested
+    expect(screen.getByText("+25000.00")).toBeInTheDocument(); // A's difference: 150000 - 125000
+  });
+
+  it("blocks Save when the Actual amounts don't add up to the Total (over-allocation guard)", async () => {
+    const user = await renderAndReady();
+
+    await user.click(screen.getByRole("button", { name: "Distribute a Withdrawal" }));
+    await user.type(screen.getByLabelText("Total Withdrawal Amount"), "500000");
+    const aInput = screen.getByLabelText("Actual withdrawal (A)");
+    await user.clear(aInput);
+    await user.type(aInput, "150000"); // now sums to 525000, not 500000
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+
+    await user.click(screen.getByRole("button", { name: "Save Distribution" }));
+
+    expect(
+      await screen.findByText("The Actual amounts must add up to exactly the Total Withdrawal amount."),
+    ).toBeInTheDocument();
+    expect(recordWithdrawalTransaction).not.toHaveBeenCalled();
+  });
+
+  it("supports individual participation -- a row set to 0 is simply skipped, never forced", async () => {
+    recordWithdrawalTransaction.mockImplementation((_projectId, input) =>
+      Promise.resolve(makeWithdrawalTransaction({ id: `wtx-${input.shareId}`, ...input })),
+    );
+    recordDestinationAllocation.mockResolvedValue({ allocations: [], moneyMovements: [] });
+    const user = await renderAndReady();
+
+    await user.click(screen.getByRole("button", { name: "Distribute a Withdrawal" }));
+    await user.type(screen.getByLabelText("Total Withdrawal Amount"), "125000");
+    // Only Partner A participates this round -- every other row's own
+    // suggested share (proportional to the smaller 125000 total, so none of
+    // them default to zero on their own) is manually zeroed out.
+    for (const name of ["Sub1", "Sub2", "B"]) {
+      const input = screen.getByLabelText(`Actual withdrawal (${name})`);
+      await user.clear(input);
+      await user.type(input, "0");
+    }
+    const aInput = screen.getByLabelText("Actual withdrawal (A)");
+    await user.clear(aInput);
+    await user.type(aInput, "125000");
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+
+    await user.click(screen.getByRole("button", { name: "Save Distribution" }));
+
+    await waitFor(() => expect(recordWithdrawalTransaction).toHaveBeenCalledTimes(1));
+    expect(recordWithdrawalTransaction).toHaveBeenCalledWith(
+      "project-1",
+      expect.objectContaining({ partyType: "partner", shareId: "a", amount: "125000" }),
+      expect.any(String),
+    );
+  });
+
+  it("saves one withdrawal per participating row, then that same shared destination for each, and refreshes the list", async () => {
+    recordWithdrawalTransaction.mockImplementation((_projectId, input) =>
+      Promise.resolve(makeWithdrawalTransaction({ id: `wtx-${input.shareId}`, ...input })),
+    );
+    recordDestinationAllocation.mockResolvedValue({ allocations: [], moneyMovements: [] });
+    const user = await renderAndReady();
+
+    await user.click(screen.getByRole("button", { name: "Distribute a Withdrawal" }));
+    await user.type(screen.getByLabelText("Total Withdrawal Amount"), "500000");
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+    fireEvent.change(screen.getByLabelText("Where did this money go?"), { target: { value: "available_balance" } });
+
+    await user.click(screen.getByRole("button", { name: "Save Distribution" }));
+
+    await waitFor(() => expect(recordWithdrawalTransaction).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(recordDestinationAllocation).toHaveBeenCalledTimes(4));
+    expect(recordDestinationAllocation).toHaveBeenCalledWith(
+      "project-1",
+      "wtx-a",
+      [expect.objectContaining({ destinationType: "available_balance", amount: "125000.00" })],
+      expect.any(String),
+    );
+    await waitFor(() => expect(listWithdrawalTransactions).toHaveBeenCalled());
+    // The trigger button itself is always on screen (it's the page's own
+    // action, not dialog content) -- absence of a dialog-only field is what
+    // actually proves the dialog closed.
+    await waitFor(() => expect(screen.queryByLabelText("Total Withdrawal Amount")).not.toBeInTheDocument());
+  });
+
+  it("a row exceeding its own Can Take opens Authorize Extra Withdrawal instead of saving immediately", async () => {
+    const user = await renderAndReady();
+
+    await user.click(screen.getByRole("button", { name: "Distribute a Withdrawal" }));
+    await user.type(screen.getByLabelText("Total Withdrawal Amount"), "500000");
+    // Sub1/Sub2 stay at their own suggested 62500 each (untouched); moving
+    // 135000 from B to A keeps the four rows' sum at exactly 500000 while
+    // pushing A (260000) past its own 250000 `effectiveCanTake` ceiling.
+    const aInput = screen.getByLabelText("Actual withdrawal (A)");
+    await user.clear(aInput);
+    await user.type(aInput, "260000"); // A's own effectiveCanTake ceiling is 250000
+    const bInput = screen.getByLabelText("Actual withdrawal (B)");
+    await user.clear(bInput);
+    await user.type(bInput, "115000");
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+
+    await user.click(screen.getByRole("button", { name: "Save Distribution" }));
+
+    expect(await screen.findByText("Authorize Extra Withdrawal?")).toBeInTheDocument();
+    expect(recordWithdrawalTransaction).not.toHaveBeenCalled();
+  });
+
+  it("only shows the button when there's at least one Partner Share to distribute across", async () => {
+    getCanTake.mockResolvedValue({ availableToWithdraw: "0", partners: [] });
+    render(<WithdrawMoneyPage />);
+
+    await screen.findByText("No Partner Shares yet");
+
+    expect(screen.queryByRole("button", { name: "Distribute a Withdrawal" })).not.toBeInTheDocument();
+  });
+});
+
 describe("Withdraw Money page -- flexible pro-rata withdrawal reallocation", () => {
   afterEach(() => {
     cleanup();
