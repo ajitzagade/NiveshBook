@@ -304,7 +304,7 @@ describe("ProjectSwitcher — quick-add Project (spec-quick-add-project-user-mod
     await userEvent.click(screen.getByRole("button", { name: /select a project/i }));
     await userEvent.click(await screen.findByText("+ Add New Project"));
     await userEvent.type(screen.getByLabelText("Name"), "Riverside Tower");
-    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create project/i }));
 
     await waitFor(() => expect(createProject).toHaveBeenCalledWith({ name: "Riverside Tower", description: null }));
     expect(onSelect).toHaveBeenCalledWith("project-new");

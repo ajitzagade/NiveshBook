@@ -120,6 +120,16 @@ export function ProjectQuickAddForm({ onCancel, onCreated, compact = false }: Pr
         </p>
       ) : null}
 
+      {/*
+        Labeled "Create Project"/"Back" rather than "Save"/"Cancel" -- this
+        form now also renders inline inside the withdraw-money/available-
+        balance destination-Project pickers (spec-quick-add-project-user-
+        modals follow-up), both already inside a dialog with their own
+        "Save" button -- identical labels would be an accessible-name
+        collision for anyone navigating by name (assistive tech,
+        `getByRole("button", { name })`), mirroring `UserQuickAddForm`'s
+        identical "Create User"/"Back" rename for the same reason.
+      */}
       <div className="flex gap-2">
         <Button
           type="submit"
@@ -127,7 +137,7 @@ export function ProjectQuickAddForm({ onCancel, onCreated, compact = false }: Pr
           disabled={submitting}
           icon={<Save size={compact ? 12 : 14} />}
         >
-          {submitting ? "Saving…" : "Save"}
+          {submitting ? "Creating…" : "Create Project"}
         </Button>
         <Button
           type="button"
@@ -137,7 +147,7 @@ export function ProjectQuickAddForm({ onCancel, onCreated, compact = false }: Pr
           disabled={submitting}
           icon={<X size={compact ? 12 : 14} />}
         >
-          Cancel
+          Back
         </Button>
       </div>
     </form>

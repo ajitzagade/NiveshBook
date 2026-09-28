@@ -19,9 +19,11 @@ vi.mock("@/lib/available-balances", () => ({
 }));
 
 const listProjects = vi.fn();
+const createProject = vi.fn();
 
 vi.mock("@/lib/projects", () => ({
   listProjects: (...args: unknown[]) => listProjects(...args),
+  createProject: (...args: unknown[]) => createProject(...args),
 }));
 
 const listInvestmentRequirements = vi.fn();
@@ -63,6 +65,7 @@ beforeEach(() => {
   spendAvailableBalance.mockReset();
   listProjects.mockReset();
   listProjects.mockResolvedValue([]);
+  createProject.mockReset();
   listInvestmentRequirements.mockReset();
   listPartnerShares.mockReset();
   listSubPartnerShares.mockReset();
@@ -181,7 +184,11 @@ describe("AvailableBalancePage (Story 4.9, FR29)", () => {
 
     await user.selectOptions(screen.getByLabelText(/^destination$/i), "project");
     await waitFor(() => expect(listProjects).toHaveBeenCalled());
-    await user.selectOptions(screen.getByLabelText(/destination project/i), "project-2");
+    // spec-quick-add-project-user-modals (follow-up): the destination-Project
+    // field is now a `Combobox` (was a native `<select>`) -- open its popover
+    // and click the matching option by name.
+    await user.click(screen.getByLabelText(/destination project/i));
+    await user.click(await screen.findByText("Project Two"));
 
     await waitFor(() => expect(listInvestmentRequirements).toHaveBeenCalledWith("project-2"));
     await user.selectOptions(await screen.findByLabelText(/destination funding requirement/i), "req-1");
@@ -200,5 +207,42 @@ describe("AvailableBalancePage (Story 4.9, FR29)", () => {
       destinationPartyType: "partner",
       amount: "30000",
     });
+  });
+
+  /**
+   * spec-quick-add-project-user-modals (follow-up): the destination-Project
+   * Combobox's own "+ Add New Project" quick-add row -- deferred from the
+   * original spec until `packages/ui`'s `DialogContent` outside-click fix
+   * (spec-quick-add-user-share-dialog) made nesting a `Combobox` inside a
+   * `Dialog` safe.
+   */
+  it("quick-add creates a Project, and selects it as the destination without navigating away", async () => {
+    const user = userEvent.setup();
+    listAvailableBalances.mockResolvedValue(ONE_PARTNER_WITH_BALANCE);
+    listProjects.mockResolvedValue([]);
+    createProject.mockResolvedValue({
+      id: "project-new",
+      name: "Riverside Tower",
+      description: null,
+      createdAt: "",
+      updatedAt: "",
+    });
+
+    render(<AvailableBalancePage />);
+
+    await waitFor(() => expect(screen.getByText("Partner A")).toBeInTheDocument());
+    await user.click(screen.getAllByRole("button", { name: /use balance/i })[0] as HTMLElement);
+    await user.selectOptions(screen.getByLabelText(/^destination$/i), "project");
+    await waitFor(() => expect(listProjects).toHaveBeenCalled());
+
+    await user.click(screen.getByLabelText(/destination project/i));
+    await user.click(await screen.findByText("+ Add New Project"));
+    await user.type(screen.getByLabelText("Name"), "Riverside Tower");
+    await user.click(screen.getByRole("button", { name: /create project/i }));
+
+    await waitFor(() => expect(createProject).toHaveBeenCalledWith({ name: "Riverside Tower", description: null }));
+    await waitFor(() =>
+      expect(screen.getByLabelText(/destination project/i)).toHaveTextContent("Riverside Tower"),
+    );
   });
 });

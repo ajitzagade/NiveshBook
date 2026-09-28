@@ -67,7 +67,7 @@ describe("ProjectQuickAddForm", () => {
 
     await userEvent.type(screen.getByLabelText("Name"), "Riverside Tower");
     await userEvent.type(screen.getByLabelText("Description"), "A new site");
-    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create project/i }));
 
     await waitFor(() =>
       expect(createProject).toHaveBeenCalledWith({ name: "Riverside Tower", description: "A new site" }),
@@ -81,7 +81,7 @@ describe("ProjectQuickAddForm", () => {
     render(<ProjectQuickAddForm onCancel={vi.fn()} onCreated={onCreated} />);
 
     await userEvent.type(screen.getByLabelText("Name"), "Existing Name");
-    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create project/i }));
 
     await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
   });
@@ -95,7 +95,7 @@ describe("ProjectQuickAddForm", () => {
     // The explicit client-side check treats whitespace-only the same as
     // blank -- createProject is still never reached, mirroring the "blocked
     // client-side" row of this spec's I/O matrix.
-    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create project/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Project name is required.");
     expect(createProject).not.toHaveBeenCalled();
@@ -106,7 +106,7 @@ describe("ProjectQuickAddForm", () => {
     const onCancel = vi.fn();
     render(<ProjectQuickAddForm onCancel={onCancel} onCreated={vi.fn()} />);
 
-    await userEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    await userEvent.click(screen.getByRole("button", { name: /back/i }));
 
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(createProject).not.toHaveBeenCalled();
@@ -149,7 +149,7 @@ describe("ProjectQuickAddForm", () => {
     const { unmount } = render(<ProjectQuickAddForm onCancel={vi.fn()} onCreated={onCreated} />);
 
     await userEvent.type(screen.getByLabelText("Name"), "Riverside Tower");
-    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create project/i }));
     await waitFor(() => expect(createProject).toHaveBeenCalledTimes(1));
 
     unmount();

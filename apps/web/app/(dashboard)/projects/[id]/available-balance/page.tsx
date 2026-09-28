@@ -35,7 +35,7 @@ import {
 } from "@/lib/available-balances";
 import { listProjects } from "@/lib/projects";
 import {
-  DestinationRequirementAndSharePickers,
+  DestinationProjectPicker,
   useDestinationProjectData,
   type DestinationProjectDataState,
   type DestinationSharePickerFields,
@@ -176,6 +176,15 @@ export default function AvailableBalancePage() {
   function closeUseBalanceDialog() {
     setTarget(null);
     setFormError(null);
+  }
+
+  /** spec-quick-add-project-user-modals (follow-up): fires once the destination-Project picker's "+ Add New Project" quick-add succeeds -- mirrors `withdraw-money/page.tsx`'s identical `handleAllocationProjectCreated`. */
+  function handleDestinationProjectCreated(project: Project) {
+    setProjectsState((prev) =>
+      prev.status === "loaded" && !prev.projects.some((existing) => existing.id === project.id)
+        ? { ...prev, projects: [...prev.projects, project] }
+        : prev,
+    );
   }
 
   function handlePickerChange(patch: Partial<DestinationSharePickerFields>) {
@@ -375,46 +384,25 @@ export default function AvailableBalancePage() {
             {destinationType === "project" ? (
               <Field>
                 <Label htmlFor="ub-destination-project">Destination Project</Label>
-                <select
+                <DestinationProjectPicker
                   id="ub-destination-project"
-                  className="w-full rounded-el border border-border bg-surface px-3 py-2.5 text-[14px] text-ink focus:border-accent focus:outline focus:outline-2 focus:outline-accent-soft"
+                  rowLabel="destination"
+                  projectOptions={projectOptions}
+                  projectsLoaded={projectsState.status === "loaded"}
+                  projectsError={projectsError}
                   value={destinationProjectId}
-                  onChange={(event) => {
-                    const value = event.target.value;
+                  onSelect={(value) => {
                     setDestinationProjectId(value);
                     setDestinationRequirementId("");
                     setDestinationShareId("");
                     setDestinationPartyType("");
                     if (value) ensureDestinationProjectData(value);
                   }}
-                >
-                  <option value="">Select a Project…</option>
-                  {projectOptions.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.name}
-                    </option>
-                  ))}
-                </select>
-                {projectsError ? (
-                  <p role="alert" className="mt-1 text-[12.6px] text-danger">
-                    Couldn&apos;t load Projects: {projectsError}
-                  </p>
-                ) : null}
-
-                {destinationProjectId ? (
-                  <DestinationRequirementAndSharePickers
-                    rowLabel="destination"
-                    leg={pickerFields}
-                    projectName={
-                      projectOptions.find((project) => project.id === destinationProjectId)?.name ??
-                      "This Project"
-                    }
-                    data={
-                      destinationProjectData[destinationProjectId] as DestinationProjectDataState | undefined
-                    }
-                    onChange={handlePickerChange}
-                  />
-                ) : null}
+                  onProjectCreated={handleDestinationProjectCreated}
+                  leg={pickerFields}
+                  data={destinationProjectData[destinationProjectId] as DestinationProjectDataState | undefined}
+                  onChange={handlePickerChange}
+                />
               </Field>
             ) : (
               <Field>

@@ -53,10 +53,12 @@ vi.mock("@/lib/withdrawal-adjustments", () => ({
  * call to `GET /api/projects`/`POST .../destination-allocations`.
  */
 const listProjects = vi.fn();
+const createProject = vi.fn();
 const recordDestinationAllocation = vi.fn();
 
 vi.mock("@/lib/projects", () => ({
   listProjects: (...args: unknown[]) => listProjects(...args),
+  createProject: (...args: unknown[]) => createProject(...args),
 }));
 
 vi.mock("@/lib/withdrawal-destination-allocations", () => ({
@@ -1428,6 +1430,7 @@ describe("WithdrawMoneyPage -- destination-allocation dialog (Story 4.7, extende
     recordWithdrawalTransaction.mockReset();
     getWithdrawalAdjustments.mockReset().mockResolvedValue(EMPTY_ADJUSTMENTS_RESPONSE);
     listProjects.mockReset().mockResolvedValue([]);
+    createProject.mockReset();
     recordDestinationAllocation.mockReset();
     listInvestmentRequirements.mockReset();
     listPartnerShares.mockReset();
@@ -1452,6 +1455,18 @@ describe("WithdrawMoneyPage -- destination-allocation dialog (Story 4.7, extende
     await screen.findByText("Where did this money go?");
 
     return user;
+  }
+
+  /**
+   * spec-quick-add-project-user-modals (follow-up): the destination-Project
+   * field is now a `Combobox` (was a native `<select>`) -- opens its popover
+   * via the trigger's `aria-label` (unchanged: `Destination Project (<row>)`)
+   * and clicks the matching option by name, replacing the old
+   * `fireEvent.change(..., { target: { value: <id> } })` one-step select.
+   */
+  async function selectDestinationProject(rowLabel: string, projectName: string) {
+    fireEvent.click(screen.getByLabelText(`Destination Project (${rowLabel})`));
+    fireEvent.click(await screen.findByText(projectName));
   }
 
   it("opens with one default 'other' leg pre-filled with the full amount, but Save disabled until notes (its required field) is filled in", async () => {
@@ -1581,10 +1596,7 @@ describe("WithdrawMoneyPage -- destination-allocation dialog (Story 4.7, extende
       target: { value: "project" },
     });
     fireEvent.change(screen.getByLabelText("Amount (Destination 1)"), { target: { value: "60000" } });
-    await screen.findByLabelText("Destination Project (Destination 1)");
-    fireEvent.change(screen.getByLabelText("Destination Project (Destination 1)"), {
-      target: { value: "project-2" },
-    });
+    await selectDestinationProject("Destination 1", "Project Two");
 
     // Story 4.8 (FR28): the requirement/Share pickers appear once the
     // destination Project's fetch resolves.
@@ -1657,10 +1669,7 @@ describe("WithdrawMoneyPage -- destination-allocation dialog (Story 4.7, extende
     fireEvent.change(screen.getByLabelText("Destination type (Destination 1)"), {
       target: { value: "project" },
     });
-    await screen.findByLabelText("Destination Project (Destination 1)");
-    fireEvent.change(screen.getByLabelText("Destination Project (Destination 1)"), {
-      target: { value: "project-2" },
-    });
+    await selectDestinationProject("Destination 1", "Project Two");
 
     expect(
       await screen.findByText("Project Two has no funding requirements yet -- choose a different destination."),
@@ -1685,10 +1694,7 @@ describe("WithdrawMoneyPage -- destination-allocation dialog (Story 4.7, extende
     fireEvent.change(screen.getByLabelText("Destination type (Destination 1)"), {
       target: { value: "project" },
     });
-    await screen.findByLabelText("Destination Project (Destination 1)");
-    fireEvent.change(screen.getByLabelText("Destination Project (Destination 1)"), {
-      target: { value: "project-2" },
-    });
+    await selectDestinationProject("Destination 1", "Project Two");
 
     expect(
       await screen.findByText("Project Two has no Partner/Sub-partner Shares yet -- choose a different destination."),
@@ -1734,10 +1740,7 @@ describe("WithdrawMoneyPage -- destination-allocation dialog (Story 4.7, extende
     // The default row is pre-filled with the full withdrawn amount --
     // explicitly zero it out to exercise the new gate.
     fireEvent.change(screen.getByLabelText("Amount (Destination 1)"), { target: { value: "0" } });
-    await screen.findByLabelText("Destination Project (Destination 1)");
-    fireEvent.change(screen.getByLabelText("Destination Project (Destination 1)"), {
-      target: { value: "project-2" },
-    });
+    await selectDestinationProject("Destination 1", "Project Two");
     await screen.findByLabelText("Destination funding requirement (Destination 1)");
     fireEvent.change(screen.getByLabelText("Destination funding requirement (Destination 1)"), {
       target: { value: "req-2" },
@@ -1775,6 +1778,39 @@ describe("WithdrawMoneyPage -- destination-allocation dialog (Story 4.7, extende
     });
 
     expect(await screen.findByText("Couldn't load Projects: Could not load Projects.")).toBeInTheDocument();
+  });
+
+  /**
+   * spec-quick-add-project-user-modals (follow-up): the destination-Project
+   * Combobox's own "+ Add New Project" quick-add row -- this surface was
+   * deferred from the original spec (already inside the "Where did this
+   * money go?" dialog) until `packages/ui`'s `DialogContent` outside-click
+   * fix (spec-quick-add-user-share-dialog) made nesting a `Combobox` inside
+   * a `Dialog` safe.
+   */
+  it("quick-add creates a Project, and selects it as the destination without navigating away", async () => {
+    listProjects.mockResolvedValue([]);
+    createProject.mockResolvedValue({
+      id: "project-new",
+      name: "Riverside Tower",
+      description: null,
+      createdAt: "",
+      updatedAt: "",
+    });
+    const user = await recordAndOpenAllocationDialog();
+
+    fireEvent.change(screen.getByLabelText("Destination type (Destination 1)"), {
+      target: { value: "project" },
+    });
+    await user.click(screen.getByLabelText("Destination Project (Destination 1)"));
+    await user.click(await screen.findByText("+ Add New Project"));
+    await user.type(screen.getByLabelText("Name"), "Riverside Tower");
+    await user.click(screen.getByRole("button", { name: /create project/i }));
+
+    await waitFor(() => expect(createProject).toHaveBeenCalledWith({ name: "Riverside Tower", description: null }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Destination Project (Destination 1)")).toHaveTextContent("Riverside Tower"),
+    );
   });
 });
 

@@ -1,11 +1,13 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { formatAmount } from "@niveshbook/ui";
-import type { InvestmentRequirement } from "@niveshbook/types";
+import { ChevronDown } from "lucide-react";
+import { Combobox, formatAmount, type ComboboxOption } from "@niveshbook/ui";
+import type { InvestmentRequirement, Project } from "@niveshbook/types";
 import { listInvestmentRequirements } from "@/lib/investment-requirements";
 import { listPartnerShares } from "@/lib/partner-shares";
 import { listSubPartnerShares } from "@/lib/subpartner-shares";
+import { ProjectQuickAddForm } from "../ProjectQuickAddForm";
 
 /**
  * A "project" destination's funding-requirement + Partner/Sub-partner Share
@@ -251,6 +253,114 @@ export function DestinationRequirementAndSharePickers({
           ))}
         </select>
       </div>
+    </>
+  );
+}
+
+/**
+ * spec-quick-add-project-user-modals (follow-up): the "project" destination's
+ * own Project picker -- shared between `withdraw-money/page.tsx`'s per-row
+ * `AllocationLegRow` and the Available Balance page's single spend form, same
+ * extraction rationale as everything else in this file. Wraps the shared
+ * `Combobox` primitive (`packages/ui`) with a gated "+ Add New Project" row,
+ * exactly mirroring `ProjectSwitcher`/`money-history/page.tsx`'s own pattern
+ * -- these two destination-Project `<select>`s were the two surfaces
+ * deferred from that spec (both already inside a `Dialog`; the Combobox's
+ * `addNew` renders inline in its own `Popover`, never a second `Dialog`, and
+ * `packages/ui`'s `DialogContent` now ignores outside-clicks that land
+ * inside a Radix popper wrapper -- the fix landed in the sibling
+ * quick-add-user-share-dialog spec -- so nesting it here is safe).
+ *
+ * `projectsLoaded` gates the quick-add row the same way `usersLoaded` does
+ * on the Shares page: `GET /api/projects` (unlike `/api/my-projects`) is
+ * `owner_admin`-only, so a successful fetch already proves the session may
+ * also create one -- no separate role check needed.
+ */
+export function DestinationProjectPicker({
+  id,
+  ariaLabel,
+  rowLabel,
+  projectOptions,
+  projectsLoaded,
+  projectsError,
+  value,
+  onSelect,
+  onProjectCreated,
+  leg,
+  data,
+  onChange,
+}: {
+  /** Pairs with a visible `<Label htmlFor>` (Available Balance's own field shape) -- omit when using `ariaLabel` instead (withdraw-money's compact per-row shape, no visible label). */
+  id?: string;
+  ariaLabel?: string;
+  /** Used both for `DestinationRequirementAndSharePickers`' own row-scoped aria-labels and for this picker's "no options" empty message. */
+  rowLabel: string;
+  projectOptions: Project[];
+  projectsLoaded: boolean;
+  projectsError: string | null;
+  value: string;
+  /** Fires on every selection change (manual pick or quick-add) -- the caller resets `destinationRequirementId`/`destinationShareId`/`destinationPartyType` and kicks off `ensureDestinationProjectData`, mirroring the native `<select>`'s own former `onChange` body exactly. */
+  onSelect: (projectId: string) => void;
+  /** The full created `Project` (not a slim `ComboboxOption`) -- the caller appends it straight into its own `projectsState.projects: Project[]`, no fabricated fields. */
+  onProjectCreated: (project: Project) => void;
+  leg: DestinationSharePickerFields;
+  data: DestinationProjectDataState | undefined;
+  onChange: (patch: Partial<DestinationSharePickerFields>) => void;
+}) {
+  return (
+    <>
+      <Combobox
+        options={projectOptions.map((project): ComboboxOption => ({ id: project.id, label: project.name }))}
+        value={value}
+        onChange={onSelect}
+        searchPlaceholder="Search Projects…"
+        emptyMessage="No Projects yet."
+        trigger={
+          <button
+            type="button"
+            id={id}
+            aria-label={ariaLabel}
+            className="flex w-full items-center justify-between gap-2 rounded-el border border-border bg-surface px-3 py-2.5 text-left text-[14px] text-ink focus:border-accent focus:outline focus:outline-2 focus:outline-accent-soft"
+          >
+            <span className="truncate">
+              {value ? projectOptions.find((project) => project.id === value)?.name ?? "Loading…" : "Select a Project…"}
+            </span>
+            <ChevronDown size={14} className="shrink-0 text-ink-faint" />
+          </button>
+        }
+        addNew={
+          projectsLoaded
+            ? {
+                label: "+ Add New Project",
+                renderForm: ({ onCancel, onCreated }) => (
+                  <ProjectQuickAddForm
+                    compact
+                    onCancel={onCancel}
+                    onCreated={(project) => {
+                      onProjectCreated(project);
+                      onCreated({ id: project.id, label: project.name });
+                    }}
+                  />
+                ),
+              }
+            : undefined
+        }
+      />
+      {projectsError ? (
+        <p role="alert" className="mt-1 text-[12.6px] text-danger">
+          Couldn&apos;t load Projects: {projectsError}
+        </p>
+      ) : null}
+
+      {value ? (
+        <DestinationRequirementAndSharePickers
+          rowLabel={rowLabel}
+          leg={leg}
+          projectName={projectOptions.find((project) => project.id === value)?.name ?? "This Project"}
+          data={data}
+          onChange={onChange}
+        />
+      ) : null}
     </>
   );
 }

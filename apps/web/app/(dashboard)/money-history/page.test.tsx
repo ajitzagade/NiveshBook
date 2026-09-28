@@ -986,7 +986,7 @@ describe("Money History Project filter quick-add (spec-quick-add-project-user-mo
     await openProjectFilter();
     await userEvent.click(await screen.findByText("+ Add New Project"));
     await userEvent.type(screen.getByLabelText("Name"), "Riverside Tower");
-    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create project/i }));
 
     await waitFor(() =>
       expect(createProject).toHaveBeenCalledWith({ name: "Riverside Tower", description: null }),

@@ -70,7 +70,7 @@ import {
 } from "@/lib/withdrawal-reallocations";
 import { recordDestinationAllocation } from "@/lib/withdrawal-destination-allocations";
 import {
-  DestinationRequirementAndSharePickers,
+  DestinationProjectPicker,
   useDestinationProjectData,
   type DestinationProjectDataState,
 } from "../destination-picker";
@@ -839,6 +839,22 @@ export default function WithdrawMoneyPage() {
           });
         });
     }
+  }
+
+  /**
+   * spec-quick-add-project-user-modals (follow-up): fires once a
+   * destination leg's "+ Add New Project" quick-add succeeds -- appends the
+   * new Project to `projectsState` so every leg's `DestinationProjectPicker`
+   * sees it immediately (mirrors `SidebarShell`/`money-history/page.tsx`'s
+   * identical `handleProjectCreated`; no background reconciliation refetch
+   * needed here since `GET /api/projects` isn't otherwise re-polled).
+   */
+  function handleAllocationProjectCreated(project: Project) {
+    setProjectsState((prev) =>
+      prev.status === "loaded" && !prev.projects.some((existing) => existing.id === project.id)
+        ? { ...prev, projects: [...prev.projects, project] }
+        : prev,
+    );
   }
 
   /** Dismisses the destination-allocation dialog without saving -- the withdrawal stays recorded either way (this story's Code Map: skippable/dismissable). */
@@ -1890,6 +1906,7 @@ export default function WithdrawMoneyPage() {
                 index={index}
                 removable={allocationLegs.length > 1}
                 projectOptions={allocationProjectOptions}
+                projectsLoaded={projectsState.status === "loaded"}
                 projectsError={allocationProjectsError}
                 destinationProjectData={
                   leg.destinationProjectId ? destinationProjectData[leg.destinationProjectId] : undefined
@@ -1897,6 +1914,7 @@ export default function WithdrawMoneyPage() {
                 onChange={(patch) => updateAllocationLeg(leg.key, patch)}
                 onRemove={() => removeAllocationLeg(leg.key)}
                 onDestinationProjectSelected={ensureDestinationProjectData}
+                onProjectCreated={handleAllocationProjectCreated}
               />
             ))}
           </div>
@@ -2176,16 +2194,20 @@ function AllocationLegRow({
   index,
   removable,
   projectOptions,
+  projectsLoaded,
   projectsError,
   destinationProjectData,
   onChange,
   onRemove,
   onDestinationProjectSelected,
+  onProjectCreated,
 }: {
   leg: AllocationLegForm;
   index: number;
   removable: boolean;
   projectOptions: Project[];
+  /** spec-quick-add-project-user-modals (follow-up): gates this row's "+ Add New Project" quick-add row -- see `DestinationProjectPicker`'s own doc comment. */
+  projectsLoaded: boolean;
   /** Set when `GET /api/projects` failed -- rendered as a visible `role="alert"` next to the Project selector below, instead of that selector silently showing zero options. */
   projectsError: string | null;
   /** Story 4.8: `leg.destinationProjectId`'s already-fetched (or in-flight/errored) requirement/Share data -- `undefined` until a Project is chosen and its fetch has been kicked off. */
@@ -2194,6 +2216,7 @@ function AllocationLegRow({
   onRemove: () => void;
   /** Story 4.8: kicks off (or no-ops if already started) the fetch for a newly-chosen destination Project id. */
   onDestinationProjectSelected: (destinationProjectId: string) => void;
+  onProjectCreated: (project: Project) => void;
 }) {
   // Disambiguates every field's `aria-label` across multiple rows (e.g.
   // "Amount (Destination 1)" vs "Amount (Destination 2)") -- without this,
@@ -2241,12 +2264,14 @@ function AllocationLegRow({
 
       {leg.destinationType === "project" ? (
         <div className="mt-2">
-          <select
-            aria-label={`Destination Project (${rowLabel})`}
-            className="w-full rounded-el border border-border bg-surface px-3 py-2.5 text-[14px] text-ink focus:border-accent focus:outline focus:outline-2 focus:outline-accent-soft"
+          <DestinationProjectPicker
+            ariaLabel={`Destination Project (${rowLabel})`}
+            rowLabel={rowLabel}
+            projectOptions={projectOptions}
+            projectsLoaded={projectsLoaded}
+            projectsError={projectsError}
             value={leg.destinationProjectId}
-            onChange={(event) => {
-              const destinationProjectId = event.target.value;
+            onSelect={(destinationProjectId) => {
               // A different Project's requirement/Share ids are meaningless
               // once the Project itself changes -- reset both (Story 4.8),
               // mirroring how choosing a fresh destinationType elsewhere in
@@ -2259,32 +2284,11 @@ function AllocationLegRow({
               });
               if (destinationProjectId) onDestinationProjectSelected(destinationProjectId);
             }}
-          >
-            <option value="">Select a Project…</option>
-            {projectOptions.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </select>
-          {projectsError ? (
-            <p role="alert" className="mt-1 text-[12.6px] text-danger">
-              Couldn&apos;t load Projects: {projectsError}
-            </p>
-          ) : null}
-
-          {leg.destinationProjectId ? (
-            <DestinationRequirementAndSharePickers
-              rowLabel={rowLabel}
-              leg={leg}
-              projectName={
-                projectOptions.find((project) => project.id === leg.destinationProjectId)?.name ??
-                "This Project"
-              }
-              data={destinationProjectData}
-              onChange={onChange}
-            />
-          ) : null}
+            onProjectCreated={onProjectCreated}
+            leg={leg}
+            data={destinationProjectData}
+            onChange={onChange}
+          />
         </div>
       ) : null}
 
