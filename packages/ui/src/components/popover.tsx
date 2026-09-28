@@ -4,6 +4,14 @@ import { cn } from "../lib/cn";
 
 export const Popover = PopoverPrimitive.Root;
 export const PopoverTrigger = PopoverPrimitive.Trigger;
+/**
+ * spec-quick-add-project-user-modals: lets any element inside
+ * `PopoverContent` close the popover on click via Radix's own context (works
+ * whether the Root is controlled or not) -- `Combobox`'s caller-supplied
+ * `header` slot (e.g. `ProjectSwitcher`'s fixed "All Investments" row) has no
+ * other way to reach the Popover's own `open` state.
+ */
+export const PopoverClose = PopoverPrimitive.Close;
 
 export function PopoverContent({
   className,

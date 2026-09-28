@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import type { ComboboxOption } from "@niveshbook/ui";
 import { listMyProjects, type MyProjectSummary } from "@/lib/projects";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 import { SidebarNav, type SidebarNavItem } from "./SidebarNav";
@@ -67,6 +68,13 @@ export function SidebarShell({
   const router = useRouter();
   const [projects, setProjects] = useState<readonly MyProjectSummary[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -132,6 +140,30 @@ export function SidebarShell({
     onNavigate?.();
   }
 
+  /**
+   * spec-quick-add-project-user-modals: fires once `ProjectSwitcher`'s
+   * inline "+ Add New Project" quick-add succeeds. `selectProject` itself
+   * is unchanged (`Combobox` calls `onSelect`/`selectProject` directly on
+   * success, exactly like picking an existing row) -- this handler's own
+   * job is purely refreshing the stale `projects` list: an optimistic
+   * append makes the new Project visible/selectable immediately (no flash
+   * of "Loading…" while the list re-fetches, since `router.push` below is a
+   * client-side navigation that never remounts this component), followed by
+   * a best-effort `listMyProjects()` re-fetch to reconcile with the server's
+   * canonical list.
+   */
+  function handleProjectCreated(project: ComboboxOption) {
+    setProjects((prev) => (prev.some((existing) => existing.id === project.id) ? prev : [...prev, { id: project.id, name: project.label }]));
+    listMyProjects()
+      .then((result) => {
+        if (mountedRef.current) setProjects(result);
+      })
+      .catch(() => {
+        // Best-effort reconciliation only -- the optimistic append above
+        // already made the new Project visible/selectable.
+      });
+  }
+
   const resolvedItems: SidebarNavItem[] = items.map((item) => {
     const segment = SCOPED_SEGMENT[item.key];
     if (!segment || !activeProjectId) return item;
@@ -148,6 +180,8 @@ export function SidebarShell({
           router.push("/all-investments");
           onNavigate?.();
         }}
+        role={role}
+        onProjectCreated={handleProjectCreated}
       />
       <SidebarNav items={resolvedItems} onNavigate={onNavigate} />
     </div>

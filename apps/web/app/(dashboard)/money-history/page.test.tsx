@@ -18,8 +18,11 @@ vi.mock("@/lib/money-trail", () => ({
 }));
 
 const listMyProjects = vi.fn();
+const createProject = vi.fn();
 vi.mock("@/lib/projects", () => ({
   listMyProjects: (...args: unknown[]) => listMyProjects(...args),
+  createProject: (...args: unknown[]) => createProject(...args),
+  canCreateProject: (role: string | null | undefined) => role === "owner_admin",
 }));
 
 // Story 5.9's post-review fix: the View Audit History action's own fetches --
@@ -33,6 +36,17 @@ vi.mock("@/lib/investment-transactions", () => ({
 const getWithdrawalAuditLog = vi.fn();
 vi.mock("@/lib/withdrawal-transactions", () => ({
   getWithdrawalAuditLog: (...args: unknown[]) => getWithdrawalAuditLog(...args),
+}));
+
+// spec-quick-add-project-user-modals: this page resolves its own caller's
+// role client-side via `getCurrentUser()` (`GET /api/users/me`, already used
+// by the Users screen -- no new endpoint) purely to gate the Project
+// filter's "+ Add New Project" row. Defaults to `owner_admin` so every
+// pre-existing test in this file (none of which cares about quick-add) keeps
+// seeing the exact same Project filter behavior as before this spec.
+const getCurrentUser = vi.fn();
+vi.mock("@/lib/users", () => ({
+  getCurrentUser: (...args: unknown[]) => getCurrentUser(...args),
 }));
 
 const routerPush = vi.fn();
@@ -241,11 +255,38 @@ beforeEach(() => {
     { id: "project-a", name: "Project A", description: null, createdAt: "", updatedAt: "" },
     { id: "project-b", name: "Project B", description: null, createdAt: "", updatedAt: "" },
   ]);
+  createProject.mockReset();
+  getCurrentUser.mockReset().mockResolvedValue({
+    id: "owner-1",
+    email: "owner@example.com",
+    role: "owner_admin",
+    active: true,
+    createdAt: new Date().toISOString(),
+  });
 });
 
 afterEach(() => {
   cleanup();
 });
+
+/**
+ * Opens the Project filter's Combobox popover (spec-quick-add-project-user-
+ * modals: replaced the native `<select id="mh-project">` this whole file
+ * used to drive via `userEvent.selectOptions`). Its trigger's accessible
+ * NAME is still "Project" (the paired `<label for="mh-project">` wins the
+ * accessible-name computation over the button's own displayed-value text,
+ * byte-identical to the native `<select>`'s own accessible name before this
+ * spec) -- `getByLabelText` finds it exactly as it did before.
+ */
+function openProjectFilter() {
+  return userEvent.click(screen.getByLabelText(/^project$/i));
+}
+
+/** Opens the Project filter and picks the row with this exact Project name. */
+async function selectProjectFilter(projectName: string) {
+  await openProjectFilter();
+  await userEvent.click(await screen.findByText(projectName));
+}
 
 describe("MoneyHistoryPage (Story 5.1, FR31)", () => {
   it("shows a loading state, then the loaded entries across all 9 columns", async () => {
@@ -300,7 +341,6 @@ describe("MoneyHistoryPage (Story 5.1, FR31)", () => {
   });
 
   it("applying the Project filter re-fetches with the selected projectId", async () => {
-    const user = userEvent.setup();
     getMoneyHistory.mockResolvedValue({ entries: [ONE_ENTRY] });
 
     render(<MoneyHistoryPage />);
@@ -308,8 +348,8 @@ describe("MoneyHistoryPage (Story 5.1, FR31)", () => {
     await screen.findByRole("table");
     await waitFor(() => expect(listMyProjects).toHaveBeenCalled());
 
-    await user.selectOptions(screen.getByLabelText(/^project$/i), "project-b");
-    await user.click(screen.getByRole("button", { name: /^filter$/i }));
+    await selectProjectFilter("Project B");
+    await userEvent.click(screen.getByRole("button", { name: /^filter$/i }));
 
     await waitFor(() =>
       expect(getMoneyHistory).toHaveBeenLastCalledWith(
@@ -436,7 +476,7 @@ describe("MoneyHistoryPage -- trail navigation (Story 5.2, FR32)", () => {
     // Apply a real filter through the form -- this sets `formFilters`/
     // `appliedFilters` component state, NOT a URL param (Story 5.1's actual
     // shipped pattern -- confirmed by reading the page, not assumed).
-    await user.selectOptions(screen.getByLabelText(/^project$/i), "project-b");
+    await selectProjectFilter("Project B");
     await user.click(screen.getByRole("button", { name: /^filter$/i }));
 
     await waitFor(() =>
@@ -465,8 +505,10 @@ describe("MoneyHistoryPage -- trail navigation (Story 5.2, FR32)", () => {
     // The Project filter selected before ever entering trace mode is still
     // selected -- proving `formFilters`/`appliedFilters` state survived the
     // round trip, not just that the URL-building logic strips two params.
+    // Its accessible NAME stays "Project" throughout (`openProjectFilter`'s
+    // doc comment) -- the selected value is asserted via text content.
     await waitFor(() => expect(screen.getByLabelText(/^project$/i)).toBeInTheDocument());
-    expect(screen.getByLabelText(/^project$/i)).toHaveValue("project-b");
+    expect(screen.getByLabelText(/^project$/i)).toHaveTextContent("Project B");
   });
 });
 
@@ -796,7 +838,11 @@ describe("MoneyHistoryPage -- ?projectId= URL-seeding (spec-partner-project-list
       expect(getMoneyHistory).toHaveBeenCalledWith(expect.objectContaining({ projectId: "project-b" })),
     );
     await waitFor(() => expect(listMyProjects).toHaveBeenCalled());
-    expect(await screen.findByLabelText(/^project$/i)).toHaveValue("project-b");
+    // Its accessible NAME stays "Project" (`openProjectFilter`'s doc
+    // comment) -- the pre-applied selection shows up as text content, once
+    // `listMyProjects` resolves and the trigger's displayed-value label
+    // catches up.
+    await waitFor(() => expect(screen.getByLabelText(/^project$/i)).toHaveTextContent("Project B"));
   });
 
   it("with no ?projectId= in the URL, the Project filter starts unselected -- unchanged, existing behavior", async () => {
@@ -807,7 +853,7 @@ describe("MoneyHistoryPage -- ?projectId= URL-seeding (spec-partner-project-list
     await waitFor(() =>
       expect(getMoneyHistory).toHaveBeenCalledWith(expect.objectContaining({ projectId: undefined })),
     );
-    expect(await screen.findByLabelText(/^project$/i)).toHaveValue("");
+    expect(await screen.findByLabelText(/^project$/i)).toHaveTextContent("All Projects");
   });
 
   it("fetches the Project filter's own options via listMyProjects, not listProjects (self-scoped for a Partner/Sub-partner session)", async () => {
@@ -824,7 +870,7 @@ describe("MoneyHistoryPage -- ?projectId= URL-seeding (spec-partner-project-list
 
     const { rerender } = render(<MoneyHistoryPage />);
 
-    expect(await screen.findByLabelText(/^project$/i)).toHaveValue("project-a");
+    await waitFor(() => expect(screen.getByLabelText(/^project$/i)).toHaveTextContent("Project A"));
 
     // Simulate the sidebar switcher's `router.push("/money-history?projectId=project-b")`
     // re-rendering the SAME page instance with a new `useSearchParams()` value
@@ -832,7 +878,7 @@ describe("MoneyHistoryPage -- ?projectId= URL-seeding (spec-partner-project-list
     mockSearchParams = new URLSearchParams({ projectId: "project-b" });
     rerender(<MoneyHistoryPage />);
 
-    await waitFor(() => expect(screen.getByLabelText(/^project$/i)).toHaveValue("project-b"));
+    await waitFor(() => expect(screen.getByLabelText(/^project$/i)).toHaveTextContent("Project B"));
     await waitFor(() =>
       expect(getMoneyHistory).toHaveBeenLastCalledWith(expect.objectContaining({ projectId: "project-b" })),
     );
@@ -845,7 +891,7 @@ describe("MoneyHistoryPage -- ?projectId= URL-seeding (spec-partner-project-list
     const { rerender } = render(<MoneyHistoryPage />);
 
     await screen.findByRole("table");
-    await user.selectOptions(screen.getByLabelText(/^project$/i), "project-b");
+    await selectProjectFilter("Project B");
     await user.click(screen.getByRole("button", { name: /^filter$/i }));
     await waitFor(() =>
       expect(getMoneyHistory).toHaveBeenLastCalledWith(expect.objectContaining({ projectId: "project-b" })),
@@ -861,6 +907,110 @@ describe("MoneyHistoryPage -- ?projectId= URL-seeding (spec-partner-project-list
     mockSearchParams = new URLSearchParams();
     rerender(<MoneyHistoryPage />);
 
-    await waitFor(() => expect(screen.getByLabelText(/^project$/i)).toHaveValue("project-b"));
+    await waitFor(() => expect(screen.getByLabelText(/^project$/i)).toHaveTextContent("Project B"));
+  });
+});
+
+/**
+ * spec-quick-add-project-user-modals: Money History's Project filter --
+ * this page has no `role` prop of its own (unlike `SidebarShell`, which gets
+ * it straight from `layout.tsx`'s server-side resolve), so it resolves its
+ * own caller's role client-side via `getCurrentUser()` (`GET /api/users/me`,
+ * already used by the Users screen -- no new endpoint) purely to gate the
+ * "+ Add New Project" row.
+ */
+describe("Money History Project filter quick-add (spec-quick-add-project-user-modals)", () => {
+  it("owner_admin: the + Add New Project row renders once role resolves", async () => {
+    render(<MoneyHistoryPage />);
+
+    await openProjectFilter();
+
+    expect(await screen.findByText("+ Add New Project")).toBeInTheDocument();
+  });
+
+  it.each(["partner", "sub_partner"] as const)("role=%s: the + Add New Project row never renders", async (role) => {
+    getCurrentUser.mockResolvedValue({
+      id: "user-2",
+      email: "person@example.com",
+      role,
+      active: true,
+      createdAt: new Date().toISOString(),
+    });
+    render(<MoneyHistoryPage />);
+
+    await openProjectFilter();
+    await waitFor(() => expect(getCurrentUser).toHaveBeenCalled());
+
+    expect(screen.queryByText("+ Add New Project")).not.toBeInTheDocument();
+  });
+
+  it("before role resolves, the + Add New Project row is hidden (the safe default)", async () => {
+    let resolveRole!: (value: unknown) => void;
+    getCurrentUser.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRole = resolve;
+      }),
+    );
+    render(<MoneyHistoryPage />);
+
+    await openProjectFilter();
+    expect(screen.queryByText("+ Add New Project")).not.toBeInTheDocument();
+
+    resolveRole({
+      id: "owner-1",
+      email: "owner@example.com",
+      role: "owner_admin",
+      active: true,
+      createdAt: new Date().toISOString(),
+    });
+    expect(await screen.findByText("+ Add New Project")).toBeInTheDocument();
+  });
+
+  it("owner_admin: quick-add creates the Project, refreshes the list, and selects it as formFilters.projectId -- no navigation to /projects/new", async () => {
+    createProject.mockResolvedValue({
+      id: "project-new",
+      name: "Riverside Tower",
+      description: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    listMyProjects
+      .mockResolvedValueOnce([{ id: "project-a", name: "Project A" }])
+      .mockResolvedValueOnce([
+        { id: "project-a", name: "Project A" },
+        { id: "project-new", name: "Riverside Tower" },
+      ]);
+
+    render(<MoneyHistoryPage />);
+
+    await openProjectFilter();
+    await userEvent.click(await screen.findByText("+ Add New Project"));
+    await userEvent.type(screen.getByLabelText("Name"), "Riverside Tower");
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() =>
+      expect(createProject).toHaveBeenCalledWith({ name: "Riverside Tower", description: null }),
+    );
+    // The filter's own trigger now shows the newly created + selected Project
+    // as its displayed value -- its accessible NAME stays "Project" (see
+    // `openProjectFilter`'s doc comment), so this asserts on the labeled
+    // control's own text content, not on a role+name query.
+    await waitFor(() => expect(screen.getByLabelText("Project")).toHaveTextContent("Riverside Tower"));
+    expect(routerPush).not.toHaveBeenCalledWith(expect.stringContaining("/projects/new"));
+  });
+
+  it("search filters the Project list client-side by name", async () => {
+    listMyProjects.mockResolvedValue([
+      { id: "project-a", name: "Project A" },
+      { id: "project-b", name: "Beta Residency" },
+    ]);
+    render(<MoneyHistoryPage />);
+
+    await openProjectFilter();
+    await screen.findByText("Beta Residency");
+    await userEvent.type(screen.getByPlaceholderText("Search Projects…"), "beta");
+
+    expect(screen.queryByText("Project A")).not.toBeInTheDocument();
+    expect(screen.getByText("Beta Residency")).toBeInTheDocument();
   });
 });

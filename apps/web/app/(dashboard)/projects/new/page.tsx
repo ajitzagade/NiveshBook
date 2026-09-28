@@ -1,39 +1,18 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { Save, X } from "lucide-react";
-import { Button, Card, Field, FieldHint, Input, Label, PageHeader, Textarea, toast } from "@niveshbook/ui";
-import { createProject } from "@/lib/projects";
+import { Card, PageHeader } from "@niveshbook/ui";
+import { ProjectQuickAddForm } from "../ProjectQuickAddForm";
 
 /**
- * Create-Project form (Story 2.1, AC1/AC2): a Project saves with just a
- * name and description — no partner information required. Empty name is
- * blocked client-side (`required`) and, authoritatively, server-side by
- * `packages/core`'s `createProject` (400 `validation_error`, surfaced here).
+ * Create-Project page (Story 2.1, AC1/AC2). The actual name/description
+ * form now lives in `ProjectQuickAddForm` (spec-quick-add-project-user-
+ * modals) -- shared with every Combobox's inline "+ Add New Project" row --
+ * this page is just that form inside its own `PageHeader`/`Card` shell,
+ * navigating to `/projects` on success/cancel exactly as before.
  */
 export default function NewProjectPage() {
   const router = useRouter();
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError(null);
-    setSubmitting(true);
-    try {
-      await createProject({ name, description: description.trim() ? description : null });
-      toast.success(`Project "${name}" created`);
-      router.push("/projects");
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
 
   return (
     <div>
@@ -43,51 +22,13 @@ export default function NewProjectPage() {
       />
 
       <Card className="max-w-[520px]">
-        <form onSubmit={handleSubmit}>
-          <Field>
-            <Label htmlFor="project-name">Name</Label>
-            <Input
-              id="project-name"
-              name="name"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              required
-              autoFocus
-            />
-          </Field>
-          <Field>
-            <Label htmlFor="project-description">Description</Label>
-            <Textarea
-              id="project-description"
-              name="description"
-              rows={4}
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-            />
-            <FieldHint>Optional — you can always edit this later.</FieldHint>
-          </Field>
-
-          {error ? (
-            <p role="alert" className="mb-4 text-[13.4px] text-danger">
-              {error}
-            </p>
-          ) : null}
-
-          <div className="flex gap-2.5">
-            <Button type="submit" disabled={submitting} icon={<Save size={14} />}>
-              {submitting ? "Saving…" : "Save Project"}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => router.push("/projects")}
-              disabled={submitting}
-              icon={<X size={14} />}
-            >
-              Cancel
-            </Button>
-          </div>
-        </form>
+        <ProjectQuickAddForm
+          onCancel={() => router.push("/projects")}
+          onCreated={() => {
+            router.push("/projects");
+            router.refresh();
+          }}
+        />
       </Card>
     </div>
   );

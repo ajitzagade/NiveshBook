@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, History, Search, X } from "lucide-react";
+import { ArrowLeft, ChevronDown, History, Search, X } from "lucide-react";
 import type {
   AuditLogEntry,
   MoneyHistoryEntry,
@@ -13,6 +13,7 @@ import {
   Amount,
   Button,
   Card,
+  Combobox,
   Dialog,
   DialogContent,
   DialogTitle,
@@ -33,14 +34,17 @@ import {
   Trail,
   TrailItem,
   TraceBanner,
+  type ComboboxOption,
 } from "@niveshbook/ui";
 import { getMoneyHistory, getTrailStartFromEntry, type MoneyHistoryFiltersInput } from "@/lib/money-history";
 import { getMoneyTrail } from "@/lib/money-trail";
 import { mapMoneyHistoryEntryToRowCard, PAYMENT_MODE_LABELS } from "@/lib/money-history-row-card";
 import { ENTRY_TYPE_LABELS, describeTrailNode, flattenTrail } from "@/lib/money-trail-view";
-import { listMyProjects, type MyProjectSummary } from "@/lib/projects";
+import { canCreateProject, listMyProjects, type MyProjectSummary } from "@/lib/projects";
+import { getCurrentUser } from "@/lib/users";
 import { getInvestmentTransactionAuditLog } from "@/lib/investment-transactions";
 import { getWithdrawalAuditLog } from "@/lib/withdrawal-transactions";
+import { ProjectQuickAddForm } from "../projects/ProjectQuickAddForm";
 
 type ListState =
   | { status: "loading" }
@@ -97,9 +101,11 @@ const EMPTY_FILTERS: FilterFormState = { dateFrom: "", dateTo: "", projectId: ""
  * Sub-partner's own reachable self-service view of this same, already-scoped
  * API is Story 5.4-5.6's job (spec-5-1's Decisions #1), not this one's.
  *
- * Not Project-scoped (mirrors the API's own design) -- a Project `<select>`
- * filter narrows the list instead, the established precedent for a Project
- * picker on a non-Project-scoped screen (spec-5-1's Code Map).
+ * Not Project-scoped (mirrors the API's own design) -- a Project filter
+ * (a searchable `Combobox`, spec-quick-add-project-user-modals; originally a
+ * plain `<select>`, spec-5-1) narrows the list instead, the established
+ * precedent for a Project picker on a non-Project-scoped screen (spec-5-1's
+ * Code Map).
  *
  * Trace mode (Story 5.2): `?traceType=X&traceId=Y` in the URL swaps this
  * page's content area from the flat list/filters to `TraceBanner` + `Trail`
@@ -119,6 +125,15 @@ export default function MoneyHistoryPage() {
 
   const [state, setState] = useState<ListState>({ status: "loading" });
   const [projects, setProjects] = useState<MyProjectSummary[]>([]);
+  // spec-quick-add-project-user-modals: gates the Project filter's "+ Add
+  // New Project" row -- this page (unlike `SidebarShell`, which gets `role`
+  // straight from `layout.tsx`'s server-side resolve) is a plain "use
+  // client" page with no role of its own, so it resolves its own caller's
+  // role via the existing `GET /api/users/me` endpoint (`getCurrentUser()`,
+  // already used by the Users screen -- no new endpoint). Starts `null`
+  // (the safe default: hidden) until the fetch resolves, so a session that
+  // isn't confirmed owner_admin never sees the option even for one render.
+  const [role, setRole] = useState<string | null>(null);
   // spec-partner-project-list-self-access: seeded once from `?projectId=`
   // (the switcher's own deep link for a Partner/Sub-partner, this spec's I/O
   // matrix) -- mirrors `traceType`/`traceId`'s existing URL-driven pattern
@@ -135,6 +150,13 @@ export default function MoneyHistoryPage() {
     projectId: searchParams.get("projectId") ?? "",
   }));
   const [traceState, setTraceState] = useState<TraceState>({ status: "loading" });
+  const mountedRef = useRef(true);
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+    },
+    [],
+  );
 
   // Story 5.9's post-review fix: the View Audit History dialog -- read-only,
   // no form fields of its own, mirrors `add-money/page.tsx`'s original
@@ -183,13 +205,52 @@ export default function MoneyHistoryPage() {
       })
       .catch(() => {
         // Best-effort only -- a failed fetch just means the Project filter's
-        // <select> has no options beyond "All Projects"; the list itself
+        // Combobox has no options beyond "All Projects"; the list itself
         // still loads independently below.
       });
     return () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    getCurrentUser()
+      .then((user) => {
+        if (!cancelled) setRole(user.role);
+      })
+      .catch(() => {
+        // Best-effort only -- a failed fetch just leaves the quick-add row
+        // hidden (the safe default this spec requires: never show it to a
+        // session that hasn't been confirmed owner_admin).
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /**
+   * spec-quick-add-project-user-modals: fires once the Project filter's
+   * inline "+ Add New Project" quick-add succeeds. Optimistically appends
+   * the new Project to `projects` (so it's immediately visible/selectable,
+   * mirroring `SidebarShell`'s identical handler) and re-fetches
+   * `listMyProjects()` in the background to reconcile with the server's
+   * canonical list. Selecting it into `formFilters.projectId` is the
+   * Combobox's own `onChange` call (wired below), not this handler's job.
+   */
+  function handleProjectCreated(project: ComboboxOption) {
+    setProjects((prev) =>
+      prev.some((existing) => existing.id === project.id) ? prev : [...prev, { id: project.id, name: project.label }],
+    );
+    listMyProjects()
+      .then((result) => {
+        if (mountedRef.current) setProjects(result);
+      })
+      .catch(() => {
+        // Best-effort reconciliation only -- the optimistic append above
+        // already made the new Project visible/selectable.
+      });
+  }
 
   async function refresh(filters: FilterFormState) {
     setState({ status: "loading" });
@@ -400,19 +461,48 @@ export default function MoneyHistoryPage() {
           </Field>
           <Field className="mb-0 min-w-[180px]">
             <Label htmlFor="mh-project">Project</Label>
-            <select
-              id="mh-project"
-              className="w-full rounded-el border border-border bg-surface px-3 py-2.5 text-[14px] text-ink focus:border-accent focus:outline focus:outline-2 focus:outline-accent-soft"
+            <Combobox
+              options={[
+                { id: "", label: "All Projects" },
+                ...projects.map((project): ComboboxOption => ({ id: project.id, label: project.name })),
+              ]}
               value={formFilters.projectId}
-              onChange={(event) => setFormFilters((prev) => ({ ...prev, projectId: event.target.value }))}
-            >
-              <option value="">All Projects</option>
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
+              onChange={(projectId) => setFormFilters((prev) => ({ ...prev, projectId }))}
+              searchPlaceholder="Search Projects…"
+              emptyMessage="No Projects yet."
+              trigger={
+                <button
+                  type="button"
+                  id="mh-project"
+                  className="flex w-full items-center justify-between gap-2 rounded-el border border-border bg-surface px-3 py-2.5 text-left text-[14px] text-ink focus:border-accent focus:outline focus:outline-2 focus:outline-accent-soft"
+                >
+                  <span className="truncate">
+                    {formFilters.projectId
+                      ? projects.find((project) => project.id === formFilters.projectId)?.name ?? "Loading…"
+                      : "All Projects"}
+                  </span>
+                  <ChevronDown size={14} className="shrink-0 text-ink-faint" />
+                </button>
+              }
+              addNew={
+                canCreateProject(role)
+                  ? {
+                      label: "+ Add New Project",
+                      renderForm: ({ onCancel, onCreated }) => (
+                        <ProjectQuickAddForm
+                          compact
+                          onCancel={onCancel}
+                          onCreated={(project) => {
+                            const option: ComboboxOption = { id: project.id, label: project.name };
+                            handleProjectCreated(option);
+                            onCreated(option);
+                          }}
+                        />
+                      ),
+                    }
+                  : undefined
+              }
+            />
           </Field>
           <Field className="mb-0 min-w-[180px]">
             <Label htmlFor="mh-person">Person</Label>

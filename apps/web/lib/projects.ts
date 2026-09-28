@@ -75,6 +75,17 @@ export async function getProject(id: string): Promise<Project> {
   return (await response.json()) as Project;
 }
 
+/**
+ * spec-quick-add-project-user-modals: mirrors `packages/core/src/authorize.ts`'s
+ * `"projects:create"` gate (`owner_admin`-only) so every quick-add surface
+ * checks it through one place instead of a `role === "owner_admin"` literal
+ * repeated per call site -- a future permission change only needs updating
+ * here.
+ */
+export function canCreateProject(role: string | null | undefined): boolean {
+  return role === "owner_admin";
+}
+
 export async function createProject(input: ProjectInput): Promise<Project> {
   const response = await fetch("/api/projects", {
     method: "POST",

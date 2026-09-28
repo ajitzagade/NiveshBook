@@ -18,6 +18,7 @@ vi.mock("next/navigation", () => ({
 const listMyProjects = vi.fn();
 vi.mock("@/lib/projects", () => ({
   listMyProjects: (...args: unknown[]) => listMyProjects(...args),
+  canCreateProject: (role: string | null | undefined) => role === "owner_admin",
 }));
 
 function makeProject(overrides: Partial<Project> = {}): Project {
