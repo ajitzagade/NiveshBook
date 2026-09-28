@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Project } from "@niveshbook/types";
 import { ProjectSwitcher } from "./ProjectSwitcher";
@@ -16,9 +16,9 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
 }));
 
-const listProjects = vi.fn();
+const listMyProjects = vi.fn();
 vi.mock("@/lib/projects", () => ({
-  listProjects: (...args: unknown[]) => listProjects(...args),
+  listMyProjects: (...args: unknown[]) => listMyProjects(...args),
 }));
 
 function makeProject(overrides: Partial<Project> = {}): Project {
@@ -34,7 +34,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
 
 beforeEach(() => {
   push.mockReset();
-  listProjects.mockReset().mockResolvedValue([]);
+  listMyProjects.mockReset().mockResolvedValue([]);
   mockPathname = "/home";
   window.localStorage.clear();
 });
@@ -101,8 +101,8 @@ describe("ProjectSwitcher — All Investments entry (founder feedback 2026-09-26
 
 describe("SidebarShell — All Investments navigation", () => {
   it("pushes /all-investments when the switcher's All Investments item is selected", async () => {
-    listProjects.mockResolvedValue([makeProject()]);
-    render(<SidebarShell items={[]} />);
+    listMyProjects.mockResolvedValue([makeProject()]);
+    render(<SidebarShell items={[]} role="owner_admin" />);
 
     await userEvent.click(screen.getByRole("button", { name: /select a project/i }));
     await userEvent.click(await screen.findByText("All Investments"));
@@ -118,8 +118,8 @@ describe("SidebarShell — onNavigate (spec-mobile-responsive-phase1-nav-foundat
 
   it("fires onNavigate after a Project switch (a genuine client-side router.push)", async () => {
     const onNavigate = vi.fn();
-    listProjects.mockResolvedValue([makeProject()]);
-    render(<SidebarShell items={NAV_ITEMS} onNavigate={onNavigate} />);
+    listMyProjects.mockResolvedValue([makeProject()]);
+    render(<SidebarShell items={NAV_ITEMS} role="owner_admin" onNavigate={onNavigate} />);
 
     await userEvent.click(screen.getByRole("button", { name: /select a project/i }));
     await userEvent.click(await screen.findByText("Project A"));
@@ -130,8 +130,8 @@ describe("SidebarShell — onNavigate (spec-mobile-responsive-phase1-nav-foundat
 
   it("fires onNavigate after All Investments is selected", async () => {
     const onNavigate = vi.fn();
-    listProjects.mockResolvedValue([makeProject()]);
-    render(<SidebarShell items={NAV_ITEMS} onNavigate={onNavigate} />);
+    listMyProjects.mockResolvedValue([makeProject()]);
+    render(<SidebarShell items={NAV_ITEMS} role="owner_admin" onNavigate={onNavigate} />);
 
     await userEvent.click(screen.getByRole("button", { name: /select a project/i }));
     await userEvent.click(await screen.findByText("All Investments"));
@@ -142,7 +142,7 @@ describe("SidebarShell — onNavigate (spec-mobile-responsive-phase1-nav-foundat
 
   it("fires onNavigate when a nav-item link is clicked", async () => {
     const onNavigate = vi.fn();
-    render(<SidebarShell items={NAV_ITEMS} onNavigate={onNavigate} />);
+    render(<SidebarShell items={NAV_ITEMS} role="owner_admin" onNavigate={onNavigate} />);
 
     await userEvent.click(screen.getByRole("link", { name: "Home" }));
 
@@ -150,11 +150,57 @@ describe("SidebarShell — onNavigate (spec-mobile-responsive-phase1-nav-foundat
   });
 
   it("without onNavigate (the >=860px desktop instance's own case), nothing throws on a Project switch, All Investments, or a nav-item click", async () => {
-    listProjects.mockResolvedValue([makeProject()]);
-    render(<SidebarShell items={NAV_ITEMS} />);
+    listMyProjects.mockResolvedValue([makeProject()]);
+    render(<SidebarShell items={NAV_ITEMS} role="owner_admin" />);
 
     await userEvent.click(screen.getByRole("link", { name: "Home" }));
     await userEvent.click(screen.getByRole("button", { name: /select a project/i }));
     await expect(userEvent.click(await screen.findByText("All Investments"))).resolves.not.toThrow();
+  });
+});
+
+/**
+ * spec-partner-project-list-self-access: `role`-branched Project-selection
+ * navigation. `owner_admin`'s own `/projects/{id}/{segment}` navigation
+ * (covered above) is untouched; `partner`/`sub_partner` instead navigate to
+ * their one already-fully-self-accessible per-Project view, Money History,
+ * pre-filtered to the selected Project.
+ */
+describe("SidebarShell — role-branched Project selection navigation (spec-partner-project-list-self-access)", () => {
+  it("owner_admin: selecting a Project still navigates to /projects/{id}/{segment} -- byte-identical to before this spec", async () => {
+    listMyProjects.mockResolvedValue([makeProject()]);
+    render(<SidebarShell items={[]} role="owner_admin" />);
+
+    await userEvent.click(screen.getByRole("button", { name: /select a project/i }));
+    await userEvent.click(await screen.findByText("Project A"));
+
+    expect(push).toHaveBeenCalledWith("/projects/project-a/shares");
+  });
+
+  it("partner: selecting a Project navigates to /money-history?projectId={id} instead", async () => {
+    listMyProjects.mockResolvedValue([makeProject()]);
+    render(<SidebarShell items={[]} role="partner" />);
+
+    await userEvent.click(screen.getByRole("button", { name: /select a project/i }));
+    await userEvent.click(await screen.findByText("Project A"));
+
+    expect(push).toHaveBeenCalledWith("/money-history?projectId=project-a");
+  });
+
+  it("sub_partner: selecting a Project navigates to /money-history?projectId={id} instead", async () => {
+    listMyProjects.mockResolvedValue([makeProject()]);
+    render(<SidebarShell items={[]} role="sub_partner" />);
+
+    await userEvent.click(screen.getByRole("button", { name: /select a project/i }));
+    await userEvent.click(await screen.findByText("Project A"));
+
+    expect(push).toHaveBeenCalledWith("/money-history?projectId=project-a");
+  });
+
+  it("partner: fetches its own Projects via listMyProjects", async () => {
+    listMyProjects.mockResolvedValue([makeProject()]);
+    render(<SidebarShell items={[]} role="partner" />);
+
+    await waitFor(() => expect(listMyProjects).toHaveBeenCalled());
   });
 });

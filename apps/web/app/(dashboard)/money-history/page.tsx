@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, History, Search, X } from "lucide-react";
 import type {
@@ -8,7 +8,6 @@ import type {
   MoneyHistoryEntry,
   MoneyTrailNode,
   MoneyTrailNodeType,
-  Project,
 } from "@niveshbook/types";
 import {
   Amount,
@@ -39,7 +38,7 @@ import { getMoneyHistory, getTrailStartFromEntry, type MoneyHistoryFiltersInput 
 import { getMoneyTrail } from "@/lib/money-trail";
 import { mapMoneyHistoryEntryToRowCard, PAYMENT_MODE_LABELS } from "@/lib/money-history-row-card";
 import { ENTRY_TYPE_LABELS, describeTrailNode, flattenTrail } from "@/lib/money-trail-view";
-import { listProjects } from "@/lib/projects";
+import { listMyProjects, type MyProjectSummary } from "@/lib/projects";
 import { getInvestmentTransactionAuditLog } from "@/lib/investment-transactions";
 import { getWithdrawalAuditLog } from "@/lib/withdrawal-transactions";
 
@@ -119,9 +118,22 @@ export default function MoneyHistoryPage() {
   const searchParams = useSearchParams();
 
   const [state, setState] = useState<ListState>({ status: "loading" });
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [formFilters, setFormFilters] = useState<FilterFormState>(EMPTY_FILTERS);
-  const [appliedFilters, setAppliedFilters] = useState<FilterFormState>(EMPTY_FILTERS);
+  const [projects, setProjects] = useState<MyProjectSummary[]>([]);
+  // spec-partner-project-list-self-access: seeded once from `?projectId=`
+  // (the switcher's own deep link for a Partner/Sub-partner, this spec's I/O
+  // matrix) -- mirrors `traceType`/`traceId`'s existing URL-driven pattern
+  // immediately below, except `projectId` seeds ordinary component state
+  // rather than being read fresh from `searchParams` on every render (the
+  // flat-list filters are local state by design, per this page's own
+  // existing doc comment above).
+  const [formFilters, setFormFilters] = useState<FilterFormState>(() => ({
+    ...EMPTY_FILTERS,
+    projectId: searchParams.get("projectId") ?? "",
+  }));
+  const [appliedFilters, setAppliedFilters] = useState<FilterFormState>(() => ({
+    ...EMPTY_FILTERS,
+    projectId: searchParams.get("projectId") ?? "",
+  }));
   const [traceState, setTraceState] = useState<TraceState>({ status: "loading" });
 
   // Story 5.9's post-review fix: the View Audit History dialog -- read-only,
@@ -134,9 +146,38 @@ export default function MoneyHistoryPage() {
   const traceId = searchParams.get("traceId");
   const isTracing = Boolean(traceType && traceId);
 
+  // spec-partner-project-list-self-access review fix: the lazy initializers
+  // above only seed `projectId` on first mount -- switching Projects via the
+  // sidebar while already sitting on this page (`router.push` to the same
+  // route with a new `?projectId=`) doesn't remount, so without this effect
+  // the filter would silently keep showing the stale Project. Re-syncs only
+  // the `projectId` field, and only when the URL's OWN `?projectId=` value
+  // actually changes (tracked via `lastUrlProjectId`, seeded from the same
+  // value the lazy initializers above already used) -- NOT on every
+  // `searchParams` change regardless of cause, which would otherwise stomp a
+  // filter applied purely through the form (never URL-encoded, e.g. entering/
+  // leaving trace mode toggles `traceType`/`traceId` with no `projectId` of
+  // its own) back to empty. Leaves dateFrom/dateTo/personName untouched.
+  // Nesting the setState calls inside an async IIFE satisfies
+  // `react-hooks/set-state-in-effect`, mirroring this same file's existing
+  // `activeProjectId`/`refresh`/`fetchTrail` effects.
+  const lastUrlProjectId = useRef(searchParams.get("projectId"));
+  useEffect(() => {
+    const urlProjectId = searchParams.get("projectId");
+    if (urlProjectId === lastUrlProjectId.current) {
+      return;
+    }
+    lastUrlProjectId.current = urlProjectId;
+    void (async () => {
+      const projectId = urlProjectId ?? "";
+      setFormFilters((prev) => ({ ...prev, projectId }));
+      setAppliedFilters((prev) => ({ ...prev, projectId }));
+    })();
+  }, [searchParams]);
+
   useEffect(() => {
     let cancelled = false;
-    listProjects()
+    listMyProjects()
       .then((result) => {
         if (!cancelled) setProjects(result);
       })

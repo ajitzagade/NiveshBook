@@ -77,6 +77,7 @@ describe("DashboardLayout (Story 5.5 role-based nav filtering, widened to sub_pa
 
     const shell = findComponent(result, SidebarShell);
     const items = (shell?.props as { items: { key: string }[] }).items;
+    expect((shell?.props as { role: string }).role).toBe("owner_admin");
     expect(items.map((item) => item.key)).toEqual([
       "home",
       "projects",
@@ -99,6 +100,7 @@ describe("DashboardLayout (Story 5.5 role-based nav filtering, widened to sub_pa
 
     const shell = findComponent(result, SidebarShell);
     const items = (shell?.props as { items: { key: string }[] }).items;
+    expect((shell?.props as { role: string }).role).toBe("partner");
     expect(items.map((item) => item.key)).toEqual(["home", "adjustNextTime", "moneyHistory", "reports"]);
   });
 
@@ -109,6 +111,7 @@ describe("DashboardLayout (Story 5.5 role-based nav filtering, widened to sub_pa
 
     const shell = findComponent(result, SidebarShell);
     const items = (shell?.props as { items: { key: string }[] }).items;
+    expect((shell?.props as { role: string }).role).toBe("sub_partner");
     expect(items.map((item) => item.key)).toEqual(["home", "adjustNextTime", "moneyHistory", "reports"]);
   });
 
@@ -162,8 +165,9 @@ describe("DashboardLayout (Story 5.5 role-based nav filtering, widened to sub_pa
 
     const mobileNav = findComponent(result, MobileNav);
     expect(mobileNav).toBeDefined();
-    const mobileNavProps = mobileNav?.props as { items: { key: string }[]; appName: string };
+    const mobileNavProps = mobileNav?.props as { items: { key: string }[]; appName: string; role: string };
     expect(mobileNavProps.appName).toBe("NiveshBook");
+    expect(mobileNavProps.role).toBe("owner_admin");
     expect(mobileNavProps.items.map((item) => item.key)).toEqual([
       "home",
       "projects",

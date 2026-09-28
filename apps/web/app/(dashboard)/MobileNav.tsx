@@ -22,7 +22,16 @@ import type { SidebarNavItem } from "./SidebarNav";
  * this second `SidebarShell`'s own project fetch/effects) isn't mounted
  * into the DOM until the drawer is actually opened for the first time.
  */
-export function MobileNav({ items, appName }: { items: readonly SidebarNavItem[]; appName: string }) {
+export function MobileNav({
+  items,
+  appName,
+  role,
+}: {
+  items: readonly SidebarNavItem[];
+  appName: string;
+  /** spec-partner-project-list-self-access: threaded straight into this drawer's own nested `SidebarShell` instance below. */
+  role: "owner_admin" | "partner" | "sub_partner";
+}) {
   const [open, setOpen] = useState(false);
 
   // Review finding: a device rotation/foldable/resize that crosses back
@@ -84,7 +93,7 @@ export function MobileNav({ items, appName }: { items: readonly SidebarNavItem[]
           {/* Closes the drawer on nav-item selection, Project switch, or
               "All Investments" (Decision #2) -- backdrop tap/Escape close
               via Radix Dialog's own default behavior, no callback needed. */}
-          <SidebarShell items={items} onNavigate={() => setOpen(false)} />
+          <SidebarShell items={items} role={role} onNavigate={() => setOpen(false)} />
         </DrawerContent>
       </Drawer>
     </div>

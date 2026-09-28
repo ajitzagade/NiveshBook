@@ -15,9 +15,9 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
 }));
 
-const listProjects = vi.fn();
+const listMyProjects = vi.fn();
 vi.mock("@/lib/projects", () => ({
-  listProjects: (...args: unknown[]) => listProjects(...args),
+  listMyProjects: (...args: unknown[]) => listMyProjects(...args),
 }));
 
 function makeProject(overrides: Partial<Project> = {}): Project {
@@ -46,7 +46,7 @@ const mediaQueryListeners = new Map<string, Set<ChangeListener>>();
 
 beforeEach(() => {
   push.mockReset();
-  listProjects.mockReset().mockResolvedValue([]);
+  listMyProjects.mockReset().mockResolvedValue([]);
   mediaQueryListeners.clear();
   vi.stubGlobal(
     "matchMedia",
@@ -70,7 +70,7 @@ afterEach(() => {
 
 describe("MobileNav (spec-mobile-responsive-phase1-nav-foundation)", () => {
   it("opens the drawer via the hamburger trigger, and closes it via the panel's own close button", async () => {
-    render(<MobileNav items={ITEMS} appName="NiveshBook" />);
+    render(<MobileNav items={ITEMS} appName="NiveshBook" role="owner_admin" />);
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
@@ -82,7 +82,7 @@ describe("MobileNav (spec-mobile-responsive-phase1-nav-foundation)", () => {
   });
 
   it("closes the drawer end-to-end when a nav-item link is selected (not just that onNavigate is threaded)", async () => {
-    render(<MobileNav items={ITEMS} appName="NiveshBook" />);
+    render(<MobileNav items={ITEMS} appName="NiveshBook" role="owner_admin" />);
 
     await userEvent.click(screen.getByRole("button", { name: "Open navigation menu" }));
     const dialog = screen.getByRole("dialog");
@@ -93,8 +93,8 @@ describe("MobileNav (spec-mobile-responsive-phase1-nav-foundation)", () => {
   });
 
   it("closes the drawer end-to-end when 'All Investments' is selected from the Project switcher (a genuine client-side navigation)", async () => {
-    listProjects.mockResolvedValue([makeProject()]);
-    render(<MobileNav items={ITEMS} appName="NiveshBook" />);
+    listMyProjects.mockResolvedValue([makeProject()]);
+    render(<MobileNav items={ITEMS} appName="NiveshBook" role="owner_admin" />);
 
     await userEvent.click(screen.getByRole("button", { name: "Open navigation menu" }));
     const dialog = screen.getByRole("dialog");
@@ -106,7 +106,7 @@ describe("MobileNav (spec-mobile-responsive-phase1-nav-foundation)", () => {
   });
 
   it("closes the drawer when the viewport crosses back into desktop width (>=860px) while it's open (review finding: rotation/foldable/resize regression)", async () => {
-    render(<MobileNav items={ITEMS} appName="NiveshBook" />);
+    render(<MobileNav items={ITEMS} appName="NiveshBook" role="owner_admin" />);
 
     await userEvent.click(screen.getByRole("button", { name: "Open navigation menu" }));
     expect(screen.getByRole("dialog")).toBeInTheDocument();
@@ -121,7 +121,7 @@ describe("MobileNav (spec-mobile-responsive-phase1-nav-foundation)", () => {
   });
 
   it("does NOT close an already-closed drawer on a desktop-width media match (no-op, not an error)", async () => {
-    render(<MobileNav items={ITEMS} appName="NiveshBook" />);
+    render(<MobileNav items={ITEMS} appName="NiveshBook" role="owner_admin" />);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
     const listeners = mediaQueryListeners.get("(min-width: 860px)");

@@ -35,6 +35,37 @@ export async function listProjects(): Promise<ProjectListItem[]> {
   return (await response.json()) as ProjectListItem[];
 }
 
+/**
+ * spec-partner-project-list-self-access: `GET /api/my-projects`'s own
+ * response shape -- redeclared locally rather than imported from
+ * `@niveshbook/core` (this spec's Boundaries: no `import`, not even `import
+ * type`, from `@niveshbook/core` inside an `apps/web/lib/*.ts` "use
+ * client"-consumed helper), mirroring `apps/web/lib/my-investments.ts`'s
+ * established convention. Mirrors `MyProjectSummary`
+ * (`packages/core/src/my-projects.ts`) field-for-field.
+ */
+export interface MyProjectSummary {
+  id: string;
+  name: string;
+}
+
+/**
+ * The actor's own scoped Project list -- owner_admin gets every Project
+ * (byte-identical to `listProjects()`'s own set); a Partner/Sub-partner gets
+ * only Projects where they hold a current Partner or Sub-partner Share.
+ * Backs the sidebar switcher and Money History's Project filter, both of
+ * which previously 403'd for a Partner/Sub-partner session by calling the
+ * Owner/Admin-only `listProjects()` above.
+ */
+export async function listMyProjects(): Promise<MyProjectSummary[]> {
+  const response = await fetch("/api/my-projects");
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  const body = (await response.json()) as { projects: MyProjectSummary[] };
+  return body.projects;
+}
+
 /** Fetches one Project (for the edit form's pre-fill). Throws on 404/403/etc — callers render the message. */
 export async function getProject(id: string): Promise<Project> {
   const response = await fetch(`/api/projects/${id}`);

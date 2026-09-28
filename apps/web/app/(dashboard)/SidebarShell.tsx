@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import type { Project } from "@niveshbook/types";
-import { listProjects } from "@/lib/projects";
+import { listMyProjects, type MyProjectSummary } from "@/lib/projects";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 import { SidebarNav, type SidebarNavItem } from "./SidebarNav";
 
@@ -41,9 +40,20 @@ const SCOPED_SEGMENT: Partial<Record<SidebarNavItem["key"], string>> = {
  */
 export function SidebarShell({
   items,
+  role,
   onNavigate,
 }: {
   items: readonly SidebarNavItem[];
+  /**
+   * spec-partner-project-list-self-access: drives `selectProject`'s
+   * navigation branch below -- `owner_admin` is unchanged (navigates into
+   * the Project's own Owner/Admin-only scoped pages); `partner`/
+   * `sub_partner` instead navigate to their one already-fully-self-
+   * accessible per-Project view, Money History. The Project list fetch
+   * itself (`listMyProjects()` below) is already scoped server-side for
+   * every role -- this prop only affects navigation, not the fetch.
+   */
+  role: "owner_admin" | "partner" | "sub_partner";
   /**
    * Fires whenever this shell causes a navigation -- a nav-item link, a
    * Project switch, or "All Investments" (spec-mobile-responsive-phase1-
@@ -55,12 +65,12 @@ export function SidebarShell({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [projects, setProjects] = useState<readonly Project[]>([]);
+  const [projects, setProjects] = useState<readonly MyProjectSummary[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    listProjects()
+    listMyProjects()
       .then((result) => {
         if (!cancelled) setProjects(result);
       })
@@ -102,6 +112,16 @@ export function SidebarShell({
   function selectProject(projectId: string) {
     setActiveProjectId(projectId);
     window.localStorage.setItem(STORAGE_KEY, projectId);
+
+    if (role !== "owner_admin") {
+      // spec-partner-project-list-self-access: a Partner/Sub-partner has no
+      // access to the Owner/Admin-only `/projects/{id}/{segment}` pages
+      // below -- their one already-fully-self-accessible per-Project view is
+      // Money History, pre-filtered to this Project.
+      router.push(`/money-history?projectId=${projectId}`);
+      onNavigate?.();
+      return;
+    }
 
     // Preserve whichever scoped page you're currently on (e.g. switching
     // Projects while viewing Add Money lands on the new Project's Add

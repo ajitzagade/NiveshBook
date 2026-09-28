@@ -1866,6 +1866,49 @@ describe("authorizeScope — my_investments:list (All Investments, plain multi-r
 });
 
 /**
+ * `my_projects:list` (spec-partner-project-list-self-access) -- mirrors
+ * `my_investments:list`'s exact plain multi-role grant one action over; the
+ * actual per-Project scoping lives in `assembleMyProjects()`
+ * (`my-projects.ts`), never in this table.
+ */
+describe("authorizeScope — my_projects:list (self-scoped Project list, plain multi-role grant, no self/scope override)", () => {
+  it("allows owner_admin", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("owner-1", "my_projects:list", deps)).toEqual({ allowed: true });
+  });
+
+  it("allows partner", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("partner-1", "my_projects:list", deps)).toEqual({ allowed: true });
+  });
+
+  it("allows sub_partner", async () => {
+    const users = createFakeUserPort([makeUser({ id: "sub-1", role: "sub_partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("sub-1", "my_projects:list", deps)).toEqual({ allowed: true });
+  });
+
+  it("denies project_admin -- FR6's role exists but is granted nothing yet", async () => {
+    const users = createFakeUserPort([makeUser({ id: "pa-1", role: "project_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("pa-1", "my_projects:list", deps)).toEqual({ allowed: false });
+  });
+
+  it("denies a nonexistent actor", async () => {
+    const users = createFakeUserPort([]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("ghost", "my_projects:list", deps)).toEqual({ allowed: false });
+  });
+});
+
+/**
  * `adjust_next_time:view` (Story 5.3, FR33/FR34) previously had zero
  * coverage anywhere in this file -- a review finding from Story 5.6's own
  * 3-layer review (edge-case-hunter, Medium-High): Story 5.6 is what first

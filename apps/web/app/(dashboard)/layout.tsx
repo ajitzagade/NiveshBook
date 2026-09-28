@@ -218,9 +218,11 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   }
 
   const { appName } = getClientConfig().branding;
-  const visibleNavItems = NAV_ITEMS.filter((item) =>
-    item.roles?.includes(actor.role as "owner_admin" | "partner" | "sub_partner"),
-  );
+  // spec-partner-project-list-self-access: the already-resolved actor role,
+  // threaded straight into `SidebarShell`/`MobileNav` below -- no new
+  // lookup, `actor` is already fetched above.
+  const role = actor.role as "owner_admin" | "partner" | "sub_partner";
+  const visibleNavItems = NAV_ITEMS.filter((item) => item.roles?.includes(role));
 
   // Founder feedback 2026-09-26: at >=860px the shell locks to the viewport
   // (`h-screen overflow-hidden`) and the sidebar + main content each scroll
@@ -241,13 +243,13 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   // contributes nothing to this grid at all.
   return (
     <div className="grid h-screen grid-cols-[236px_1fr] overflow-hidden max-[860px]:h-auto max-[860px]:min-h-screen max-[860px]:grid-cols-1 max-[860px]:overflow-visible">
-      <MobileNav items={visibleNavItems} appName={appName} />
+      <MobileNav items={visibleNavItems} appName={appName} role={role} />
       <aside className="flex flex-col gap-5 overflow-y-auto border-r border-border bg-surface p-4 max-[860px]:hidden">
         <div className="flex items-center gap-2 px-1 pb-1 pt-0.5">
           <Logo />
           <span className="text-[15px] font-bold tracking-tight text-ink">{appName}</span>
         </div>
-        <SidebarShell items={visibleNavItems} />
+        <SidebarShell items={visibleNavItems} role={role} />
       </aside>
       <main className="max-w-[1020px] overflow-y-auto px-9 py-7 pb-16 max-[860px]:overflow-visible max-[860px]:px-4 max-[860px]:py-5">
         {children}

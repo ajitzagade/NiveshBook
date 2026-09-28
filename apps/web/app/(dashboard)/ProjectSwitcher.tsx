@@ -1,8 +1,8 @@
 "use client";
 
 import { ChevronDown, FolderKanban, LayoutGrid } from "lucide-react";
-import type { Project } from "@niveshbook/types";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@niveshbook/ui";
+import type { MyProjectSummary } from "@/lib/projects";
 
 /**
  * The sidebar's project switcher: a dropdown of every current Project,
@@ -21,6 +21,14 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
  * is already known instantly (derived from the URL, no fetch needed).
  * Showing "Select a Project" during that brief window would incorrectly
  * read as "nothing is selected."
+ *
+ * `projects` is narrowed to `MyProjectSummary` (`{ id, name }`,
+ * spec-partner-project-list-self-access) -- this component only ever reads
+ * those two fields (Interface Segregation), and its caller (`SidebarShell`)
+ * now sources the list from `listMyProjects()`, whose response shape carries
+ * nothing more. Imported from `@/lib/projects` (a plain `apps/web` file, not
+ * `@niveshbook/core`) -- the client-bundle gotcha this codebase otherwise
+ * guards against doesn't apply to this import.
  */
 export function ProjectSwitcher({
   projects,
@@ -28,7 +36,7 @@ export function ProjectSwitcher({
   onSelect,
   onSelectAllInvestments,
 }: {
-  projects: readonly Project[];
+  projects: readonly MyProjectSummary[];
   activeProjectId: string | null;
   onSelect: (projectId: string) => void;
   /** Founder feedback 2026-09-26: navigates to the cross-project `/all-investments` view -- `SidebarShell` owns the navigation, keeping this component presentation-only. */

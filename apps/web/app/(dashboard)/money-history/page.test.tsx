@@ -17,9 +17,9 @@ vi.mock("@/lib/money-trail", () => ({
   getMoneyTrail: (...args: unknown[]) => getMoneyTrail(...args),
 }));
 
-const listProjects = vi.fn();
+const listMyProjects = vi.fn();
 vi.mock("@/lib/projects", () => ({
-  listProjects: (...args: unknown[]) => listProjects(...args),
+  listMyProjects: (...args: unknown[]) => listMyProjects(...args),
 }));
 
 // Story 5.9's post-review fix: the View Audit History action's own fetches --
@@ -236,8 +236,8 @@ beforeEach(() => {
   mockSearchParams = new URLSearchParams();
   getInvestmentTransactionAuditLog.mockReset();
   getWithdrawalAuditLog.mockReset();
-  listProjects.mockReset();
-  listProjects.mockResolvedValue([
+  listMyProjects.mockReset();
+  listMyProjects.mockResolvedValue([
     { id: "project-a", name: "Project A", description: null, createdAt: "", updatedAt: "" },
     { id: "project-b", name: "Project B", description: null, createdAt: "", updatedAt: "" },
   ]);
@@ -306,7 +306,7 @@ describe("MoneyHistoryPage (Story 5.1, FR31)", () => {
     render(<MoneyHistoryPage />);
 
     await screen.findByRole("table");
-    await waitFor(() => expect(listProjects).toHaveBeenCalled());
+    await waitFor(() => expect(listMyProjects).toHaveBeenCalled());
 
     await user.selectOptions(screen.getByLabelText(/^project$/i), "project-b");
     await user.click(screen.getByRole("button", { name: /^filter$/i }));
@@ -431,7 +431,7 @@ describe("MoneyHistoryPage -- trail navigation (Story 5.2, FR32)", () => {
     const { rerender } = render(<MoneyHistoryPage />);
 
     await screen.findByRole("table");
-    await waitFor(() => expect(listProjects).toHaveBeenCalled());
+    await waitFor(() => expect(listMyProjects).toHaveBeenCalled());
 
     // Apply a real filter through the form -- this sets `formFilters`/
     // `appliedFilters` component state, NOT a URL param (Story 5.1's actual
@@ -774,5 +774,93 @@ describe("MoneyHistoryPage -- below-860px RowCard stack", () => {
     const cards = screen.getByTestId("money-history-row-cards");
     expect(cards.className).toContain("hidden");
     expect(cards.className).toContain("max-[860px]:block");
+  });
+});
+
+/**
+ * spec-partner-project-list-self-access: `?projectId=` URL-seeding -- the
+ * sidebar switcher's own deep link for a Partner/Sub-partner (this spec's
+ * I/O matrix: "Money History opened directly with `?projectId=X` -- Project
+ * filter pre-applies on load"), mirroring `traceType`/`traceId`'s existing
+ * URL-driven read (lines ~133-134) except seeded once into the flat-list
+ * filter's own local component state, not read fresh on every render.
+ */
+describe("MoneyHistoryPage -- ?projectId= URL-seeding (spec-partner-project-list-self-access)", () => {
+  it("pre-applies the Project filter on load when ?projectId= is present in the URL", async () => {
+    mockSearchParams = new URLSearchParams({ projectId: "project-b" });
+    getMoneyHistory.mockResolvedValue({ entries: [] });
+
+    render(<MoneyHistoryPage />);
+
+    await waitFor(() =>
+      expect(getMoneyHistory).toHaveBeenCalledWith(expect.objectContaining({ projectId: "project-b" })),
+    );
+    await waitFor(() => expect(listMyProjects).toHaveBeenCalled());
+    expect(await screen.findByLabelText(/^project$/i)).toHaveValue("project-b");
+  });
+
+  it("with no ?projectId= in the URL, the Project filter starts unselected -- unchanged, existing behavior", async () => {
+    getMoneyHistory.mockResolvedValue({ entries: [] });
+
+    render(<MoneyHistoryPage />);
+
+    await waitFor(() =>
+      expect(getMoneyHistory).toHaveBeenCalledWith(expect.objectContaining({ projectId: undefined })),
+    );
+    expect(await screen.findByLabelText(/^project$/i)).toHaveValue("");
+  });
+
+  it("fetches the Project filter's own options via listMyProjects, not listProjects (self-scoped for a Partner/Sub-partner session)", async () => {
+    getMoneyHistory.mockResolvedValue({ entries: [] });
+
+    render(<MoneyHistoryPage />);
+
+    await waitFor(() => expect(listMyProjects).toHaveBeenCalled());
+  });
+
+  it("review fix: switching Projects via the sidebar while already on this page (same route, new ?projectId=) re-syncs the filter instead of showing the stale Project", async () => {
+    mockSearchParams = new URLSearchParams({ projectId: "project-a" });
+    getMoneyHistory.mockResolvedValue({ entries: [] });
+
+    const { rerender } = render(<MoneyHistoryPage />);
+
+    expect(await screen.findByLabelText(/^project$/i)).toHaveValue("project-a");
+
+    // Simulate the sidebar switcher's `router.push("/money-history?projectId=project-b")`
+    // re-rendering the SAME page instance with a new `useSearchParams()` value
+    // (no remount) -- mirrors this file's existing trace-mode `rerender` precedent.
+    mockSearchParams = new URLSearchParams({ projectId: "project-b" });
+    rerender(<MoneyHistoryPage />);
+
+    await waitFor(() => expect(screen.getByLabelText(/^project$/i)).toHaveValue("project-b"));
+    await waitFor(() =>
+      expect(getMoneyHistory).toHaveBeenLastCalledWith(expect.objectContaining({ projectId: "project-b" })),
+    );
+  });
+
+  it("review fix: a filter applied purely through the form (never URL-encoded) survives an unrelated searchParams change (e.g. entering trace mode)", async () => {
+    const user = userEvent.setup();
+    getMoneyHistory.mockResolvedValue({ entries: [ONE_ENTRY] });
+
+    const { rerender } = render(<MoneyHistoryPage />);
+
+    await screen.findByRole("table");
+    await user.selectOptions(screen.getByLabelText(/^project$/i), "project-b");
+    await user.click(screen.getByRole("button", { name: /^filter$/i }));
+    await waitFor(() =>
+      expect(getMoneyHistory).toHaveBeenLastCalledWith(expect.objectContaining({ projectId: "project-b" })),
+    );
+
+    // An unrelated searchParams change (no projectId involved either before
+    // or after) must not stomp the form-applied filter back to empty.
+    mockSearchParams = new URLSearchParams({ traceType: "withdrawal_transaction", traceId: "wd-1" });
+    getMoneyTrail.mockResolvedValue({ trail: TRAIL_ROOT, reconciliation: { reconciled: true, discrepancies: [] } });
+    rerender(<MoneyHistoryPage />);
+    await waitFor(() => expect(screen.getByText("Money Withdrawn")).toBeInTheDocument());
+
+    mockSearchParams = new URLSearchParams();
+    rerender(<MoneyHistoryPage />);
+
+    await waitFor(() => expect(screen.getByLabelText(/^project$/i)).toHaveValue("project-b"));
   });
 });
