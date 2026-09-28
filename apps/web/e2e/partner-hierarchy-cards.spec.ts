@@ -17,9 +17,13 @@ function uniqueName(label: string) {
 async function createProject(page: import("@playwright/test").Page, name: string) {
   await page.goto("/projects/new");
   await page.getByLabel("Name").fill(name);
-  await page.getByRole("button", { name: "Save Project" }).click();
+  await page.getByRole("button", { name: "Create Project" }).click();
   await expect(page).toHaveURL(/\/projects$/);
-  await page.getByRole("row", { name: name }).getByRole("link", { name: "Shares" }).click();
+  // Projects list is a card grid, not a table (founder feedback 2026-09-27
+  // redesign) -- scope to this Project's own `.nb-card` by its unique name,
+  // then its "Partner Shares" action button (renamed from a plain "Shares"
+  // table-row link).
+  await page.locator(".nb-card").filter({ hasText: name }).getByRole("link", { name: "Partner Shares" }).click();
   await expect(page).toHaveURL(/\/shares$/);
 }
 
@@ -122,11 +126,18 @@ test("nested sub-partner card renders inside the partner card with the role tint
   }, "Nest Sub");
   expect(isDescendant).toBe(true);
 
-  // Tint colors match the tokens: partner = info-soft bg, sub = violet-soft bg.
-  const partnerBg = await partnerCard.evaluate((el) => getComputedStyle(el).backgroundColor);
+  // Tint colors match the tokens (2026-09-28: updated for founder feedback
+  // 2026-09-26, tokens.css's own `.nb-person-card-partner` doc comment -- a
+  // solid teal background wash across every Partner card read as too
+  // heavy/odd, so Partner cards dropped their background fill in favor of a
+  // tinted BORDER alone (matching Sub-partner's own border treatment);
+  // Sub-partner cards kept their background fill unchanged). This test
+  // originally asserted a background tint for both.
+  const partnerBorderColor = await partnerCard.evaluate((el) => getComputedStyle(el).borderColor);
   const subBg = await subCard.evaluate((el) => getComputedStyle(el).backgroundColor);
-  // --color-info-soft: #e1f7f5 -> rgb(225, 247, 245)
-  expect(partnerBg).toBe("rgb(225, 247, 245)");
+  // border-color: color-mix(in srgb, var(--color-info) 35%, transparent);
+  // --color-info: #0ea5a5 -> rgb(14, 165, 165) at 35% alpha.
+  expect(partnerBorderColor).toBe("color(srgb 0.054902 0.647059 0.647059 / 0.35)");
   // --color-violet-soft: #f1eafe -> rgb(241, 234, 254)
   expect(subBg).toBe("rgb(241, 234, 254)");
 

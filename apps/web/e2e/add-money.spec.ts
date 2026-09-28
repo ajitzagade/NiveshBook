@@ -11,12 +11,11 @@ test("creates a funding requirement and it appears in the list with a confirmati
 
   await page.goto("/projects/new");
   await page.getByLabel("Name").fill(projectName);
-  await page.getByRole("button", { name: "Save Project" }).click();
+  await page.getByRole("button", { name: "Create Project" }).click();
   await expect(page).toHaveURL(/\/projects$/);
-  await page
-    .getByRole("row", { name: projectName })
-    .getByRole("link", { name: "Add Money" })
-    .click();
+  // Projects list is a card grid, not a table (founder feedback 2026-09-27
+  // redesign) -- scope to this Project's own `.nb-card` by its unique name.
+  await page.locator(".nb-card").filter({ hasText: projectName }).getByRole("link", { name: "Add Money" }).click();
   await expect(page).toHaveURL(/\/add-money$/);
 
   await page.getByRole("button", { name: "New Requirement" }).first().click();
@@ -41,11 +40,14 @@ test("records a payment against a Partner's Should Pay and shows a confirmation 
 
   await page.goto("/projects/new");
   await page.getByLabel("Name").fill(projectName);
-  await page.getByRole("button", { name: "Save Project" }).click();
+  await page.getByRole("button", { name: "Create Project" }).click();
   await expect(page).toHaveURL(/\/projects$/);
 
-  const row = page.getByRole("row", { name: projectName });
-  await row.getByRole("link", { name: "Shares" }).click();
+  // Projects list is a card grid, not a table (founder feedback 2026-09-27
+  // redesign) -- scope to this Project's own `.nb-card` by its unique name,
+  // then its "Partner Shares" action button (renamed from a plain "Shares"
+  // table-row link).
+  await page.locator(".nb-card").filter({ hasText: projectName }).getByRole("link", { name: "Partner Shares" }).click();
   await expect(page).toHaveURL(/\/shares$/);
   await page.getByRole("button", { name: "Add Partner" }).first().click();
   await page.locator("#partner-name").fill("E2E Payer");
@@ -65,10 +67,11 @@ test("records a payment against a Partner's Should Pay and shows a confirmation 
   await expect(page.getByText("₹5,00,000 created for 2027-02-01")).toBeVisible();
 
   await page.getByRole("button", { name: "Should Pay" }).click();
-  await page.getByRole("button", { name: "Record Payment" }).first().click();
+  // "Record Payment" -> "Add Investment" (2026-09-28 rename, commit c203e58).
+  await page.getByRole("button", { name: "Add Investment" }).first().click();
   await page.locator("#tx-amount").fill("500000");
   await page.locator("#tx-date").fill("2027-02-02");
-  await page.getByRole("dialog", { name: /^Record Payment/ }).getByRole("button", { name: "Save" }).click();
+  await page.getByRole("dialog", { name: /^Add Investment/ }).getByRole("button", { name: "Save" }).click();
 
   const confirmPaymentDialog = page.getByRole("dialog", { name: "Confirm Payment" });
   await expect(confirmPaymentDialog).toContainText("E2E Payer");

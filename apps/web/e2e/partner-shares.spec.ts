@@ -7,9 +7,13 @@ function uniqueName(label: string) {
 async function createProject(page: import("@playwright/test").Page, name: string) {
   await page.goto("/projects/new");
   await page.getByLabel("Name").fill(name);
-  await page.getByRole("button", { name: "Save Project" }).click();
+  await page.getByRole("button", { name: "Create Project" }).click();
   await expect(page).toHaveURL(/\/projects$/);
-  await page.getByRole("row", { name: name }).getByRole("link", { name: "Shares" }).click();
+  // Projects list is a card grid, not a table (founder feedback 2026-09-27
+  // redesign) -- scope to this Project's own `.nb-card` by its unique name,
+  // then its "Partner Shares" action button (renamed from a plain "Shares"
+  // table-row link).
+  await page.locator(".nb-card").filter({ hasText: name }).getByRole("link", { name: "Partner Shares" }).click();
   await expect(page).toHaveURL(/\/shares$/);
 }
 
