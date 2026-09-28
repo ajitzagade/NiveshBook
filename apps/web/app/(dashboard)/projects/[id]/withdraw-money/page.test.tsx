@@ -969,7 +969,7 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     listWithdrawalTransactions.mockResolvedValueOnce({
       transactions: [makeWithdrawalTransaction({ id: "wtx-locked-1", amount: "100000" })],
     });
-    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "100000" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -1009,7 +1009,7 @@ describe("WithdrawMoneyPage -- Record Withdrawal dialog (Story 4.2)", () => {
   it("opens the dialog with the Amount format-hint Helper text (row 5 regression -- matches Add Money's identical field)", async () => {
     const user = await renderAndReady();
 
-    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
 
     expect(await screen.findByText(/e\.g\. 1000000 for ₹10,00,000/)).toBeInTheDocument();
   });
@@ -1039,7 +1039,7 @@ describe("WithdrawMoneyPage -- Record Withdrawal dialog (Story 4.2)", () => {
       ],
     });
 
-    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "100000" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -1089,7 +1089,7 @@ describe("WithdrawMoneyPage -- Record Withdrawal dialog (Story 4.2)", () => {
     recordWithdrawalTransaction.mockRejectedValue(new Error("Amount must be a non-negative number."));
     const user = await renderAndReady();
 
-    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "-500" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -1104,7 +1104,7 @@ describe("WithdrawMoneyPage -- Record Withdrawal dialog (Story 4.2)", () => {
     );
     const user = await renderAndReady();
 
-    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "100000" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -1141,7 +1141,7 @@ describe("WithdrawMoneyPage -- Authorize Extra Withdrawal confirmation dialog (S
     recordWithdrawalTransaction.mockResolvedValue(makeWithdrawalTransaction({ amount: "100000" }));
     const user = await renderAndReady();
 
-    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "100000" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -1160,7 +1160,7 @@ describe("WithdrawMoneyPage -- Authorize Extra Withdrawal confirmation dialog (S
   it("intercepts the submit and opens the confirmation dialog when the amount exceeds Can Take -- no API call yet", async () => {
     const user = await renderAndReady();
 
-    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "300000" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -1180,7 +1180,7 @@ describe("WithdrawMoneyPage -- Authorize Extra Withdrawal confirmation dialog (S
     await screen.findByText("A");
 
     const bCard = screen.getByText("B").closest(".nb-person-card") as HTMLElement;
-    await user.click(within(bCard).getByRole("button", { name: "Record Withdrawal" }));
+    await user.click(within(bCard).getByRole("button", { name: "Withdraw Money" }));
     // 300000 exceeds B's plain canTake (250000) but fits within their boosted effectiveCanTake (300000).
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "300000" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
@@ -1207,7 +1207,7 @@ describe("WithdrawMoneyPage -- Authorize Extra Withdrawal confirmation dialog (S
     await screen.findByText("A");
 
     const bCard = screen.getByText("B").closest(".nb-person-card") as HTMLElement;
-    await user.click(within(bCard).getByRole("button", { name: "Record Withdrawal" }));
+    await user.click(within(bCard).getByRole("button", { name: "Withdraw Money" }));
     // 200000 is within B's plain canTake (250000) but exceeds their reduced effectiveCanTake (150000).
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "200000" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
@@ -1221,7 +1221,7 @@ describe("WithdrawMoneyPage -- Authorize Extra Withdrawal confirmation dialog (S
     recordWithdrawalTransaction.mockResolvedValue(makeWithdrawalTransaction({ amount: "300000" }));
     const user = await renderAndReady();
 
-    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "300000" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -1245,7 +1245,7 @@ describe("WithdrawMoneyPage -- Authorize Extra Withdrawal confirmation dialog (S
   it("over-cap amount -> confirm dialog -> cancel (Back) -> no submission, Record Withdrawal dialog stays open", async () => {
     const user = await renderAndReady();
 
-    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "300000" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -1268,7 +1268,7 @@ describe("WithdrawMoneyPage -- Authorize Extra Withdrawal confirmation dialog (S
     );
     const user = await renderAndReady();
 
-    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "300000" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -1285,7 +1285,7 @@ describe("WithdrawMoneyPage -- Authorize Extra Withdrawal confirmation dialog (S
     recordWithdrawalTransaction.mockResolvedValue(makeWithdrawalTransaction({ amount: "250000" }));
     const user = await renderAndReady();
 
-    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "250000" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -1299,7 +1299,7 @@ describe("WithdrawMoneyPage -- Authorize Extra Withdrawal confirmation dialog (S
   it("renders the exact 'exceeds by ₹X' excess-amount text (excessOverCanTake's output, not just the boolean exceedsCanTake check)", async () => {
     const user = await renderAndReady();
 
-    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "300000" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -1314,7 +1314,7 @@ describe("WithdrawMoneyPage -- Authorize Extra Withdrawal confirmation dialog (S
     recordWithdrawalTransaction.mockResolvedValue(makeWithdrawalTransaction({ amount: "100000" }));
     const user = await renderAndReady();
 
-    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "300000" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -1358,7 +1358,7 @@ describe("WithdrawMoneyPage -- Record Withdrawal idempotency key reuse across a 
 
     const user = await renderAndReady();
 
-    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "100000" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
 
@@ -1386,7 +1386,7 @@ describe("WithdrawMoneyPage -- Record Withdrawal idempotency key reuse across a 
 
     const user = await renderAndReady();
 
-    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "100000" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -1400,7 +1400,7 @@ describe("WithdrawMoneyPage -- Record Withdrawal idempotency key reuse across a 
     await screen.findByText("Where did this money go?");
     await user.click(screen.getByRole("button", { name: "Skip" }));
 
-    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "200000" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-06" } });
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -1445,7 +1445,7 @@ describe("WithdrawMoneyPage -- destination-allocation dialog (Story 4.7, extende
     );
     const user = await renderAndReady();
 
-    await user.click(screen.getAllByRole("button", { name: "Record Withdrawal" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "100000" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
     await user.click(screen.getByRole("button", { name: "Save" }));

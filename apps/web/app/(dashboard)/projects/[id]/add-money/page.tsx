@@ -949,7 +949,7 @@ export default function AddMoneyPage() {
                                                     }
                                                     icon={<Wallet size={14} />}
                                                   >
-                                                    Record Payment
+                                                    Add Investment
                                                   </Button>
                                                 </div>
                                                 <RecordedPayments
@@ -1031,7 +1031,7 @@ export default function AddMoneyPage() {
                                           }
                                           icon={<Wallet size={14} />}
                                         >
-                                          Record Payment
+                                          Add Investment
                                         </Button>
                                       </div>
                                       <RecordedPayments
@@ -1182,7 +1182,7 @@ export default function AddMoneyPage() {
       >
         <DialogContent>
           <DialogTitle>
-            Record Payment{recordPaymentTarget ? ` — ${recordPaymentTarget.personName}` : ""}
+            Add Investment{recordPaymentTarget ? ` — ${recordPaymentTarget.personName}` : ""}
           </DialogTitle>
           <DialogDescription>
             Owner/Admin only. This is saved as a record you can look back on -- a past payment is never

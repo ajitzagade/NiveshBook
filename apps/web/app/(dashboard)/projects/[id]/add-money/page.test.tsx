@@ -258,7 +258,7 @@ describe("AddMoneyPage -- Record Payment idempotency key reuse across a retry (r
 
     // A "Record Payment" button exists per Partner/Sub-partner row -- the
     // Partner's own row is the first one.
-    await user.click(screen.getAllByRole("button", { name: "Record Payment" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: "Add Investment" })[0] as HTMLElement);
 
     const amountInput = await screen.findByLabelText("Amount");
     fireEvent.change(amountInput, { target: { value: "700000" } });
@@ -312,7 +312,7 @@ describe("AddMoneyPage -- Record Payment idempotency key reuse across a retry (r
 
     const user = await renderAndExpand();
 
-    await user.click(screen.getAllByRole("button", { name: "Record Payment" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: "Add Investment" })[0] as HTMLElement);
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "100000" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -324,7 +324,7 @@ describe("AddMoneyPage -- Record Payment idempotency key reuse across a retry (r
 
     // Both dialogs close on success -- open Record Payment again for a
     // second, distinct payment.
-    await user.click(screen.getAllByRole("button", { name: "Record Payment" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: "Add Investment" })[0] as HTMLElement);
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "200000" } });
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-06" } });
     await user.click(screen.getByRole("button", { name: "Save" }));

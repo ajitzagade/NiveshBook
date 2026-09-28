@@ -1430,7 +1430,7 @@ export default function WithdrawMoneyPage() {
                                   }
                                   icon={<Minus size={14} />}
                                 >
-                                  Record Withdrawal
+                                  Withdraw Money
                                 </Button>
                                 {reallocationsState.status === "loaded" && reallocationsState.isOwnerAdminView ? (
                                   (() => {
@@ -1503,7 +1503,7 @@ export default function WithdrawMoneyPage() {
                       onClick={() => openRecordWithdrawalDialog("partner", partner.partnerId, partner.name)}
                       icon={<Minus size={14} />}
                     >
-                      Record Withdrawal
+                      Withdraw Money
                     </Button>
                     {reallocationsState.status === "loaded" && reallocationsState.isOwnerAdminView ? (
                       (() => {
@@ -1715,7 +1715,7 @@ export default function WithdrawMoneyPage() {
         }}
       >
         <DialogContent>
-          <DialogTitle>Record Withdrawal{recordTarget ? ` — ${recordTarget.personName}` : ""}</DialogTitle>
+          <DialogTitle>Withdraw Money{recordTarget ? ` — ${recordTarget.personName}` : ""}</DialogTitle>
           <DialogDescription>
             This is saved as a record you (or another Owner/Admin) can look back on. An amount within
             Can Take saves right away; an amount that goes over Can Take needs an Owner/Admin to

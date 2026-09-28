@@ -28,12 +28,12 @@ afterEach(() => {
 });
 
 describe("ProjectsPage (Story 2.1, card grid redesign founder feedback 2026-09-27)", () => {
-  it("renders a 'Structure' action per card, linking to /structure/[id] (Code Map: mirrors Edit/Shares/Add Money/Withdraw Money's exact pattern)", async () => {
+  it("renders a 'View Money Flow' action per card, linking to /structure/[id] (Code Map: mirrors Edit/Shares/Add Money/Withdraw Money's exact pattern)", async () => {
     listProjects.mockResolvedValue([PROJECT]);
 
     render(<ProjectsPage />);
 
-    const structureLink = await screen.findByRole("link", { name: /Structure/ });
+    const structureLink = await screen.findByRole("link", { name: /View Money Flow/ });
     expect(structureLink).toHaveAttribute("href", "/structure/project-1");
   });
 
@@ -42,7 +42,7 @@ describe("ProjectsPage (Story 2.1, card grid redesign founder feedback 2026-09-2
 
     render(<ProjectsPage />);
 
-    await screen.findByRole("link", { name: /Structure/ });
+    await screen.findByRole("link", { name: /View Money Flow/ });
     expect(screen.getByRole("link", { name: /Edit/ })).toHaveAttribute("href", "/projects/project-1/edit");
     expect(screen.getByRole("link", { name: /Shares/ })).toHaveAttribute("href", "/projects/project-1/shares");
     expect(screen.getByRole("link", { name: /Add Money/ })).toHaveAttribute(
@@ -55,13 +55,13 @@ describe("ProjectsPage (Story 2.1, card grid redesign founder feedback 2026-09-2
     );
   });
 
-  it("renders no Structure action in the empty state (no rows to act on)", async () => {
+  it("renders no View Money Flow action in the empty state (no rows to act on)", async () => {
     listProjects.mockResolvedValue([]);
 
     render(<ProjectsPage />);
 
     expect(await screen.findByText("No Projects yet")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /Structure/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /View Money Flow/ })).not.toBeInTheDocument();
   });
 
   it("renders the Project's name and description", async () => {
