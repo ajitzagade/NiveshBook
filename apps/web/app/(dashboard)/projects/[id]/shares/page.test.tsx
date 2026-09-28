@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { PartnerShare, SubPartnerShare } from "@niveshbook/types";
 import type { Percent } from "@niveshbook/types";
@@ -40,6 +40,14 @@ vi.mock("@/lib/subpartner-shares", () => ({
   updateSubPartnerShare: (...args: unknown[]) => updateSubPartnerShare(...args),
 }));
 
+const listUsers = vi.fn();
+const createUserAccount = vi.fn();
+vi.mock("@/lib/users", () => ({
+  listUsers: (...args: unknown[]) => listUsers(...args),
+  createUserAccount: (...args: unknown[]) => createUserAccount(...args),
+  generatePassword: () => "Gener4ted!Pass",
+}));
+
 const PARTNER: PartnerShare = {
   id: "ps-1",
   partnerId: "partner-a",
@@ -71,6 +79,8 @@ beforeEach(() => {
   listSubPartnerShares.mockReset().mockResolvedValue({ shares: [SUB_PARTNER], total: "30" });
   addSubPartnerShare.mockReset();
   updateSubPartnerShare.mockReset();
+  listUsers.mockReset().mockResolvedValue([]);
+  createUserAccount.mockReset();
 });
 
 afterEach(() => {
@@ -93,5 +103,130 @@ describe("SharesPage hierarchy rendering (spec-partner-hierarchy-cards, 2026-09-
     expect(subCard.className).toContain("nb-person-card-sub");
     expect(partnerCard.contains(subCard)).toBe(true);
     expect(subCard.parentElement?.className).toContain("nb-person-nest");
+  });
+});
+
+function makeUser(overrides: Partial<{ id: string; email: string; role: string; active: boolean }> = {}) {
+  return {
+    id: "user-partner-1",
+    email: "existing-partner@example.com",
+    role: "partner",
+    active: true,
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+/**
+ * spec-quick-add-user-share-dialog: the Add/Edit Partner and Add/Edit
+ * Sub-partner dialogs' "Linked user" field -- a role-filtered searchable
+ * `Combobox` (replacing the old free-text "Linked user (email)" `<Input>`,
+ * which this page's own pre-existing test suite above never covered) plus
+ * an inline "+ Add New User" quick-create.
+ */
+describe("SharesPage — Linked-user Combobox (spec-quick-add-user-share-dialog)", () => {
+  it("the existing-user list is filtered to partner-role + active for the Add Partner dialog", async () => {
+    listUsers.mockResolvedValue([
+      makeUser({ id: "u-partner", email: "partner@example.com", role: "partner", active: true }),
+      makeUser({ id: "u-sub", email: "sub@example.com", role: "sub_partner", active: true }),
+      makeUser({ id: "u-inactive", email: "inactive@example.com", role: "partner", active: false }),
+    ]);
+    render(<SharesPage />);
+
+    await screen.findByText("Partner A");
+    await userEvent.click(screen.getByRole("button", { name: "Add Partner" }));
+    await userEvent.click(await screen.findByLabelText("Linked user"));
+
+    expect(await screen.findByText("partner@example.com")).toBeInTheDocument();
+    expect(screen.queryByText("sub@example.com")).not.toBeInTheDocument();
+    expect(screen.queryByText("inactive@example.com")).not.toBeInTheDocument();
+  });
+
+  it("an already-linked-but-now-inactive user still appears, pre-selected, when editing", async () => {
+    listPartnerShares.mockResolvedValue({
+      shares: [{ ...PARTNER, userId: "u-inactive" }],
+      total: "60",
+    });
+    listUsers.mockResolvedValue([makeUser({ id: "u-inactive", email: "inactive@example.com", active: false })]);
+    render(<SharesPage />);
+
+    await screen.findByText("Partner A");
+    await userEvent.click(screen.getByRole("button", { name: /edit/i }));
+    await screen.findByText("Edit Partner");
+
+    const trigger = await screen.findByLabelText("Linked user");
+    expect(trigger).toHaveTextContent("inactive@example.com");
+    await userEvent.click(trigger);
+    // Even though this user is `active: false`, it's the Share's own current
+    // link, so it must still appear as a selectable row in the open list
+    // (this spec's Boundaries: "always included regardless") -- queried by
+    // `role="option"` specifically, since the trigger itself (still showing
+    // the same text) is a plain button, not an option row.
+    expect(await screen.findByRole("option", { name: "inactive@example.com" })).toBeInTheDocument();
+  });
+
+  it("owner_admin: quick-add creates a partner-role user, shows the password inline, and only on Done sets the link and fills the Share's Name if empty", async () => {
+    listUsers.mockResolvedValue([]);
+    createUserAccount.mockResolvedValue(makeUser({ id: "user-new", email: "new-partner@example.com" }));
+    render(<SharesPage />);
+
+    await screen.findByText("Partner A");
+    await userEvent.click(screen.getByRole("button", { name: "Add Partner" }));
+    await userEvent.click(await screen.findByLabelText("Linked user"));
+    await userEvent.click(await screen.findByText("+ Add New User"));
+
+    await userEvent.type(screen.getByLabelText("User's name"), "New Partner");
+    await userEvent.type(screen.getByLabelText("Email"), "new-partner@example.com");
+    await userEvent.click(screen.getByRole("button", { name: "Create User" }));
+
+    await waitFor(() =>
+      expect(createUserAccount).toHaveBeenCalledWith({
+        email: "new-partner@example.com",
+        password: "Gener4ted!Pass",
+        role: "partner",
+      }),
+    );
+    // Password phase: the outer dialog's own "Name" field is untouched until Done.
+    expect(await screen.findByLabelText("Password")).toHaveValue("Gener4ted!Pass");
+    expect(screen.getByLabelText("Name")).toHaveValue("");
+
+    await userEvent.click(screen.getByRole("button", { name: "Done" }));
+
+    expect(screen.getByLabelText("Name")).toHaveValue("New Partner");
+    await waitFor(() => expect(screen.getByLabelText("Linked user")).toHaveTextContent("new-partner@example.com"));
+  });
+
+  it("Sub-partner dialog's quick-add creates a sub_partner-role user, never partner", async () => {
+    listUsers.mockResolvedValue([]);
+    createUserAccount.mockResolvedValue(makeUser({ id: "user-new-sub", email: "new-sub@example.com", role: "sub_partner" }));
+    render(<SharesPage />);
+
+    await screen.findByText("Partner A");
+    await userEvent.click(screen.getByRole("button", { name: /Sub-partners/ }));
+    await screen.findByText("Sub One");
+    await userEvent.click(screen.getByRole("button", { name: "Add Sub-partner" }));
+    await userEvent.click(await screen.findByLabelText("Linked user"));
+    await userEvent.click(await screen.findByText("+ Add New User"));
+
+    await userEvent.type(screen.getByLabelText("User's name"), "New Sub");
+    await userEvent.type(screen.getByLabelText("Email"), "new-sub@example.com");
+    await userEvent.click(screen.getByRole("button", { name: "Create User" }));
+
+    await waitFor(() =>
+      expect(createUserAccount).toHaveBeenCalledWith(
+        expect.objectContaining({ email: "new-sub@example.com", role: "sub_partner" }),
+      ),
+    );
+  });
+
+  it("does not render '+ Add New User' while the user directory hasn't loaded (fails safe)", async () => {
+    listUsers.mockReturnValue(new Promise(() => {})); // never resolves
+    render(<SharesPage />);
+
+    await screen.findByText("Partner A");
+    await userEvent.click(screen.getByRole("button", { name: "Add Partner" }));
+    await userEvent.click(await screen.findByLabelText("Linked user"));
+
+    expect(screen.queryByText("+ Add New User")).not.toBeInTheDocument();
   });
 });

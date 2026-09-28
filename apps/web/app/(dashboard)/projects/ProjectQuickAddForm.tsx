@@ -56,6 +56,12 @@ export function ProjectQuickAddForm({ onCancel, onCreated, compact = false }: Pr
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    // spec-quick-add-user-share-dialog (review fix, applies here too): this
+    // form can render inside a `Combobox`'s `Popover`, itself inside another
+    // `<form>` -- Portals don't change React's own event-bubbling tree, so a
+    // "submit" SyntheticEvent from here still bubbles to any outer form's
+    // `onSubmit` unless stopped here.
+    event.stopPropagation();
     // Blocked client-side (this spec's I/O matrix) -- the Input's own
     // `required` attribute already stops a literally-empty submit; this
     // extra check catches whitespace-only names too, before ever reaching

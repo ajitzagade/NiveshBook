@@ -2,12 +2,13 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
-import { Percent, UserPlus, Pencil, Users, ChevronUp, Save, X } from "lucide-react";
+import { Percent, UserPlus, Pencil, Users, ChevronUp, ChevronDown, Save, X } from "lucide-react";
 import type { PartnerShare, SubPartnerShare } from "@niveshbook/types";
 import {
   Button,
   Card,
   Checkbox,
+  Combobox,
   Dialog,
   DialogContent,
   DialogTitle,
@@ -22,6 +23,7 @@ import {
   PersonCard,
   ShareList,
   toast,
+  type ComboboxOption,
 } from "@niveshbook/ui";
 import { listPartnerShares, addPartnerShare, updatePartnerShare } from "@/lib/partner-shares";
 import {
@@ -29,6 +31,8 @@ import {
   addSubPartnerShare,
   updateSubPartnerShare,
 } from "@/lib/subpartner-shares";
+import { listUsers, type SanitizedUser } from "@/lib/users";
+import { UserQuickAddForm } from "../../UserQuickAddForm";
 
 type ListState =
   | { status: "loading" }
@@ -146,33 +150,35 @@ export default function PartnerSharesPage() {
   const [dialog, setDialog] = useState<DialogState>({ open: false });
   const [name, setName] = useState("");
   const [sharePercent, setSharePercent] = useState("");
-  const [linkedUserEmail, setLinkedUserEmail] = useState("");
+  // spec-quick-add-user-share-dialog: `""` means "no link", matching
+  // `money-history/page.tsx`'s identical empty-string-sentinel convention
+  // for its own Project-filter Combobox. Every save is still a full
+  // overwrite (AD-3, unchanged) -- resolved to an email at submit time via
+  // `users` below, since the partner-shares API still accepts
+  // `linkedUserEmail` unchanged (this spec's Boundaries: no API contract
+  // change).
+  const [linkedUserId, setLinkedUserId] = useState("");
   // Story 2.6: only meaningful for the Add/Edit Partner dialog (never the
   // Sub-partner dialog) -- Owner/Admin-only opt-in grant letting this
   // Partner's own current Sub-partners see the Partner's total Share %.
-  // Full-overwrite-per-save, same convention as `linkedUserEmail`.
+  // Full-overwrite-per-save, same convention as `linkedUserId`.
   const [subPartnerVisibilityGrant, setSubPartnerVisibilityGrant] = useState(false);
-  // Story 2.4: the `userId` of the share currently open for edit, if it has
-  // one -- `null` for "add" dialogs or an edit of an unlinked share. Used
-  // (with `userEmailById` below) to detect "this share IS linked, but we
-  // don't know the email yet" so the field is never silently blank for an
-  // already-linked share -- since every save is a full overwrite, a blank
-  // `linkedUserEmail` means "unlink", so saving a stale blank would
-  // silently destroy a real link.
-  const [editingShareUserId, setEditingShareUserId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const [expandedPartnerId, setExpandedPartnerId] = useState<string | null>(null);
   const [subSharesByPartner, setSubSharesByPartner] = useState<Record<string, SubListState>>({});
 
-  // Story 2.4: a `userId -> email` lookup, built once from the existing
-  // Owner/Admin-scoped user directory, so the Add/Edit dialogs can
-  // pre-populate "Linked user (email)" for an already-linked Partner/
-  // Sub-partner. Best-effort only -- if this fetch fails, the field simply
-  // starts blank; it never blocks the Partner Shares screen itself from
-  // loading.
-  const [userEmailById, setUserEmailById] = useState<Record<string, string>>({});
+  // spec-quick-add-user-share-dialog: the existing Owner/Admin-only user
+  // directory, once -- feeds the Linked-user Combobox's options (role- and
+  // active-filtered per dialog mode) and resolves the selected id back to
+  // an email at submit time. `usersLoaded` (only set `true` on success,
+  // never in the `catch`) doubles as the "+ Add New User" row's own gate --
+  // `users:list` and `users:create` are both `owner_admin`-only
+  // (`authorize.ts`), so a successful fetch here already proves the session
+  // may also create one, with no separate role fetch needed.
+  const [users, setUsers] = useState<SanitizedUser[]>([]);
+  const [usersLoaded, setUsersLoaded] = useState(false);
 
   async function refresh() {
     const result = await listPartnerShares(projectId);
@@ -244,26 +250,17 @@ export default function PartnerSharesPage() {
   useEffect(() => {
     let cancelled = false;
 
-    fetch("/api/users")
-      .then((response) => (response.ok ? response.json() : Promise.reject(new Error("failed"))))
-      .then((users: unknown) => {
-        if (cancelled || !Array.isArray(users)) return;
-        const lookup: Record<string, string> = {};
-        for (const user of users) {
-          if (
-            user &&
-            typeof user === "object" &&
-            typeof (user as { id?: unknown }).id === "string" &&
-            typeof (user as { email?: unknown }).email === "string"
-          ) {
-            lookup[(user as { id: string }).id] = (user as { email: string }).email;
-          }
-        }
-        setUserEmailById(lookup);
+    listUsers()
+      .then((result) => {
+        if (cancelled) return;
+        setUsers(result);
+        setUsersLoaded(true);
       })
       .catch(() => {
-        // Best-effort pre-population only -- an Owner/Admin can still type
-        // the email manually if this fetch fails.
+        // Best-effort only -- an Owner/Admin session should always succeed
+        // here (see `usersLoaded`'s own doc comment); leaving it hidden on
+        // failure is the same safe default the sibling quick-add-project
+        // spec uses for a failed role check.
       });
 
     return () => {
@@ -271,27 +268,13 @@ export default function PartnerSharesPage() {
     };
   }, []);
 
-  // Story 2.4: if the `/api/users` lookup above resolves (or updates) while
-  // an Edit dialog for an already-linked share is open and its email wasn't
-  // known yet, backfill the field once it becomes available -- otherwise
-  // the pending-guard below would leave Save disabled indefinitely even
-  // after the email is known.
-  useEffect(() => {
-    if (editingShareUserId === null) return;
-    const resolvedEmail = userEmailById[editingShareUserId];
-    if (resolvedEmail !== undefined) {
-      setLinkedUserEmail(resolvedEmail);
-    }
-  }, [userEmailById, editingShareUserId]);
-
-  // True while editing a share that IS linked to a user but whose email
-  // hasn't been resolved yet (the `/api/users` fetch above hasn't completed
-  // or failed) -- the field would otherwise render blank, and since every
-  // save is a full overwrite (empty `linkedUserEmail` means "unlink"),
-  // saving in this state would silently destroy a real link. Recomputed
-  // every render, so it clears itself as soon as `userEmailById` resolves.
-  const linkedUserEmailPending =
-    editingShareUserId !== null && userEmailById[editingShareUserId] === undefined;
+  // True while a non-empty `linkedUserId` can't yet be resolved to an email
+  // -- either `users` hasn't loaded yet, or (edge case) that user no longer
+  // exists in it. The field would otherwise silently resolve to "no link"
+  // and, since every save is a full overwrite, saving in this state would
+  // destroy a real link. Recomputed every render, so it clears itself the
+  // moment `users` resolves with a match.
+  const linkedUserEmailPending = linkedUserId !== "" && !users.some((user) => user.id === linkedUserId);
 
   async function refreshSubShares(partnerId: string) {
     try {
@@ -327,9 +310,8 @@ export default function PartnerSharesPage() {
   function openAddDialog() {
     setName("");
     setSharePercent("");
-    setLinkedUserEmail("");
+    setLinkedUserId("");
     setSubPartnerVisibilityGrant(false);
-    setEditingShareUserId(null);
     setFormError(null);
     setDialog({ open: true, mode: "add" });
   }
@@ -337,9 +319,8 @@ export default function PartnerSharesPage() {
   function openEditDialog(share: PartnerShare) {
     setName(share.name);
     setSharePercent(formatSharePercent(share.sharePercent));
-    setLinkedUserEmail(share.userId ? (userEmailById[share.userId] ?? "") : "");
+    setLinkedUserId(share.userId ?? "");
     setSubPartnerVisibilityGrant(share.subPartnerVisibilityGrant);
-    setEditingShareUserId(share.userId);
     setFormError(null);
     setDialog({ open: true, mode: "edit", partnerId: share.partnerId });
   }
@@ -347,8 +328,7 @@ export default function PartnerSharesPage() {
   function openAddSubDialog(partnerId: string) {
     setName("");
     setSharePercent("");
-    setLinkedUserEmail("");
-    setEditingShareUserId(null);
+    setLinkedUserId("");
     setFormError(null);
     setDialog({ open: true, mode: "add-sub", partnerId });
   }
@@ -356,8 +336,7 @@ export default function PartnerSharesPage() {
   function openEditSubDialog(partnerId: string, subShare: SubPartnerShare) {
     setName(subShare.name);
     setSharePercent(formatSharePercent(subShare.sharePercent));
-    setLinkedUserEmail(subShare.userId ? (userEmailById[subShare.userId] ?? "") : "");
-    setEditingShareUserId(subShare.userId);
+    setLinkedUserId(subShare.userId ?? "");
     setFormError(null);
     setDialog({ open: true, mode: "edit-sub", partnerId, subPartnerId: subShare.subPartnerId });
   }
@@ -369,6 +348,12 @@ export default function PartnerSharesPage() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!dialog.open) return;
+
+    // Resolved here, once, from the Combobox's own `linkedUserId` -- the
+    // partner-shares API still accepts `linkedUserEmail` unchanged (this
+    // spec's Boundaries: no API contract change), so every call site below
+    // is untouched past this one resolution step.
+    const linkedUserEmail = linkedUserId ? users.find((user) => user.id === linkedUserId)?.email ?? "" : "";
 
     setFormError(null);
     setSubmitting(true);
@@ -428,6 +413,14 @@ export default function PartnerSharesPage() {
     dialog.open && (dialog.mode === "add-sub" || dialog.mode === "edit-sub")
       ? "Share % is this Sub-partner's ownership of the full Project -- e.g. 12.5 means they own 12.5% of this Project, never 12.5% of their parent Partner's share."
       : "Share % is this Partner's ownership of the full Project -- e.g. 33.33 means they own 33.33% of this Project, never 33.33% of another Partner's share.";
+
+  // spec-quick-add-user-share-dialog: the Linked-user Combobox's own
+  // role-filter and the quick-add row's `role` prop -- mirrors
+  // `resolveLinkedUserId`'s existing `expectedRole` param exactly (server
+  // still enforces this independently; this only drives what the client
+  // shows/creates).
+  const expectedLinkedUserRole =
+    dialog.open && (dialog.mode === "add-sub" || dialog.mode === "edit-sub") ? "sub_partner" : "partner";
 
   return (
     <div>
@@ -611,22 +604,60 @@ export default function PartnerSharesPage() {
               <Helper>e.g. 33.33 for a one-third Share -- up to 4 decimal places are supported.</Helper>
             </Field>
             <Field>
-              <Label htmlFor="linked-user-email">Linked user (email)</Label>
-              <Input
-                id="linked-user-email"
-                name="linkedUserEmail"
-                type="email"
-                value={linkedUserEmail}
-                onChange={(event) => setLinkedUserEmail(event.target.value)}
-                disabled={linkedUserEmailPending}
-                placeholder={linkedUserEmailPending ? "Loading current link…" : undefined}
+              <Label htmlFor="linked-user">Linked user</Label>
+              <Combobox
+                options={[
+                  { id: "", label: "No link" },
+                  ...users
+                    .filter((user) => user.id === linkedUserId || (user.role === expectedLinkedUserRole && user.active))
+                    .map((user): ComboboxOption => ({ id: user.id, label: user.email })),
+                ]}
+                value={linkedUserId}
+                onChange={setLinkedUserId}
+                searchPlaceholder="Search users…"
+                emptyMessage="No users yet."
+                trigger={
+                  <button
+                    type="button"
+                    id="linked-user"
+                    disabled={linkedUserEmailPending}
+                    className="flex w-full items-center justify-between gap-2 rounded-el border border-border bg-surface px-3 py-2.5 text-left text-[14px] text-ink focus:border-accent focus:outline focus:outline-2 focus:outline-accent-soft disabled:opacity-60"
+                  >
+                    <span className="truncate">
+                      {linkedUserId === ""
+                        ? "No link"
+                        : users.find((user) => user.id === linkedUserId)?.email ??
+                          (linkedUserEmailPending ? "Loading current link…" : "No link")}
+                    </span>
+                    <ChevronDown size={14} className="shrink-0 text-ink-faint" />
+                  </button>
+                }
+                addNew={
+                  usersLoaded
+                    ? {
+                        label: "+ Add New User",
+                        renderForm: ({ onCancel, onCreated }) => (
+                          <UserQuickAddForm
+                            compact
+                            role={expectedLinkedUserRole}
+                            onCancel={onCancel}
+                            onCreated={(user, typedName) => {
+                              setUsers((prev) => [...prev, user]);
+                              if (!name.trim()) setName(typedName);
+                              onCreated({ id: user.id, label: user.email });
+                            }}
+                          />
+                        ),
+                      }
+                    : undefined
+                }
               />
               <Helper>
                 {linkedUserEmailPending
-                  ? "Loading the currently linked user's email -- please wait before saving."
+                  ? "Loading the currently linked user -- please wait before saving."
                   : dialog.open && (dialog.mode === "add-sub" || dialog.mode === "edit-sub")
-                    ? "Optional -- links this Sub-partner to a login with the Sub-partner role, so they can see only their own data. Leave blank for no link."
-                    : "Optional -- links this Partner to a login with the Partner role, so they can see only their own data (never a co-partner's). Leave blank for no link."}
+                    ? "Optional -- links this Sub-partner to a login with the Sub-partner role, so they can see only their own data. Leave as 'No link' for none."
+                    : "Optional -- links this Partner to a login with the Partner role, so they can see only their own data (never a co-partner's). Leave as 'No link' for none."}
               </Helper>
             </Field>
             {dialog.open && (dialog.mode === "add" || dialog.mode === "edit") ? (
