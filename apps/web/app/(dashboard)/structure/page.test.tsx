@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import AllProjectsMoneyFlowPage from "./page";
 import type { ProjectFlowCanvasProps } from "./ProjectFlowCanvas";
 
@@ -45,6 +45,11 @@ vi.mock("@/lib/available-balances", () => ({
 const listMoneyMovements = vi.fn();
 vi.mock("@/lib/money-movements", () => ({
   listMoneyMovements: (...args: unknown[]) => listMoneyMovements(...args),
+}));
+
+const getOwnershipStructure = vi.fn();
+vi.mock("@/lib/ownership-structure", () => ({
+  getOwnershipStructure: (...args: unknown[]) => getOwnershipStructure(...args),
 }));
 
 const push = vi.fn();
@@ -115,16 +120,88 @@ describe("AllProjectsMoneyFlowPage (item 3: All-Projects Money Flow)", () => {
     ]);
   });
 
-  it("partner/sub_partner: a 403 on available balances/movements shows a null balance and no edges, never crashes", async () => {
+  it("partner/sub_partner: a 403 on available balances, AND on both the movements fallback paths, shows a null balance and no edges, never crashes", async () => {
     listMyProjects.mockResolvedValue([{ id: "p1", name: "Sunrise Towers" }]);
     listAvailableBalances.mockRejectedValue(new Error("Forbidden"));
     listMoneyMovements.mockRejectedValue(new Error("Forbidden"));
+    getOwnershipStructure.mockRejectedValue(new Error("Forbidden"));
 
     render(<AllProjectsMoneyFlowPage />);
 
     await waitFor(() => expect(screen.getByTestId("project-flow-canvas")).toBeInTheDocument());
     expect(lastCanvasProps?.projects).toEqual([{ id: "p1", name: "Sunrise Towers", availableBalance: null }]);
     expect(lastCanvasProps?.movements).toEqual([]);
+    expect(getOwnershipStructure).toHaveBeenCalledWith("p1");
+  });
+
+  it("partner/sub_partner (2026-09-28 fix): a 403 on the owner_admin-only money movements list falls back to this Project's own self-access-scoped OUTBOUND 'project' edges -- outbound, not inbound, since the source Project is always one of the actor's own (they had to hold a Share there to send the transfer), but the destination might not be", async () => {
+    listMyProjects.mockResolvedValue([
+      { id: "p1", name: "Sunrise Towers" },
+      { id: "p2", name: "Lakeview" },
+    ]);
+    listAvailableBalances.mockRejectedValue(new Error("Forbidden"));
+    listMoneyMovements.mockRejectedValue(new Error("Forbidden"));
+    getOwnershipStructure.mockImplementation((projectId: string) =>
+      Promise.resolve({
+        projectId,
+        projectName: projectId === "p1" ? "Sunrise Towers" : "Lakeview",
+        tree: { scope: { type: "partner", partnerId: "a" }, partners: [] },
+        moneyFlowEdges:
+          projectId === "p1"
+            ? [
+                // Outbound from p1 to p2 -> counted once, from p1's (the sender's) own fetch.
+                {
+                  id: "e1",
+                  partyType: "partner",
+                  shareId: "a",
+                  direction: "out",
+                  counterpartyKind: "project",
+                  counterpartyLabel: "Lakeview",
+                  amount: "5000",
+                },
+                // Not a "project" edge -- must be ignored.
+                {
+                  id: "e2",
+                  partyType: "partner",
+                  shareId: "a",
+                  direction: "out",
+                  counterpartyKind: "person",
+                  counterpartyLabel: "Some Person",
+                  amount: "1000",
+                },
+                // Inbound -- must be ignored (would double-count the same
+                // movement if this page also picked up inbound edges).
+                {
+                  id: "e3",
+                  partyType: "partner",
+                  shareId: "a",
+                  direction: "in",
+                  counterpartyKind: "project",
+                  counterpartyLabel: "Lakeview",
+                  amount: "2000",
+                },
+                // Outbound "project" edge whose destination isn't one of
+                // this actor's own Projects (no name match) -- silently
+                // dropped, mirrors project-flow-layout.ts's dangling-edge
+                // guard.
+                {
+                  id: "e4",
+                  partyType: "partner",
+                  shareId: "a",
+                  direction: "out",
+                  counterpartyKind: "project",
+                  counterpartyLabel: "Some Other Project Not Mine",
+                  amount: "9999",
+                },
+              ]
+            : [],
+      }),
+    );
+
+    render(<AllProjectsMoneyFlowPage />);
+
+    await waitFor(() => expect(screen.getByTestId("project-flow-canvas")).toBeInTheDocument());
+    expect(lastCanvasProps?.movements).toEqual([{ sourceProjectId: "p1", destinationProjectId: "p2", amount: "5000" }]);
   });
 
   it("selecting a Project navigates to its own /structure/[projectId] Money Flow", async () => {
@@ -138,5 +215,58 @@ describe("AllProjectsMoneyFlowPage (item 3: All-Projects Money Flow)", () => {
     selectButton.click();
 
     expect(push).toHaveBeenCalledWith("/structure/p1");
+  });
+
+  describe("Project name search (2026-09-28 fix -- at real-world Project counts, an unfiltered grid was illegible)", () => {
+    it("narrows the Projects passed to ProjectFlowCanvas by a case-insensitive substring match, without dropping any movements (the layout's own dangling-edge guard handles that)", async () => {
+      listMyProjects.mockResolvedValue([
+        { id: "p1", name: "Sunrise Towers" },
+        { id: "p2", name: "Lakeview" },
+        { id: "p3", name: "Sunset Heights" },
+      ]);
+      listAvailableBalances.mockResolvedValue({ partners: [] });
+      listMoneyMovements.mockResolvedValue({ moneyMovements: [] });
+
+      render(<AllProjectsMoneyFlowPage />);
+      await waitFor(() => expect(screen.getByTestId("project-flow-canvas")).toBeInTheDocument());
+      expect(lastCanvasProps?.projects.map((p) => p.id)).toEqual(["p1", "p2", "p3"]);
+
+      fireEvent.change(screen.getByLabelText("Search Projects"), { target: { value: "sun" } });
+
+      await waitFor(() =>
+        expect(lastCanvasProps?.projects.map((p) => p.id).sort()).toEqual(["p1", "p3"]),
+      );
+    });
+
+    it("shows a dedicated empty state (not the Canvas) when the search matches nothing, and recovers once cleared", async () => {
+      listMyProjects.mockResolvedValue([
+        { id: "p1", name: "Sunrise Towers" },
+        { id: "p2", name: "Lakeview" },
+      ]);
+      listAvailableBalances.mockResolvedValue({ partners: [] });
+      listMoneyMovements.mockResolvedValue({ moneyMovements: [] });
+
+      render(<AllProjectsMoneyFlowPage />);
+      await waitFor(() => expect(screen.getByTestId("project-flow-canvas")).toBeInTheDocument());
+
+      fireEvent.change(screen.getByLabelText("Search Projects"), { target: { value: "nonexistent" } });
+
+      await waitFor(() => expect(screen.getByText("No Projects match your search")).toBeInTheDocument());
+      expect(screen.queryByTestId("project-flow-canvas")).not.toBeInTheDocument();
+
+      fireEvent.change(screen.getByLabelText("Search Projects"), { target: { value: "" } });
+      await waitFor(() => expect(screen.getByTestId("project-flow-canvas")).toBeInTheDocument());
+    });
+
+    it("hides the search box entirely when there's only one Project -- nothing to narrow down", async () => {
+      listMyProjects.mockResolvedValue([{ id: "p1", name: "Sunrise Towers" }]);
+      listAvailableBalances.mockResolvedValue({ partners: [] });
+      listMoneyMovements.mockResolvedValue({ moneyMovements: [] });
+
+      render(<AllProjectsMoneyFlowPage />);
+      await waitFor(() => expect(screen.getByTestId("project-flow-canvas")).toBeInTheDocument());
+
+      expect(screen.queryByLabelText("Search Projects")).not.toBeInTheDocument();
+    });
   });
 });

@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Network } from "lucide-react";
-import { Card, EmptyState, PageHeader } from "@niveshbook/ui";
+import { Network, Search } from "lucide-react";
+import { Card, EmptyState, Input, PageHeader } from "@niveshbook/ui";
 import { listMyProjects } from "@/lib/projects";
 import { listAvailableBalances } from "@/lib/available-balances";
 import { listMoneyMovements } from "@/lib/money-movements";
+import { getOwnershipStructure } from "@/lib/ownership-structure";
 import { ProjectFlowCanvas } from "./ProjectFlowCanvas";
 import type { ProjectFlowMovementInput, ProjectFlowNodeInput } from "./project-flow-layout";
 
@@ -30,20 +31,57 @@ type LoadState =
  * `owner_admin`, only the caller's own current Projects for a Partner/
  * Sub-partner -- spec-partner-project-list-self-access) for the node list,
  * so this page needs no role check of its own. Available balances
- * (`available_balances:view`) and cross-Project movements
- * (`money_movements:list`) are both `owner_admin`-only server-side gates
- * already -- rather than duplicating that check here, this page just
- * attempts both fetches per Project and treats a 403/failure as "not shown"
- * (an `availableBalance: null` node, or simply no edges), the same safe-
- * default pattern `spec-quick-add-project-user-modals` already established
- * for a failed role check. A Partner/Sub-partner session therefore still
- * gets real value here -- a map of the Projects they're part of, each
- * clickable into their own already-permitted `/structure/[projectId]` view
- * -- without ever seeing data `authorize.ts` wouldn't otherwise show them.
+ * (`available_balances:view`) is `owner_admin`-only server-side with no
+ * self-access carve-out -- a Partner/Sub-partner's node simply shows no
+ * balance figure (`availableBalance: null`), rather than inventing an
+ * approximate number `authorize.ts` was never asked to bless.
+ *
+ * Cross-Project movements are different (2026-09-28 fix): the plain
+ * `money_movements:list` endpoint (`listMoneyMovements`) is also
+ * `owner_admin`-only, but a Partner/Sub-partner's own cross-Project
+ * transfers are ALREADY visible to them one Project at a time via
+ * `GET /api/projects/[id]/ownership-structure`'s self-access-scoped
+ * `moneyFlowEdges` (fixed the same day to auto-resolve a Partner/
+ * Sub-partner's own Share when no `?partnerId=`/`?subPartnerId=` is given).
+ * So: try the owner_admin-only path first per Project; on failure, fall back
+ * to that same self-access endpoint and pull its `direction: "out",
+ * counterpartyKind: "project"` edges (OUTBOUND, not inbound -- a
+ * Partner/Sub-partner's own `myProjects` list is a SUBSET of every Project,
+ * unlike `owner_admin`'s "every Project" list, so it can't be assumed the
+ * *destination* Project is even one of the actor's own; the *source*
+ * Project always is, since fetching it at all requires a Share there,
+ * which is exactly what was needed to send the transfer in the first
+ * place). This still never double-counts a movement between two of the
+ * actor's own Projects: the sending Project's fetch only ever carries the
+ * "out" side, the receiving Project's fetch only ever carries the "in"
+ * side (mirrored proof: `listMoneyMovements`'s own owner_admin path scopes
+ * by *destination* only and still counts each movement exactly once,
+ * because a Project's own fetch can never see itself from both directions
+ * for the same movement). `counterpartyLabel` is a plain name, not an id,
+ * so the destination side is resolved back to an id via this actor's own
+ * `myProjects` list -- if the destination Project isn't one of the actor's
+ * own (no name match), the edge is silently dropped, exactly like
+ * `project-flow-layout.ts`'s existing dangling-edge guard already does for
+ * any edge referencing a Project outside the visible set. A Partner/
+ * Sub-partner session therefore now sees their own real cross-Project money
+ * flow here too, never a sibling's, never anything `authorize.ts` wouldn't
+ * otherwise show them.
  */
 export default function AllProjectsMoneyFlowPage() {
   const router = useRouter();
   const [state, setState] = useState<LoadState>({ status: "loading" });
+  // Founder-reported (2026-09-28): at real-world Project counts (tens of
+  // Projects, not the 1-3 this view was designed/tested against), the grid
+  // renders every node at once with no way to narrow it down -- `fitView`
+  // alone still has to shrink to a zoom level where node labels become
+  // illegible, since there's no cap on how many nodes it's fitting. A
+  // client-side name search (mirrors `Combobox`'s own `filterComboboxOptions`
+  // case-insensitive-substring convention) lets the viewer narrow the canvas
+  // down to a legible handful without needing a second, heavier feature
+  // (pagination, server-side search) for what's fundamentally the same
+  // "find the Project I mean" problem the sidebar's own Project switcher
+  // already solves the same way.
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -70,20 +108,42 @@ export default function AllProjectsMoneyFlowPage() {
           }),
         );
 
+        const projectIdByName = new Map(myProjects.map((project) => [project.name, project.id]));
         const movementLists = await Promise.all(
-          myProjects.map((project) =>
-            listMoneyMovements(project.id)
-              .then((result) => result.moneyMovements)
-              .catch(() => []),
-          ),
+          myProjects.map(async (project): Promise<ProjectFlowMovementInput[]> => {
+            try {
+              const { moneyMovements } = await listMoneyMovements(project.id);
+              return moneyMovements.map((movement) => ({
+                sourceProjectId: movement.sourceProjectId,
+                destinationProjectId: movement.destinationProjectId,
+                amount: movement.amount,
+              }));
+            } catch {
+              // `money_movements:list` is `owner_admin`-only -- fall back to
+              // this Project's own self-access-scoped OUTBOUND "project"
+              // edges (see this page's own doc comment for why outbound,
+              // not inbound, is the one guaranteed resolvable side for a
+              // Partner/Sub-partner's own subset of Projects, and why this
+              // still never double-counts a movement this actor can see
+              // from both ends).
+              try {
+                const { moneyFlowEdges } = await getOwnershipStructure(project.id);
+                return moneyFlowEdges
+                  .filter((edge) => edge.direction === "out" && edge.counterpartyKind === "project")
+                  .map((edge) => {
+                    const destinationProjectId = projectIdByName.get(edge.counterpartyLabel);
+                    return destinationProjectId
+                      ? { sourceProjectId: project.id, destinationProjectId, amount: String(edge.amount) }
+                      : null;
+                  })
+                  .filter((movement): movement is ProjectFlowMovementInput => movement !== null);
+              } catch {
+                return [];
+              }
+            }
+          }),
         );
-        const movements: ProjectFlowMovementInput[] = movementLists
-          .flat()
-          .map((movement) => ({
-            sourceProjectId: movement.sourceProjectId,
-            destinationProjectId: movement.destinationProjectId,
-            amount: movement.amount,
-          }));
+        const movements: ProjectFlowMovementInput[] = movementLists.flat();
 
         if (!cancelled) {
           setState({ status: "loaded", projects, movements });
@@ -101,6 +161,13 @@ export default function AllProjectsMoneyFlowPage() {
       cancelled = true;
     };
   }, []);
+
+  const filteredProjects = useMemo(() => {
+    if (state.status !== "loaded") return [];
+    const trimmed = search.trim().toLowerCase();
+    if (!trimmed) return state.projects;
+    return state.projects.filter((project) => project.name.toLowerCase().includes(trimmed));
+  }, [state, search]);
 
   return (
     <div>
@@ -123,11 +190,36 @@ export default function AllProjectsMoneyFlowPage() {
             description="Once you're part of a Project, its Money Flow will show up here."
           />
         ) : (
-          <ProjectFlowCanvas
-            projects={state.projects}
-            movements={state.movements}
-            onSelectProject={(projectId) => router.push(`/structure/${projectId}`)}
-          />
+          <>
+            {state.projects.length > 1 ? (
+              <div className="relative mb-3 max-w-[320px]">
+                <Search
+                  size={13}
+                  className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-faint"
+                />
+                <Input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search Projects…"
+                  aria-label="Search Projects"
+                  className="pl-8"
+                />
+              </div>
+            ) : null}
+            {filteredProjects.length === 0 ? (
+              <EmptyState
+                icon={<Search size={22} />}
+                title="No Projects match your search"
+                description="Try a different name, or clear the search to see every Project again."
+              />
+            ) : (
+              <ProjectFlowCanvas
+                projects={filteredProjects}
+                movements={state.movements}
+                onSelectProject={(projectId) => router.push(`/structure/${projectId}`)}
+              />
+            )}
+          </>
         )}
       </Card>
     </div>

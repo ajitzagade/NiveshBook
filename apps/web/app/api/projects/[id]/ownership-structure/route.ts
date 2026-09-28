@@ -61,11 +61,19 @@ function shareNotFoundResponse() {
  * Implementation Notes for the full rationale/deviation from the Code Map's
  * literal "page.tsx calls authorize()" wording.
  *
- * Query params: neither `partnerId` nor `subPartnerId` -> the full,
- * unscoped Project tree (`"ownership_structure:view_project"`, owner_admin-
- * only, `authorizeScope()`, no resourceRef needed). `partnerId` XOR
- * `subPartnerId` -> that one Partner's or Sub-partner's own scoped slice
- * (`"ownership_structure:view_partner"`, self-access via `authorize()`) --
+ * Query params: neither `partnerId` nor `subPartnerId`, actor is owner_admin
+ * -> the full, unscoped Project tree (`"ownership_structure:view_project"`,
+ * `authorizeScope()`, no resourceRef needed). Neither param, actor is a
+ * Partner/Sub-partner -> auto-resolves THEIR OWN current Partner or
+ * Sub-partner Share in this Project as an implicit self-scope (2026-09-28
+ * fix -- nothing that links to this page supplies `?partnerId=` for a
+ * Partner/Sub-partner viewing their own Project, so without this fallback
+ * the page was unreachable for those two roles even for their own data;
+ * `authorize()` still runs on the resolved `ownerId`, so this only makes an
+ * already-permitted view reachable, it never widens access). `partnerId` XOR
+ * `subPartnerId` explicit -> that one Partner's or Sub-partner's own scoped
+ * slice (`"ownership_structure:view_partner"`, self-access via `authorize()`
+ * -- lets an owner_admin drill into any specific Partner/Sub-partner too) --
  * the target share is resolved from this Project's *current* Partner/
  * Sub-partner Shares FIRST (mirrors `my-withdrawal-status/route.ts`'s/
  * `investment-transactions/[id]/audit-log/route.ts`'s identical "read the
@@ -124,10 +132,41 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     const { allowed } = await authorizeScope(session.userId, "ownership_structure:view_project", {
       users: userPort,
     });
-    if (!allowed) {
-      return NextResponse.json({ code: "forbidden", message: FORBIDDEN_MESSAGE }, { status: 403 });
+    if (allowed) {
+      scope = { type: "project" };
+    } else {
+      // Not an owner_admin -- nothing today links a Partner/Sub-partner to
+      // this page WITH an explicit `?partnerId=`/`?subPartnerId=` (the
+      // sidebar/Home "View Money Flow" links, and the all-Projects diagram's
+      // own node-click, all navigate here bare), so falling straight to 403
+      // made this page permanently unreachable for those two roles even for
+      // their own Project. Auto-resolve the actor's own current Partner or
+      // Sub-partner Share in this Project instead, mirroring the identical
+      // "resolve the one row needed to know ownerId, then authorize()"
+      // shape the explicit-param branches below already use -- `authorize()`
+      // trivially passes once `ownerId` is the actor's own userId, so this
+      // never widens what a Partner/Sub-partner can see, it only makes their
+      // own already-permitted view reachable without the URL knowing their
+      // shareId in advance.
+      resolvedPartnerShares = await listCurrentPartnerShares(projectId, { partnerShares: partnerSharePort });
+      const ownPartnerShare = resolvedPartnerShares.find(
+        (share) => share.userId?.toLowerCase() === session.userId.toLowerCase(),
+      );
+      if (ownPartnerShare) {
+        scope = { type: "partner", partnerId: ownPartnerShare.partnerId };
+      } else {
+        resolvedSubPartnerShares = await listCurrentSubPartnerSharesForProject(projectId, {
+          subPartnerShares: subPartnerSharePort,
+        });
+        const ownSubPartnerShare = resolvedSubPartnerShares.find(
+          (share) => share.userId?.toLowerCase() === session.userId.toLowerCase(),
+        );
+        if (!ownSubPartnerShare) {
+          return NextResponse.json({ code: "forbidden", message: FORBIDDEN_MESSAGE }, { status: 403 });
+        }
+        scope = { type: "sub_partner", subPartnerId: ownSubPartnerShare.subPartnerId };
+      }
     }
-    scope = { type: "project" };
   } else if (partnerIdParam) {
     resolvedPartnerShares = await listCurrentPartnerShares(projectId, { partnerShares: partnerSharePort });
     const target = resolvedPartnerShares.find((share) => share.partnerId === partnerIdParam);

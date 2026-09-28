@@ -313,18 +313,35 @@ describe("GET /api/projects/[id]/ownership-structure", () => {
   });
 
   describe("unscoped project-wide view (ownership_structure:view_project)", () => {
-    it("returns 403 for a partner requesting the unscoped view, regardless of anything else in the URL (property 1)", async () => {
+    it("a Partner hitting the bare URL (no ?partnerId=) never gets the true unscoped/full-project tree -- auto-resolves to their OWN scoped slice instead, and never Partner B's (property 1, revised 2026-09-28)", async () => {
+      // 2026-09-28 fix: nothing that links a Partner to this page supplies
+      // `?partnerId=` (the sidebar/Home "View Money Flow" links, and the
+      // all-Projects diagram's own node-click, all navigate here bare) --
+      // this used to 403 unconditionally, making the page permanently
+      // unreachable for a Partner/Sub-partner even for their own Project.
       partnerASession();
+      const response = await GET(makeRequest({}, COOKIE), makeContext());
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.tree.scope).toEqual({ type: "partner", partnerId: "a" });
+      expect(body.tree.partners).toHaveLength(1);
+      expect(body.tree.partners[0].partnerId).toBe("a");
+    });
+
+    it("a Sub-partner hitting the bare URL auto-resolves to their own scoped slice too", async () => {
+      subPartner1Session();
+      const response = await GET(makeRequest({}, COOKIE), makeContext());
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.tree.scope).toEqual({ type: "sub_partner", subPartnerId: "sub-1" });
+    });
+
+    it("returns 403 for a Partner/Sub-partner role user with NO current Share at all on this Project, even at the bare URL -- the auto-resolve fallback is not a blanket bypass", async () => {
+      findSessionByTokenHash.mockResolvedValue({ ...LIVE_SESSION, userId: "stranger-user" });
+      findUserById.mockResolvedValue(makeUser({ id: "stranger-user", role: "partner" }));
       const response = await GET(makeRequest({}, COOKIE), makeContext());
       expect(response.status).toBe(403);
       expect((await response.json()).code).toBe("forbidden");
-      expect(listPartnerSharesByProjectId).not.toHaveBeenCalled();
-    });
-
-    it("returns 403 for a sub_partner requesting the unscoped view", async () => {
-      subPartner1Session();
-      const response = await GET(makeRequest({}, COOKIE), makeContext());
-      expect(response.status).toBe(403);
     });
 
     it("returns 200 for owner_admin, with every current Partner Share and its Sub-partners in the tree", async () => {
