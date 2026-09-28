@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, ChevronDown, History, Search, X } from "lucide-react";
+import { ArrowLeft, ChevronDown, History, Network, Search, X } from "lucide-react";
 import type {
   AuditLogEntry,
   MoneyHistoryEntry,
@@ -437,6 +438,16 @@ export default function MoneyHistoryPage() {
       <PageHeader
         title="Money History"
         description="Every Add Money, Withdraw Money, Movement, and Available Balance event, in one plain-language list."
+        action={
+          formFilters.projectId === "" ? (
+            <Button asChild variant="ghost" tone="violet">
+              <Link href="/structure" className="inline-flex items-center gap-1.5">
+                <Network size={14} />
+                View Money Flow
+              </Link>
+            </Button>
+          ) : undefined
+        }
       />
 
       <Card className="mb-5">

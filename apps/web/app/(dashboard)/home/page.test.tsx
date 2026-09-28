@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import type { ReactElement, ReactNode } from "react";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { PartnerOverviewRow } from "@niveshbook/core";
 import type {
@@ -14,7 +15,7 @@ import type {
   WithdrawalAdjustment,
   WithdrawalTransaction,
 } from "@niveshbook/types";
-import { Card, EmptyState, HighlightStat, ProjectPreviewCard, StatCard } from "@niveshbook/ui";
+import { Card, EmptyState, HighlightStat, PageHeader, ProjectPreviewCard, StatCard } from "@niveshbook/ui";
 import { findAllByClassName } from "@/test/react-tree";
 import DashboardHomePage, { formatSharePercent, initialsOf, PartnerOverviewCard, DashboardGridCard } from "./page";
 
@@ -133,6 +134,22 @@ function findAllComponents(node: ReactNode, type: unknown): ReactElement[] {
 
 function containsComponent(node: ReactNode, type: unknown): boolean {
   return findAllComponents(node, type).length > 0;
+}
+
+/**
+ * Item 3 (All-Projects Money Flow): `PageHeader`'s `action` prop is content
+ * passed as a *named* prop, not `children` -- `collectComponents` above only
+ * ever recurses into `props.children`, so a plain `findAllComponents(result,
+ * Link)` from the page's own root can never see into it (this page's
+ * `PageHeader` is never actually invoked/rendered at this raw-element-tree
+ * level, so `PageHeader`'s own body never runs to place `action` somewhere
+ * `children`-reachable). Finds `PageHeader` itself first, then walks its
+ * `action` prop's own subtree directly.
+ */
+function findPageHeaderActionLink(result: ReactNode, href: string): ReactElement | undefined {
+  const [pageHeader] = findAllComponents(result, PageHeader);
+  const action = (pageHeader?.props as { action?: ReactNode } | undefined)?.action;
+  return findAllComponents(action, Link).find((link) => (link.props as { href?: string }).href === href);
 }
 
 /** Flattens every plain-string descendant of a JSX tree into one string -- for asserting rendered text content without a DOM render (founder feedback 2026-09-26: `PartnerOverviewCard`'s lines are plain JSX now, not `AdjustPersonCard` props). */
@@ -379,6 +396,10 @@ describe("DashboardHomePage (Owner/Admin Dashboard, Story 5.4, unchanged by Stor
   it("empty case: renders all 5 stat cards at '0' and EmptyState (not a crash) when there are zero current Partner Shares", async () => {
     const result = await DashboardHomePage();
 
+    // Item 3 (All-Projects Money Flow): the PageHeader action now links to
+    // the new all-Projects entry point, for every role.
+    expect(findPageHeaderActionLink(result, "/structure")).toBeTruthy();
+
     const statCards = findAllComponents(result, StatCard);
     expect(statCards).toHaveLength(5);
     for (const card of statCards) {
@@ -550,6 +571,10 @@ describe("DashboardHomePage (Partner Dashboard, Story 5.5)", () => {
 
   it("empty case: zero linked Partner Shares -- all 3 stat cards and 3 highlight cards at '0', both EmptyStates render, not a crash", async () => {
     const result = await DashboardHomePage();
+
+    // Item 3 (All-Projects Money Flow): the PageHeader action now links to
+    // the new all-Projects entry point, for every role.
+    expect(findPageHeaderActionLink(result, "/structure")).toBeTruthy();
 
     const statCards = findAllComponents(result, StatCard);
     expect(statCards).toHaveLength(3);
@@ -757,6 +782,10 @@ describe("DashboardHomePage (Sub-partner Dashboard, Story 5.6)", () => {
 
   it("empty case: zero linked Sub-partner Shares -- all 3 stat cards and 3 highlight cards at '0', EmptyState renders, not a crash", async () => {
     const result = await DashboardHomePage();
+
+    // Item 3 (All-Projects Money Flow): the PageHeader action now links to
+    // the new all-Projects entry point, for every role.
+    expect(findPageHeaderActionLink(result, "/structure")).toBeTruthy();
 
     const statCards = findAllComponents(result, StatCard);
     expect(statCards).toHaveLength(3);

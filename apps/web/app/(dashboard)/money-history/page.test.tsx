@@ -1014,3 +1014,20 @@ describe("Money History Project filter quick-add (spec-quick-add-project-user-mo
     expect(screen.getByText("Beta Residency")).toBeInTheDocument();
   });
 });
+
+/** Item 3 (All-Projects Money Flow): a "View Money Flow" link to the new `/structure` all-Projects entry point, shown only while "All Projects" (an empty `projectId` filter) is selected. */
+describe("Money History -- View Money Flow entry point (item 3)", () => {
+  it("shows the link to /structure when the Project filter is 'All Projects' (the default, empty projectId)", async () => {
+    render(<MoneyHistoryPage />);
+
+    expect(await screen.findByRole("link", { name: /view money flow/i })).toHaveAttribute("href", "/structure");
+  });
+
+  it("hides the link once a specific Project is selected", async () => {
+    mockSearchParams = new URLSearchParams({ projectId: "project-a" });
+    render(<MoneyHistoryPage />);
+
+    await screen.findByLabelText("Project");
+    expect(screen.queryByRole("link", { name: /view money flow/i })).not.toBeInTheDocument();
+  });
+});

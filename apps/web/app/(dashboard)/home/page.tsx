@@ -5,11 +5,13 @@ import {
   FolderPlus,
   Landmark,
   LayoutGrid,
+  Network,
   TrendingDown,
   TrendingUp,
   Users,
   Wallet,
 } from "lucide-react";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
   assembleOwnerAdminDashboard,
@@ -34,6 +36,7 @@ import type { ReactNode } from "react";
 import {
   ActionTile,
   Amount,
+  Button,
   Card,
   EmptyState,
   HighlightStat,
@@ -264,7 +267,17 @@ async function PartnerDashboard({ actorUserId }: { actorUserId: string }) {
       <PageHeader
         title="Home"
         description="Your own Projects, Share %, and money — showing only your own numbers."
-        action={<LogoutButton />}
+        action={
+          <div className="flex items-center gap-2.5">
+            <Button asChild variant="ghost" tone="violet">
+              <Link href="/structure" className="inline-flex items-center gap-1.5">
+                <Network size={14} />
+                View Money Flow
+              </Link>
+            </Button>
+            <LogoutButton />
+          </div>
+        }
       />
 
       <div className="mb-5 grid grid-cols-3 gap-3 max-[760px]:grid-cols-2 max-[480px]:grid-cols-1">
@@ -407,7 +420,17 @@ async function SubPartnerDashboard({ actorUserId }: { actorUserId: string }) {
       <PageHeader
         title="Home"
         description="Your own Projects, Share %, and money — showing only your own numbers."
-        action={<LogoutButton />}
+        action={
+          <div className="flex items-center gap-2.5">
+            <Button asChild variant="ghost" tone="violet">
+              <Link href="/structure" className="inline-flex items-center gap-1.5">
+                <Network size={14} />
+                View Money Flow
+              </Link>
+            </Button>
+            <LogoutButton />
+          </div>
+        }
       />
 
       <div className="mb-5 grid grid-cols-3 gap-3 max-[760px]:grid-cols-2 max-[480px]:grid-cols-1">
@@ -558,7 +581,17 @@ export default async function DashboardHomePage() {
       <PageHeader
         title="Home"
         description="A quick overview across every Project — a handful of numbers, not a data dump."
-        action={<LogoutButton />}
+        action={
+          <div className="flex items-center gap-2.5">
+            <Button asChild variant="ghost" tone="violet">
+              <Link href="/structure" className="inline-flex items-center gap-1.5">
+                <Network size={14} />
+                View Money Flow
+              </Link>
+            </Button>
+            <LogoutButton />
+          </div>
+        }
       />
 
       <div className="mb-5 grid grid-cols-4 gap-3 max-[760px]:grid-cols-2 max-[480px]:grid-cols-1">
