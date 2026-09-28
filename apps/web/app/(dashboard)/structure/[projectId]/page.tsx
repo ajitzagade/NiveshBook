@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { ArrowLeft, Network } from "lucide-react";
-import type { OwnershipStructureTree } from "@niveshbook/core";
+import type { MoneyFlowEdge, OwnershipStructureTree } from "@niveshbook/core";
 import { Button, Card, EmptyState, PageHeader } from "@niveshbook/ui";
 import { getOwnershipStructure } from "@/lib/ownership-structure";
 import { StructureCanvas } from "./StructureCanvas";
@@ -12,7 +12,7 @@ import { VIEW_MODES, type ViewMode } from "./structure-layout";
 type LoadState =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "loaded"; projectName: string; tree: OwnershipStructureTree };
+  | { status: "loaded"; projectName: string; tree: OwnershipStructureTree; moneyFlowEdges: MoneyFlowEdge[] };
 
 /**
  * Ownership & Money-Flow Structure Diagram (Story 5.10) -- a new top-level
@@ -76,7 +76,12 @@ export default function OwnershipStructurePage() {
           subPartnerId: initialSubPartnerId,
         });
         if (!cancelled) {
-          setState({ status: "loaded", projectName: result.projectName, tree: result.tree });
+          setState({
+            status: "loaded",
+            projectName: result.projectName,
+            tree: result.tree,
+            moneyFlowEdges: result.moneyFlowEdges,
+          });
         }
       } catch (error) {
         if (!cancelled) {
@@ -130,7 +135,7 @@ export default function OwnershipStructurePage() {
     );
   }
 
-  const { tree, projectName } = state;
+  const { tree, projectName, moneyFlowEdges } = state;
 
   const isDrilled = tree.scope.type === "project" && drillPartnerId !== null;
   const effectiveTree: OwnershipStructureTree = isDrilled
@@ -140,6 +145,20 @@ export default function OwnershipStructurePage() {
         soloSubPartner: null,
       }
     : tree;
+
+  // Drilling into one Partner (client-side only, no re-fetch -- see this
+  // page's own doc comment) narrows the money-flow edges the same way it
+  // narrows `effectiveTree.partners`, so the diagram never shows another
+  // Partner's edges alongside the drilled-down Partner's own tree.
+  const drilledShareIds = isDrilled
+    ? new Set([
+        drillPartnerId,
+        ...(effectiveTree.partners[0]?.subPartners.map((sub) => sub.subPartnerId) ?? []),
+      ])
+    : null;
+  const effectiveMoneyFlowEdges = drilledShareIds
+    ? moneyFlowEdges.filter((edge) => drilledShareIds.has(edge.shareId))
+    : moneyFlowEdges;
 
   const isEmpty = effectiveTree.partners.length === 0 && !effectiveTree.soloSubPartner;
 
@@ -186,6 +205,7 @@ export default function OwnershipStructurePage() {
             viewMode={viewMode}
             projectName={projectName}
             onSelectPartner={handleSelectPartner}
+            moneyFlowEdges={effectiveMoneyFlowEdges}
           />
         )}
       </Card>

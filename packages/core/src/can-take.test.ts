@@ -3,6 +3,7 @@ import type { Money, PartnerShare, Percent, SubPartnerShare } from "@niveshbook/
 import { sumMoney } from "./decimal-math";
 import {
   computeCanTake,
+  resolveAvailableToWithdraw,
   PartnerSharesNotFullyAllocatedError,
   CanTakeSubPartnerSharesOverAllocatedError,
 } from "./can-take";
@@ -219,5 +220,30 @@ describe("computeCanTake", () => {
     };
 
     expect(() => computeCanTake("500000" as Money, partners, subsByPartnerId)).toThrow(/Amelia/);
+  });
+});
+
+describe("resolveAvailableToWithdraw", () => {
+  it("subtracts total actively withdrawn from total actively invested", () => {
+    expect(resolveAvailableToWithdraw("1000000" as Money, "400000" as Money)).toBe("600000");
+  });
+
+  it("shrinks further as more is withdrawn -- confirms the pool is live, not a stable per-person entitlement", () => {
+    const afterFirstWithdrawal = resolveAvailableToWithdraw("1000000" as Money, "400000" as Money);
+    const afterSecondWithdrawal = resolveAvailableToWithdraw("1000000" as Money, "700000" as Money);
+    expect(afterFirstWithdrawal).toBe("600000");
+    expect(afterSecondWithdrawal).toBe("300000");
+  });
+
+  it("floors at '0' rather than throwing when withdrawn exceeds invested (e.g. an investment was cancelled after its withdrawal was already taken)", () => {
+    expect(resolveAvailableToWithdraw("500000" as Money, "800000" as Money)).toBe("0");
+  });
+
+  it("returns '0' when nothing has been invested yet", () => {
+    expect(resolveAvailableToWithdraw("0" as Money, "0" as Money)).toBe("0");
+  });
+
+  it("returns the full invested amount when nothing has been withdrawn yet", () => {
+    expect(resolveAvailableToWithdraw("1000000" as Money, "0" as Money)).toBe("1000000");
   });
 });

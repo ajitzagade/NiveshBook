@@ -2233,3 +2233,84 @@ describe("authorizeScope — users:create (spec-user-creation, Owner/Admin-only,
     expect(result).toEqual({ allowed: false });
   });
 });
+
+/**
+ * Flexible pro-rata withdrawal reallocation ("declined share"): create/
+ * cancel are Owner/Admin-only, all-or-nothing for the role -- mirroring
+ * `adjustment_nettings:create`'s/`withdrawal_destination_allocations:create`'s
+ * identical shape, checked via `authorizeScope()` only, no self-access
+ * override of any kind (confirmed with the founder: a Partner/Sub-partner
+ * never declines their own share via this action). `:view` is a separate,
+ * all-3-roles action (below) -- the route itself does the actual row-level
+ * scoping for a non-Owner/Admin caller.
+ */
+describe.each([
+  "withdrawal_reallocations:create",
+  "withdrawal_reallocations:cancel",
+] as const)("authorizeScope — %s (Owner/Admin-only)", (action) => {
+  it("allows owner_admin", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("owner-1", action, deps)).toEqual({ allowed: true });
+  });
+
+  it.each(["partner", "sub_partner", "project_admin"] as const)("denies a %s", async (role) => {
+    const users = createFakeUserPort([makeUser({ id: "actor-1", role })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("actor-1", action, deps)).toEqual({ allowed: false });
+  });
+
+  it("denies a partner even when their own userId is passed as scopeOwnerIds -- not a SCOPE_SELF_ACCESS_ACTIONS entry", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-user-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("partner-user-1", action, deps, ["partner-user-1"])).toEqual({
+      allowed: false,
+    });
+  });
+
+  it("denies an actor that no longer exists", async () => {
+    const users = createFakeUserPort([]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("ghost", action, deps)).toEqual({ allowed: false });
+  });
+});
+
+/**
+ * `withdrawal_reallocations:view` -- granted to all 3 roles directly in the
+ * table (mirrors `adjust_next_time:view`'s/`money_history:list`'s identical
+ * shape), since the route itself does the real row-level scoping for a
+ * non-Owner/Admin caller. `project_admin` still gets nothing (FR6's role
+ * exists but is granted nothing yet, parity with every other action).
+ */
+describe("authorizeScope — withdrawal_reallocations:view (all 3 roles)", () => {
+  it.each(["owner_admin", "partner", "sub_partner"] as const)("allows a %s", async (role) => {
+    const users = createFakeUserPort([makeUser({ id: "actor-1", role })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("actor-1", "withdrawal_reallocations:view", deps)).toEqual({
+      allowed: true,
+    });
+  });
+
+  it("denies project_admin", async () => {
+    const users = createFakeUserPort([makeUser({ id: "pa-1", role: "project_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("pa-1", "withdrawal_reallocations:view", deps)).toEqual({
+      allowed: false,
+    });
+  });
+
+  it("denies an actor that no longer exists", async () => {
+    const users = createFakeUserPort([]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("ghost", "withdrawal_reallocations:view", deps)).toEqual({
+      allowed: false,
+    });
+  });
+});

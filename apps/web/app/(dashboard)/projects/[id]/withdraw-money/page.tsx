@@ -13,16 +13,19 @@ import {
   Plus,
   Save,
   ShieldCheck,
+  SkipForward,
   User,
   Wallet,
   X,
 } from "lucide-react";
-import type { PartnerCanTake, PartnerWithdrawalAdjustment } from "@niveshbook/core";
+import type { PartnerWithdrawalAdjustment } from "@niveshbook/core";
 import type {
   DestinationType,
   Money,
   PaymentMode,
   Project,
+  WithdrawalReallocation,
+  WithdrawalReallocationAllocation,
   WithdrawalTransaction,
 } from "@niveshbook/types";
 import {
@@ -48,7 +51,7 @@ import {
   formatAmount,
   type StatusChipVariant,
 } from "@niveshbook/ui";
-import { getCanTake } from "@/lib/can-take";
+import { getCanTake, type PartnerCanTakeWithEffective } from "@/lib/can-take";
 import { getWithdrawalAdjustments } from "@/lib/withdrawal-adjustments";
 import { listProjects } from "@/lib/projects";
 import {
@@ -57,6 +60,14 @@ import {
   listWithdrawalTransactions,
   recordWithdrawalTransaction,
 } from "@/lib/withdrawal-transactions";
+import {
+  cancelWithdrawalReallocation,
+  createWithdrawalReallocation,
+  listWithdrawalReallocations,
+  previewWithdrawalReallocation,
+  WithdrawalReallocationsForbiddenError,
+  type PreviewWithdrawalReallocationAllocationLeg,
+} from "@/lib/withdrawal-reallocations";
 import { recordDestinationAllocation } from "@/lib/withdrawal-destination-allocations";
 import {
   DestinationRequirementAndSharePickers,
@@ -67,7 +78,7 @@ import {
 type CanTakeState =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "loaded"; availableToWithdraw: string; partners: PartnerCanTake[] };
+  | { status: "loaded"; availableToWithdraw: string; partners: PartnerCanTakeWithEffective[] };
 
 type WithdrawalsState =
   | { status: "loading" }
@@ -85,6 +96,41 @@ type AdjustmentsState =
   | { status: "loading" }
   | { status: "error"; message: string }
   | { status: "loaded"; partners: PartnerWithdrawalAdjustment[] };
+
+/**
+ * Flexible pro-rata withdrawal reallocation ("Skip this round") -- every
+ * currently-active decline and its allocation legs for this Project.
+ * `"forbidden"` is a distinct terminal state from `"error"` -- the endpoint
+ * is Owner/Admin-only, so a Partner/Sub-partner viewing their own row gets a
+ * 403 on every page load; that's treated as "hide this feature area
+ * entirely" (no Skip buttons, no Active Reallocations panel), not as an
+ * error banner shown to every non-Owner/Admin viewer.
+ */
+type ReallocationsState =
+  | { status: "loading" }
+  | { status: "forbidden" }
+  | { status: "error"; message: string }
+  | {
+      status: "loaded";
+      reallocations: WithdrawalReallocation[];
+      allocations: WithdrawalReallocationAllocation[];
+      /** `true` for an Owner/Admin's unfiltered oversight view; `false` for a Partner's/Sub-partner's own row-scoped view -- gates the Skip/Undo/Cancel UI below, since both roles' fetches succeed now (`GET` is no longer Owner/Admin-only). */
+      isOwnerAdminView: boolean;
+    };
+
+/** The Partner/Sub-partner currently declining some of their Can Take in the Skip dialog. */
+interface DeclineTarget {
+  partyType: "partner" | "sub_partner";
+  shareId: string;
+  personName: string;
+}
+
+/** The Skip dialog's live pro-rata split preview state -- `"idle"` before the dialog has a target+amount to preview yet. */
+type DeclinePreviewState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "loaded"; effectiveCanTake: string; allocationLegs: PreviewWithdrawalReallocationAllocationLeg[] };
 
 interface RecordWithdrawalTarget {
   partyType: "partner" | "sub_partner";
@@ -383,6 +429,33 @@ export default function WithdrawMoneyPage() {
   const [state, setState] = useState<CanTakeState>({ status: "loading" });
   const [withdrawalsState, setWithdrawalsState] = useState<WithdrawalsState>({ status: "loading" });
   const [adjustmentsState, setAdjustmentsState] = useState<AdjustmentsState>({ status: "loading" });
+  const [reallocationsState, setReallocationsState] = useState<ReallocationsState>({ status: "loading" });
+
+  // Flexible pro-rata withdrawal reallocation: the "Skip this round" dialog
+  // -- mirrors `recordTarget`'s form-state shape, minus the fields this
+  // action doesn't need (date/paymentMode/referenceNumber).
+  const [declineTarget, setDeclineTarget] = useState<DeclineTarget | null>(null);
+  const [declineAmount, setDeclineAmount] = useState("");
+  const [declineNotes, setDeclineNotes] = useState("");
+  const [declineFormError, setDeclineFormError] = useState<string | null>(null);
+  const [declineSubmitting, setDeclineSubmitting] = useState(false);
+  const [declineIdempotencyKey, setDeclineIdempotencyKey] = useState("");
+
+  // The Skip dialog's live pro-rata split preview -- a debounced,
+  // read-only `GET .../preview` call (never the real create path), kept
+  // separate from `declineFormError`/`declineSubmitting` since a preview
+  // failure shouldn't block the actual Skip button.
+  const [declinePreview, setDeclinePreview] = useState<DeclinePreviewState>({ status: "idle" });
+
+  // The Active Reallocations panel's own Cancel confirmation -- mirrors
+  // `cancelTarget`'s shape one feature over (no editable fields, just a
+  // confirm step, since cancelling is close to irreversible once anything's
+  // been consumed).
+  const [cancelReallocationTarget, setCancelReallocationTarget] = useState<WithdrawalReallocation | null>(
+    null,
+  );
+  const [cancelReallocationFormError, setCancelReallocationFormError] = useState<string | null>(null);
+  const [cancelReallocationSubmitting, setCancelReallocationSubmitting] = useState(false);
 
   const [recordTarget, setRecordTarget] = useState<RecordWithdrawalTarget | null>(null);
   const [recordAmount, setRecordAmount] = useState("");
@@ -524,6 +597,34 @@ export default function WithdrawMoneyPage() {
     }
   }, [projectId]);
 
+  /**
+   * Fetches every active withdrawal reallocation for the Project --
+   * Owner/Admin-only, so a 403 here (`WithdrawalReallocationsForbiddenError`)
+   * is a distinct, expected outcome for a Partner/Sub-partner session, not a
+   * genuine error -- mirrors `refreshAdjustments`'s `useCallback` shape one
+   * feature over.
+   */
+  const refreshReallocations = useCallback(async () => {
+    try {
+      const result = await listWithdrawalReallocations(projectId);
+      setReallocationsState({
+        status: "loaded",
+        reallocations: result.reallocations,
+        allocations: result.allocations,
+        isOwnerAdminView: result.isOwnerAdminView,
+      });
+    } catch (error) {
+      if (error instanceof WithdrawalReallocationsForbiddenError) {
+        setReallocationsState({ status: "forbidden" });
+        return;
+      }
+      setReallocationsState({
+        status: "error",
+        message: error instanceof Error ? error.message : "Something went wrong.",
+      });
+    }
+  }, [projectId]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -575,10 +676,14 @@ export default function WithdrawMoneyPage() {
       await refreshAdjustments();
     })();
 
+    void (async () => {
+      await refreshReallocations();
+    })();
+
     return () => {
       cancelled = true;
     };
-  }, [projectId, refreshAdjustments]);
+  }, [projectId, refreshAdjustments, refreshReallocations]);
 
   /** Finds a Partner's Withdrawal Adjustment status (Story 4.3) in an already-loaded `AdjustmentsState` -- `null` if not loaded yet, errored, or (defensively) not found. */
   function findPartnerAdjustment(partnerId: string): AdjustmentChipInfo | null {
@@ -593,6 +698,58 @@ export default function WithdrawMoneyPage() {
     return partner?.subPartners.find((sub) => sub.subPartnerId === subPartnerId) ?? null;
   }
 
+  /** This share's own currently-active decline (if any), or `null` if it hasn't loaded yet, errored, is forbidden (non-Owner/Admin session), or this share simply hasn't declined anything. */
+  function findActiveDecline(
+    partyType: "partner" | "sub_partner",
+    shareId: string,
+  ): WithdrawalReallocation | null {
+    if (reallocationsState.status !== "loaded") return null;
+    return (
+      reallocationsState.reallocations.find(
+        (reallocation) => reallocation.partyType === partyType && reallocation.shareId === shareId,
+      ) ?? null
+    );
+  }
+
+  /** Every allocation leg belonging to one reallocation -- for the Active Reallocations panel's per-recipient breakdown. */
+  function allocationsFor(reallocationId: string): WithdrawalReallocationAllocation[] {
+    if (reallocationsState.status !== "loaded") return [];
+    return reallocationsState.allocations.filter((allocation) => allocation.reallocationId === reallocationId);
+  }
+
+  /** Resolves a `(partyType, shareId)`'s display name from this page's already-loaded Can Take tree -- used by the Active Reallocations panel to show a human name instead of a raw id. Falls back to the id itself if the share can't be found (e.g. Can Take hasn't loaded yet). */
+  function findShareName(partyType: "partner" | "sub_partner", shareId: string): string {
+    if (state.status !== "loaded") return shareId;
+    if (partyType === "partner") {
+      return state.partners.find((partner) => partner.partnerId === shareId)?.name ?? shareId;
+    }
+    for (const partner of state.partners) {
+      const match = partner.subPartners.find((sub) => sub.subPartnerId === shareId);
+      if (match) return match.name;
+    }
+    return shareId;
+  }
+
+  /**
+   * The name of whoever declined the bonus this `(partyType, shareId)` is
+   * currently receiving -- for the "Bonus ... (declined by {name})" badge
+   * attribution. Works for both an Owner/Admin's unfiltered view and a
+   * Partner's/Sub-partner's own row-scoped view (`reallocationsState` is
+   * populated, just filtered to their own stake, in both cases) -- `null`
+   * whenever this share has no unconsumed bonus leg at all, or the data
+   * hasn't loaded yet.
+   */
+  function findDeclinerNameForRecipient(partyType: "partner" | "sub_partner", shareId: string): string | null {
+    if (reallocationsState.status !== "loaded") return null;
+    const leg = reallocationsState.allocations.find(
+      (allocation) => allocation.partyType === partyType && allocation.shareId === shareId,
+    );
+    if (!leg) return null;
+    const reallocation = reallocationsState.reallocations.find((r) => r.id === leg.reallocationId);
+    if (!reallocation) return null;
+    return findShareName(reallocation.partyType, reallocation.shareId);
+  }
+
   /** Every withdrawal recorded against `shareId`/`partyType` on this Project, or `[]` if the list hasn't loaded (yet). */
   function recordedWithdrawalsFor(
     partyType: "partner" | "sub_partner",
@@ -605,22 +762,28 @@ export default function WithdrawMoneyPage() {
   }
 
   /**
-   * Finds a Partner/Sub-partner's *live* Can Take (Story 4.1) in this page's
+   * Finds a Partner/Sub-partner's *effective* Can Take (Story 4.1, boosted/
+   * reduced by flexible pro-rata withdrawal reallocation) in this page's
    * already-loaded `state` -- `null` if not loaded yet, errored, or
    * (defensively) not found. Drives Story 4.5's client-side "does the
    * entered amount exceed Can Take" check (`handleRecordWithdrawalSubmit`
-   * below); the target's Can Take shown in the panel (`partner.canTake`/
-   * `sub.canTake`) is the exact same figure the route independently
-   * recomputes server-side (`computeCanTake`) before writing.
+   * below); this must be `effectiveCanTake`, not the plain `canTake`, since
+   * that's the exact ceiling the route's `assertExtraWithdrawalAuthorized`
+   * gate independently re-derives server-side (`reducedCanTake +
+   * availableReallocationBonus`) before writing -- using the plain figure
+   * here would pop an unnecessary Authorize-Extra-Withdrawal prompt for a
+   * recipient with an unconsumed bonus, or let a decliner's now-reduced
+   * withdrawal reach the server and fail with a raw error instead of that
+   * same graceful confirmation flow.
    */
   function canTakeForTarget(partyType: "partner" | "sub_partner", shareId: string): Money | null {
     if (state.status !== "loaded") return null;
     if (partyType === "partner") {
-      return state.partners.find((partner) => partner.partnerId === shareId)?.canTake ?? null;
+      return state.partners.find((partner) => partner.partnerId === shareId)?.effectiveCanTake ?? null;
     }
     for (const partner of state.partners) {
       const match = partner.subPartners.find((sub) => sub.subPartnerId === shareId);
-      if (match) return match.canTake;
+      if (match) return match.effectiveCanTake;
     }
     return null;
   }
@@ -845,6 +1008,165 @@ export default function WithdrawMoneyPage() {
     await submitWithdrawal(true);
   }
 
+  // Debounced live preview of the pro-rata split for the Skip dialog's
+  // current target+amount -- re-fetches (`GET .../preview`, read-only) 400ms
+  // after the user stops typing, so every keystroke doesn't fire a request.
+  // Resets to `"idle"` whenever the dialog is closed (`declineTarget` is
+  // `null`) or the amount field is empty (mid-edit, nothing to preview yet).
+  // Every `setDeclinePreview` call is nested inside the async IIFE below --
+  // `react-hooks/set-state-in-effect` flags a direct call as if it happened
+  // synchronously in the effect; mirrors `money-history/page.tsx`'s/
+  // `available-balance/page.tsx`'s identical established precedent.
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    void (async () => {
+      if (!declineTarget || declineAmount.trim().length === 0) {
+        setDeclinePreview({ status: "idle" });
+        return;
+      }
+
+      setDeclinePreview({ status: "loading" });
+      timer = setTimeout(() => {
+        previewWithdrawalReallocation(projectId, declineTarget.partyType, declineTarget.shareId, declineAmount)
+          .then((result) => {
+            if (!cancelled) {
+              setDeclinePreview({
+                status: "loaded",
+                effectiveCanTake: result.effectiveCanTake,
+                allocationLegs: result.allocationLegs,
+              });
+            }
+          })
+          .catch((error: unknown) => {
+            if (!cancelled) {
+              setDeclinePreview({
+                status: "error",
+                message: error instanceof Error ? error.message : "Something went wrong.",
+              });
+            }
+          });
+      }, 400);
+    })();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [declineTarget, declineAmount, projectId]);
+
+  /**
+   * Opens the "Skip this round" dialog for one Partner/Sub-partner --
+   * Owner/Admin-only. Pre-fills the amount with their own current
+   * *effective* Can Take (the boosted/reduced ceiling, not the plain base
+   * figure) so the default is "decline everything you currently have
+   * available", editable down to a partial decline. Mirrors
+   * `openRecordWithdrawalDialog`'s exact shape one feature over.
+   */
+  function openDeclineDialog(
+    partyType: "partner" | "sub_partner",
+    shareId: string,
+    personName: string,
+    effectiveCanTake: string,
+  ) {
+    setDeclineTarget({ partyType, shareId, personName });
+    setDeclineAmount(effectiveCanTake);
+    setDeclineNotes("");
+    setDeclineFormError(null);
+    setDeclineIdempotencyKey(crypto.randomUUID());
+  }
+
+  function closeDeclineDialog() {
+    setDeclineTarget(null);
+  }
+
+  /**
+   * Saves a decline (flexible pro-rata withdrawal reallocation) -- the
+   * server computes the pro-rata split across every other current Partner/
+   * Sub-partner automatically (no client-side split preview: this page
+   * doesn't import `packages/core`'s split calculation, mirroring this
+   * codebase's established "never import `@niveshbook/core` runtime code
+   * into a client-bundled page" constraint). Refreshes Can Take, Withdrawal
+   * Adjustment, and the reallocations list on success -- a decline changes
+   * every other current Partner's/Sub-partner's effective ceiling, not just
+   * the decliner's own.
+   */
+  async function handleDeclineSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!declineTarget) return;
+
+    setDeclineFormError(null);
+    setDeclineSubmitting(true);
+    try {
+      await createWithdrawalReallocation(
+        projectId,
+        {
+          partyType: declineTarget.partyType,
+          shareId: declineTarget.shareId,
+          declinedAmount: declineAmount,
+          notes: declineNotes.trim().length > 0 ? declineNotes.trim() : null,
+        },
+        declineIdempotencyKey,
+      );
+      toast.success(`${formatAmount(declineAmount)} declined by ${declineTarget.personName}`);
+    } catch (err) {
+      setDeclineFormError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+      setDeclineSubmitting(false);
+      return;
+    }
+
+    setDeclineSubmitting(false);
+    closeDeclineDialog();
+    await Promise.all([
+      refreshCanTake().catch(() => {}),
+      refreshAdjustments().catch(() => {}),
+      refreshReallocations().catch(() => {}),
+    ]);
+  }
+
+  /** Opens the Active Reallocations panel's Cancel confirmation for one reallocation -- Owner/Admin-only, mirrors `openCancelWithdrawalDialog`'s shape one feature over. */
+  function openCancelReallocationDialog(reallocation: WithdrawalReallocation) {
+    setCancelReallocationTarget(reallocation);
+    setCancelReallocationFormError(null);
+  }
+
+  function closeCancelReallocationDialog() {
+    setCancelReallocationTarget(null);
+  }
+
+  /**
+   * Confirms and performs the cancel -- no form fields (cancelling never
+   * changes the declined amount), mirroring `handleCancelWithdrawalConfirm`'s
+   * identical plain-confirm shape. The server rejects this (409
+   * `already_consumed`) once any recipient has drawn on their leg, surfaced
+   * inline exactly like every other domain error this page already handles.
+   */
+  async function handleCancelReallocationConfirm() {
+    if (!cancelReallocationTarget) return;
+
+    setCancelReallocationFormError(null);
+    setCancelReallocationSubmitting(true);
+    try {
+      await cancelWithdrawalReallocation(projectId, cancelReallocationTarget.id);
+      toast.success("Reallocation cancelled");
+    } catch (err) {
+      setCancelReallocationFormError(
+        err instanceof Error ? err.message : "Something went wrong. Please try again.",
+      );
+      setCancelReallocationSubmitting(false);
+      return;
+    }
+
+    setCancelReallocationSubmitting(false);
+    closeCancelReallocationDialog();
+    await Promise.all([
+      refreshCanTake().catch(() => {}),
+      refreshAdjustments().catch(() => {}),
+      refreshReallocations().catch(() => {}),
+    ]);
+  }
+
   /** Opens the Edit Withdrawal dialog, pre-filled with `transaction`'s current values (Story 4.11) -- Owner/Admin-facing only, mirroring `add-money/page.tsx`'s `openEditPaymentDialog` one ledger over. */
   function openEditWithdrawalDialog(transaction: WithdrawalTransaction) {
     setEditTarget({ transaction });
@@ -1058,7 +1380,16 @@ export default function WithdrawMoneyPage() {
                       {formatSharePercent(partner.sharePercent)}%
                     </span>
                   }
-                  action={<Amount value={partner.canTake} />}
+                  action={
+                    <div className="flex flex-col items-end gap-1">
+                      <Amount value={partner.canTake} />
+                      <ReallocationBadge
+                        canTake={partner.canTake}
+                        effectiveCanTake={partner.effectiveCanTake}
+                        declinerName={findDeclinerNameForRecipient("partner", partner.partnerId)}
+                      />
+                    </div>
+                  }
                   nested={
                     partner.subPartners.length > 0
                       ? partner.subPartners.map((sub) => {
@@ -1075,13 +1406,22 @@ export default function WithdrawMoneyPage() {
                                   {formatSharePercent(sub.sharePercent)}%
                                 </span>
                               }
-                              action={<Amount value={sub.canTake} size="sm" />}
+                              action={
+                                <div className="flex flex-col items-end gap-1">
+                                  <Amount value={sub.canTake} size="sm" />
+                                  <ReallocationBadge
+                                    canTake={sub.canTake}
+                                    effectiveCanTake={sub.effectiveCanTake}
+                                    declinerName={findDeclinerNameForRecipient("sub_partner", sub.subPartnerId)}
+                                  />
+                                </div>
+                              }
                             >
                               <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
                                 <AdjustmentChip adjustment={subAdjustment} />
                                 <RecommendedWithdrawal adjustment={subAdjustment} />
                               </div>
-                              <div className="mt-1.5">
+                              <div className="mt-1.5 flex flex-wrap gap-2">
                                 <Button
                                   variant="ghost"
                                   tone="danger"
@@ -1092,6 +1432,35 @@ export default function WithdrawMoneyPage() {
                                 >
                                   Record Withdrawal
                                 </Button>
+                                {reallocationsState.status === "loaded" && reallocationsState.isOwnerAdminView ? (
+                                  (() => {
+                                    const activeDecline = findActiveDecline("sub_partner", sub.subPartnerId);
+                                    return activeDecline ? (
+                                      <Button
+                                        variant="ghost"
+                                        onClick={() => openCancelReallocationDialog(activeDecline)}
+                                        icon={<Ban size={14} />}
+                                      >
+                                        Undo Skip
+                                      </Button>
+                                    ) : (
+                                      <Button
+                                        variant="ghost"
+                                        onClick={() =>
+                                          openDeclineDialog(
+                                            "sub_partner",
+                                            sub.subPartnerId,
+                                            sub.name,
+                                            sub.effectiveCanTake,
+                                          )
+                                        }
+                                        icon={<SkipForward size={14} />}
+                                      >
+                                        Skip this round
+                                      </Button>
+                                    );
+                                  })()
+                                ) : null}
                               </div>
                               <RecordedWithdrawals
                                 transactions={recordedWithdrawalsFor("sub_partner", sub.subPartnerId)}
@@ -1127,7 +1496,7 @@ export default function WithdrawMoneyPage() {
                     <RecommendedWithdrawal adjustment={partnerAdjustment} />
                   </div>
 
-                  <div className="mt-1.5">
+                  <div className="mt-1.5 flex flex-wrap gap-2">
                     <Button
                       variant="ghost"
                       tone="danger"
@@ -1136,6 +1505,35 @@ export default function WithdrawMoneyPage() {
                     >
                       Record Withdrawal
                     </Button>
+                    {reallocationsState.status === "loaded" && reallocationsState.isOwnerAdminView ? (
+                      (() => {
+                        const activeDecline = findActiveDecline("partner", partner.partnerId);
+                        return activeDecline ? (
+                          <Button
+                            variant="ghost"
+                            onClick={() => openCancelReallocationDialog(activeDecline)}
+                            icon={<Ban size={14} />}
+                          >
+                            Undo Skip
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            onClick={() =>
+                              openDeclineDialog(
+                                "partner",
+                                partner.partnerId,
+                                partner.name,
+                                partner.effectiveCanTake,
+                              )
+                            }
+                            icon={<SkipForward size={14} />}
+                          >
+                            Skip this round
+                          </Button>
+                        );
+                      })()
+                    ) : null}
                   </div>
                   <RecordedWithdrawals
                     transactions={recordedWithdrawalsFor("partner", partner.partnerId)}
@@ -1157,6 +1555,158 @@ export default function WithdrawMoneyPage() {
           </>
         )}
       </Card>
+
+      {reallocationsState.status === "loaded" &&
+      reallocationsState.isOwnerAdminView &&
+      reallocationsState.reallocations.length > 0 ? (
+        <Card className="mt-4">
+          <h2 className="text-[14px] font-semibold text-ink">Active Reallocations</h2>
+          <p className="mt-1 text-[12.6px] text-ink-soft">
+            Who&apos;s declined some of their Can Take, and how the pro-rata split has been used so far.
+          </p>
+          <div className="mt-3 flex flex-col gap-3">
+            {reallocationsState.reallocations.map((reallocation) => {
+              const legs = allocationsFor(reallocation.id);
+              const declinerName = findShareName(reallocation.partyType, reallocation.shareId);
+              return (
+                <div key={reallocation.id} className="rounded-el border border-border p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-[13.4px] font-semibold text-ink">
+                      {declinerName} declined <Amount value={reallocation.declinedAmount} size="sm" />
+                    </p>
+                    <Button
+                      variant="ghost"
+                      tone="danger"
+                      onClick={() => openCancelReallocationDialog(reallocation)}
+                      icon={<Ban size={14} />}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                  {reallocation.notes ? (
+                    <p className="mt-1 text-[12.6px] text-ink-soft">{reallocation.notes}</p>
+                  ) : null}
+                  <ul className="mt-2 flex flex-col gap-1">
+                    {legs.map((leg) => (
+                      <li key={leg.id} className="text-[12.6px] text-ink-soft">
+                        {findShareName(leg.partyType, leg.shareId)} -- allocated{" "}
+                        <Amount value={leg.allocatedAmount} size="sm" />, consumed{" "}
+                        <Amount value={leg.consumedAmount} size="sm" />
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      ) : null}
+
+      <Dialog
+        open={declineTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) closeDeclineDialog();
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>Skip this round{declineTarget ? ` — ${declineTarget.personName}` : ""}</DialogTitle>
+          <DialogDescription>
+            This amount is automatically split among every other current Partner and Sub-partner, based on
+            their Share % -- a one-time bonus for right now, never a change to anyone&apos;s Share %.
+          </DialogDescription>
+          <form onSubmit={handleDeclineSubmit} className="mt-4">
+            <Field>
+              <Label htmlFor="realloc-amount">Amount to decline</Label>
+              <Input
+                id="realloc-amount"
+                name="declinedAmount"
+                inputMode="decimal"
+                value={declineAmount}
+                onChange={(event) => setDeclineAmount(event.target.value)}
+                required
+                autoFocus
+              />
+              <Helper>Pre-filled with the full amount currently available -- editable down for a partial decline.</Helper>
+            </Field>
+
+            <DeclineSplitPreview preview={declinePreview} resolveName={findShareName} />
+
+            <Field>
+              <Label htmlFor="realloc-notes">Notes</Label>
+              <Input
+                id="realloc-notes"
+                name="notes"
+                value={declineNotes}
+                onChange={(event) => setDeclineNotes(event.target.value)}
+              />
+            </Field>
+
+            {declineFormError ? (
+              <p role="alert" className="mb-4 text-[13.4px] text-danger">
+                {declineFormError}
+              </p>
+            ) : null}
+
+            <div className="flex gap-2.5">
+              <Button type="submit" disabled={declineSubmitting} icon={<SkipForward size={14} />}>
+                {declineSubmitting ? "Saving…" : "Skip"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={closeDeclineDialog}
+                disabled={declineSubmitting}
+                icon={<X size={14} />}
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={cancelReallocationTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) closeCancelReallocationDialog();
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>Cancel this reallocation?</DialogTitle>
+          <DialogDescription>
+            {cancelReallocationTarget ? (
+              <>
+                Restores <Amount value={cancelReallocationTarget.declinedAmount} size="sm" /> to{" "}
+                {findShareName(cancelReallocationTarget.partyType, cancelReallocationTarget.shareId)}&apos;s
+                own Can Take. This only works while nobody has drawn on their share of it yet.
+              </>
+            ) : null}
+          </DialogDescription>
+          {cancelReallocationFormError ? (
+            <p role="alert" className="mt-4 text-[13.4px] text-danger">
+              {cancelReallocationFormError}
+            </p>
+          ) : null}
+          <div className="mt-4 flex gap-2.5">
+            <Button
+              tone="danger"
+              onClick={handleCancelReallocationConfirm}
+              disabled={cancelReallocationSubmitting}
+              icon={<Ban size={14} />}
+            >
+              {cancelReallocationSubmitting ? "Cancelling…" : "Yes, cancel it"}
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={closeCancelReallocationDialog}
+              disabled={cancelReallocationSubmitting}
+              icon={<X size={14} />}
+            >
+              Never mind
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={recordTarget !== null}
@@ -1822,6 +2372,95 @@ function RecordedWithdrawals({
           ) : null}
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * Flexible pro-rata withdrawal reallocation: the difference between a
+ * leaf's plain `canTake` and its *effective* (boosted/reduced) ceiling --
+ * `null` when they're identical (the common case, no active reallocation
+ * activity touches this share). A plain `Number()` comparison/subtraction is
+ * fine here -- this is a UI display decision only, never a value fed into a
+ * write path (AD-2's raw-arithmetic ban applies to `packages/core`/
+ * `packages/db`, not this display-only helper in `apps/web`).
+ */
+function reallocationDiff(canTake: Money, effectiveCanTake: Money): { boosted: boolean; diff: Money } | null {
+  if (canTake === effectiveCanTake) return null;
+  const diff = Math.abs(Number(effectiveCanTake) - Number(canTake));
+  return { boosted: Number(effectiveCanTake) > Number(canTake), diff: diff.toFixed(2) as Money };
+}
+
+/**
+ * The small badge shown next to a Partner's/Sub-partner's Can Take once
+ * their effective ceiling differs from the plain figure -- `success`
+ * (boosted, someone else's unconsumed bonus) or `neutral` (reduced, this
+ * share's own active decline), mirroring `AdjustmentChip`'s established
+ * "always pair color with a text label" convention. Renders nothing when
+ * there's no active reallocation activity for this leaf.
+ */
+function ReallocationBadge({
+  canTake,
+  effectiveCanTake,
+  declinerName,
+}: {
+  canTake: Money;
+  effectiveCanTake: Money;
+  /** Whoever declined this bonus, if known -- only ever shown on the "boosted" side; a decliner's own reduced badge never needs to attribute itself. */
+  declinerName?: string | null;
+}) {
+  const info = reallocationDiff(canTake, effectiveCanTake);
+  if (!info) return null;
+  return (
+    <StatusChip variant={info.boosted ? "success" : "neutral"}>
+      {info.boosted ? "Bonus " : "Declined "}
+      <Amount value={info.diff} size="sm" />
+      {info.boosted && declinerName ? ` (declined by ${declinerName})` : null}
+    </StatusChip>
+  );
+}
+
+/**
+ * The Skip dialog's live pro-rata split preview -- "the computed pro-rata
+ * split for every other current Partner/Sub-partner before confirming"
+ * (this codebase's approved plan). A debounced `GET .../preview` result,
+ * never a client-side recomputation (this page never imports `packages/core`'s
+ * split-calculation into the bundle). Renders nothing while idle -- the
+ * dialog's Amount field and Skip button work fine without it; this is a
+ * secondary enrichment, matching every other "renders nothing until loaded"
+ * convention already used on this page.
+ */
+function DeclineSplitPreview({
+  preview,
+  resolveName,
+}: {
+  preview: DeclinePreviewState;
+  resolveName: (partyType: "partner" | "sub_partner", shareId: string) => string;
+}) {
+  if (preview.status === "idle") return null;
+  if (preview.status === "loading") {
+    return <p className="mb-3 text-[12.6px] text-ink-faint">Working out the split…</p>;
+  }
+  if (preview.status === "error") {
+    return (
+      <p role="alert" className="mb-3 text-[12.6px] text-danger">
+        Couldn&apos;t preview the split: {preview.message}
+      </p>
+    );
+  }
+  if (preview.allocationLegs.length === 0) {
+    return null;
+  }
+  return (
+    <div className="mb-3 rounded-el border border-border p-2.5">
+      <p className="text-[12.6px] font-semibold text-ink-soft">This will be split as:</p>
+      <ul className="mt-1 flex flex-col gap-0.5">
+        {preview.allocationLegs.map((leg) => (
+          <li key={`${leg.partyType}:${leg.shareId}`} className="text-[12.6px] text-ink-soft">
+            {resolveName(leg.partyType, leg.shareId)}: <Amount value={leg.allocatedAmount as Money} size="sm" />
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

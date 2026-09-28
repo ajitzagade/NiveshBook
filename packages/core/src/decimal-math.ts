@@ -369,3 +369,72 @@ export function splitMoneyByPercents(amount: Money, percents: readonly Percent[]
 
   return shares.map((shareScaled) => formatMoneyScaled(Number(shareScaled)) as Money);
 }
+
+/**
+ * Thrown by `splitMoneyByWeights` when `weights` is empty or sums to `"0"` --
+ * there is nothing to proportionally split against.
+ */
+export class SplitWeightTotalError extends Error {
+  constructor() {
+    super("Cannot split money by weights that sum to zero -- there is nothing to split proportionally against.");
+    this.name = "SplitWeightTotalError";
+  }
+}
+
+/**
+ * Splits `amount` proportionally across `weights` via the same largest-
+ * remainder method as `splitMoneyByPercents` (returned `Money[]` always sums
+ * to exactly `amount`), but -- unlike that function -- `weights` does NOT
+ * need to sum to exactly `"100"`. Needed for Withdrawal Reallocation
+ * (founder feedback 2026-09-28): redistributing one declining Partner/Sub-
+ * partner's declined amount among the *other* current Partners'/Sub-
+ * partners' own Share %s doesn't naturally sum to 100 once the decliner's
+ * own weight is excluded, so `splitMoneyByPercents`'s exact-100 requirement
+ * would reject every real call -- this sibling function normalizes by each
+ * weight's own share of the total weight sum instead of a fixed 100.
+ * Deliberately kept as an independent function rather than refactoring
+ * `splitMoneyByPercents` to share this logic (AGENTS.md's Open/Closed:
+ * extend via a new implementation, never edit an already-shipped,
+ * financially-critical function to add a branch it never needed).
+ *
+ * `weights` are still `Percent`-branded (each one IS a real Share % already
+ * validated by `toPercent`) -- only the *sum* requirement is relaxed here.
+ */
+export function splitMoneyByWeights(amount: Money, weights: readonly Percent[]): Money[] {
+  const totalScaled = weights.reduce((sum, weight) => sum + parseScaled(weight), 0);
+  if (totalScaled <= 0) {
+    throw new SplitWeightTotalError();
+  }
+
+  const amountScaled = BigInt(parseMoneyScaled(amount));
+  const denominator = BigInt(totalScaled);
+
+  const entries = weights.map((weight, index) => {
+    const weightScaled = BigInt(parseScaled(weight));
+    const numerator = amountScaled * weightScaled;
+    return {
+      index,
+      share: numerator / denominator,
+      remainder: numerator % denominator,
+    };
+  });
+
+  const allocatedTotal = entries.reduce((sum, entry) => sum + entry.share, 0n);
+  let leftoverPaise = amountScaled - allocatedTotal;
+
+  const byRemainderDesc = [...entries].sort((a, b) => {
+    if (a.remainder === b.remainder) {
+      return a.index - b.index;
+    }
+    return a.remainder > b.remainder ? -1 : 1;
+  });
+
+  const shares = entries.map((entry) => entry.share);
+  for (const entry of byRemainderDesc) {
+    if (leftoverPaise <= 0n) break;
+    shares[entry.index] = (shares[entry.index] ?? 0n) + 1n;
+    leftoverPaise -= 1n;
+  }
+
+  return shares.map((shareScaled) => formatMoneyScaled(Number(shareScaled)) as Money);
+}

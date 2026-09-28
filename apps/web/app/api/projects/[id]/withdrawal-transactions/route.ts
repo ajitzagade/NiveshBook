@@ -7,9 +7,15 @@ import {
   listCurrentPartnerShares,
   listCurrentSubPartnerSharesForProject,
   computeCanTake,
+  resolveAvailableToWithdraw,
   recordWithdrawalTransaction,
   listWithdrawalTransactions,
   toMoney,
+  compareMoney,
+  subtractMoney,
+  sumDeclinedByShare,
+  sumUnconsumedBonusForShare,
+  resolveBonusToConsume,
   InvalidMoneyError,
   InvalidWithdrawalAmountError,
   InvalidWithdrawalDateError,
@@ -22,7 +28,9 @@ import {
   assertExtraWithdrawalAuthorized,
   OwnerAdminRequiredForExtraWithdrawalError,
   ExtraWithdrawalAuthorizationRequiredError,
+  ReallocationBonusInsufficientError,
   type PartnerCanTake,
+  type WithdrawalTransactionPort,
 } from "@niveshbook/core";
 import {
   createSessionPort,
@@ -32,6 +40,8 @@ import {
   createSubPartnerSharePort,
   createInvestmentTransactionPort,
   createWithdrawalTransactionPort,
+  createWithdrawalReallocationPort,
+  recordWithdrawalTransactionWithBonusConsumption,
 } from "@niveshbook/db";
 import { readSessionToken } from "@/lib/session";
 import { UNAUTHENTICATED_MESSAGE, FORBIDDEN_MESSAGE } from "@/lib/users";
@@ -183,11 +193,24 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
   const partnerSharePort = createPartnerSharePort();
   const subPartnerSharePort = createSubPartnerSharePort();
   const investmentTransactionPort = createInvestmentTransactionPort();
-  const [partnerShares, subPartnerShares, availableToWithdraw] = await Promise.all([
+  const withdrawalTransactionPort = createWithdrawalTransactionPort();
+  const reallocationPort = createWithdrawalReallocationPort();
+  const [
+    partnerShares,
+    subPartnerShares,
+    totalActiveInvested,
+    totalActiveWithdrawn,
+    activeReallocations,
+    activeAllocations,
+  ] = await Promise.all([
     listCurrentPartnerShares(projectId, { partnerShares: partnerSharePort }),
     listCurrentSubPartnerSharesForProject(projectId, { subPartnerShares: subPartnerSharePort }),
     investmentTransactionPort.sumActiveAmountByProjectId(projectId),
+    withdrawalTransactionPort.sumActiveAmountByProjectId(projectId),
+    reallocationPort.listActiveByProjectId(projectId),
+    reallocationPort.listActiveAllocationsByProjectId(projectId),
   ]);
+  const availableToWithdraw = resolveAvailableToWithdraw(totalActiveInvested, totalActiveWithdrawn);
 
   const target =
     body.partyType === "partner"
@@ -211,7 +234,6 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
   }
 
   const subPartnerSharesByPartnerId = groupByPartnerId(subPartnerShares);
-  const withdrawalTransactionPort = createWithdrawalTransactionPort();
   try {
     // Story 4.5's Extra Withdrawal gate (FR25) -- runs after the self-access
     // `authorize()` call above, before `recordWithdrawalTransaction` is ever
@@ -229,6 +251,23 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     const liveCanTake = findLiveCanTake(canTakeTree, body.partyType, body.shareId) ?? ("0" as Money);
     const requestedAmount = toMoney(body.amount);
 
+    // Flexible pro-rata withdrawal reallocation: this share's own base Can
+    // Take, reduced by whatever they've themselves actively declined (so a
+    // decliner's ceiling drops the instant a decline is recorded, before
+    // anyone consumes anything -- double-spend prevention, this codebase's
+    // withdrawal-reallocation feature doc), plus their total currently-
+    // unconsumed bonus as a recipient of someone else's decline.
+    const declinedByThisShare = sumDeclinedByShare(activeReallocations, body.partyType, body.shareId);
+    const reducedCanTake =
+      compareMoney(liveCanTake, declinedByThisShare) >= 0
+        ? subtractMoney(liveCanTake, declinedByThisShare)
+        : ("0" as Money);
+    const availableReallocationBonus = sumUnconsumedBonusForShare(
+      activeAllocations,
+      body.partyType,
+      body.shareId,
+    );
+
     // The *acting* user's current role/grant -- always re-read live, never
     // cached off the session row (mirrors `authorize()`'s own precedent). A
     // missing row can't happen in normal operation (a valid session implies
@@ -238,11 +277,25 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     const actor = await userPort.findUserById(session.userId);
     assertExtraWithdrawalAuthorized({
       requestedAmount,
-      canTake: liveCanTake,
+      canTake: reducedCanTake,
+      availableReallocationBonus,
       actorRole: actor?.role ?? "partner",
       actorCanApproveExtraWithdrawal: actor?.canApproveExtraWithdrawal ?? false,
       extraWithdrawalAuthorized: body.extraWithdrawalAuthorized ?? false,
     });
+
+    // Whatever of `requestedAmount` draws on the bonus specifically (`"0"`
+    // for the common case) is consumed FIFO across this recipient's active
+    // allocation legs, atomically alongside the withdrawal-transaction
+    // insert itself (`recordWithdrawalTransactionWithBonusConsumption`) --
+    // a plain pass-through to the unmodified `recordTransaction` contract
+    // when there's nothing to consume (Open/Closed).
+    const bonusToConsume = resolveBonusToConsume(requestedAmount, reducedCanTake, availableReallocationBonus);
+    const withdrawalTransactionPortForRecording: WithdrawalTransactionPort = {
+      ...withdrawalTransactionPort,
+      recordTransaction: (portInput) =>
+        recordWithdrawalTransactionWithBonusConsumption(portInput, bonusToConsume),
+    };
 
     const result = await recordWithdrawalTransaction(
       projectId,
@@ -260,7 +313,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
         idempotencyKey: body.idempotencyKey,
       },
       session.userId,
-      { withdrawalTransactions: withdrawalTransactionPort },
+      { withdrawalTransactions: withdrawalTransactionPortForRecording },
     );
     return NextResponse.json(result.transaction, { status: result.created ? 201 : 200 });
   } catch (error) {
@@ -286,6 +339,19 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       return NextResponse.json(
         { code: "extra_withdrawal_authorization_required", message: error.message },
         { status: 400 },
+      );
+    }
+    if (error instanceof ReallocationBonusInsufficientError) {
+      // A genuinely rare race: this share's unconsumed bonus shrank (a
+      // concurrent withdrawal/cancel touching the same legs) between this
+      // route's own snapshot and `recordWithdrawalTransactionWithBonusConsumption`'s
+      // lock-guarded re-read -- the write already rolled back cleanly (no
+      // partial consumption, no partial withdrawal), so this simply asks the
+      // client to retry against the now-current figures rather than
+      // surfacing an opaque 500.
+      return NextResponse.json(
+        { code: "reallocation_bonus_changed", message: error.message },
+        { status: 409 },
       );
     }
     if (

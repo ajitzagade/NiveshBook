@@ -1,5 +1,11 @@
-import type { Edge, Node } from "@xyflow/react";
-import type { OwnershipStructurePartnerNode, OwnershipStructureSubPartnerNode, OwnershipStructureTree } from "@niveshbook/core";
+import { MarkerType, type Edge, type Node } from "@xyflow/react";
+import { formatAmount } from "@niveshbook/ui";
+import type {
+  MoneyFlowEdge,
+  OwnershipStructurePartnerNode,
+  OwnershipStructureSubPartnerNode,
+  OwnershipStructureTree,
+} from "@niveshbook/core";
 
 /**
  * Story 5.10's pure tree-to-diagram transform -- deliberately separated from
@@ -8,8 +14,12 @@ import type { OwnershipStructurePartnerNode, OwnershipStructureSubPartnerNode, O
  * mounting `<ReactFlow>` itself (which needs `ResizeObserver`/layout
  * measurement APIs jsdom doesn't provide -- see this story's Implementation
  * Notes for the full testing-boundary rationale). `Node`/`Edge` are
- * type-only imports -- no runtime `@xyflow/react` code loads just from
- * importing this module.
+ * type-only imports; `MarkerType` (founder feedback 2026-09-28, Money Flow
+ * edges' arrowheads) is a plain string-enum constant with zero DOM/
+ * `ResizeObserver` dependency of its own, so importing its VALUE here
+ * doesn't reintroduce the thing this module's testing boundary actually
+ * guards against (mounting `<ReactFlow>` itself) -- `buildNodesAndEdges`
+ * stays fully unit-testable under jsdom.
  */
 
 export type ViewMode = "percentage" | "actual" | "money_flow";
@@ -120,6 +130,20 @@ export type StructureNodeData =
       subPartnerId: string;
       name: string;
       display: NodeDisplay;
+    }
+  | {
+      /**
+       * A real money-flow counterparty (founder feedback 2026-09-28) --
+       * another Project, a Person, "Other", or the Available Balance pool --
+       * rendered as a plain, non-interactive, non-navigable reference node.
+       * Never a link/fetch into that Project's own tree/shares: mirrors
+       * `GET /api/money-history`'s already-shipped precedent that a
+       * partner/sub_partner may see another Project's NAME on their own
+       * entry, never anything else about it.
+       */
+      kind: "external";
+      label: string;
+      counterpartyKind: MoneyFlowEdge["counterpartyKind"];
     };
 
 export type StructureNode = Node<StructureNodeData>;
@@ -128,6 +152,8 @@ const NODE_X_GAP = 200;
 const PARTNER_Y = 150;
 const SUB_PARTNER_Y = 320;
 const PARTNER_GROUP_GAP = 60;
+/** Money Flow view mode's own row (founder feedback 2026-09-28), one tier below the lowest existing row, mirroring the same ~170px vertical rhythm `PARTNER_Y`->`SUB_PARTNER_Y` already establishes. */
+const EXTERNAL_Y = SUB_PARTNER_Y + 170;
 
 /**
  * Deterministic left-to-right layout (this story's Decision #1: no user
@@ -144,11 +170,13 @@ export function buildNodesAndEdges(
   viewMode: ViewMode,
   projectName: string,
   onSelectPartner: (partnerId: string) => void,
+  moneyFlowEdges: readonly MoneyFlowEdge[] = [],
 ): { nodes: StructureNode[]; edges: Edge[] } {
   const nodes: StructureNode[] = [];
   const edges: Edge[] = [];
 
   const projectNodeId = "project-root";
+  let treeWidth: number;
 
   if (tree.soloSubPartner) {
     const sub = tree.soloSubPartner;
@@ -168,62 +196,131 @@ export function buildNodesAndEdges(
       draggable: false,
     });
     edges.push({ id: `${projectNodeId}->${subNodeId}`, source: projectNodeId, target: subNodeId });
-    return { nodes, edges };
-  }
+    treeWidth = NODE_X_GAP;
+  } else {
+    let cursorX = 0;
+    const partnerCenters: number[] = [];
 
-  let cursorX = 0;
-  const partnerCenters: number[] = [];
+    for (const partner of tree.partners) {
+      const childCount = Math.max(partner.subPartners.length, 1);
+      const groupWidth = childCount * NODE_X_GAP;
+      const groupStart = cursorX;
 
-  for (const partner of tree.partners) {
-    const childCount = Math.max(partner.subPartners.length, 1);
-    const groupWidth = childCount * NODE_X_GAP;
-    const groupStart = cursorX;
+      partner.subPartners.forEach((sub, index) => {
+        const subNodeId = `sub:${sub.subPartnerId}`;
+        nodes.push({
+          id: subNodeId,
+          type: "structureNode",
+          position: { x: groupStart + index * NODE_X_GAP, y: SUB_PARTNER_Y },
+          data: subPartnerNodeData(sub, viewMode),
+          draggable: false,
+        });
+        edges.push({
+          id: `partner:${partner.partnerId}->${subNodeId}`,
+          source: `partner:${partner.partnerId}`,
+          target: subNodeId,
+        });
+      });
 
-    partner.subPartners.forEach((sub, index) => {
-      const subNodeId = `sub:${sub.subPartnerId}`;
+      const partnerCenter = groupStart + groupWidth / 2 - NODE_X_GAP / 2;
+      partnerCenters.push(partnerCenter);
+
       nodes.push({
-        id: subNodeId,
+        id: `partner:${partner.partnerId}`,
         type: "structureNode",
-        position: { x: groupStart + index * NODE_X_GAP, y: SUB_PARTNER_Y },
-        data: subPartnerNodeData(sub, viewMode),
+        position: { x: partnerCenter, y: PARTNER_Y },
+        data: partnerNodeData(partner, viewMode, onSelectPartner),
         draggable: false,
       });
       edges.push({
-        id: `partner:${partner.partnerId}->${subNodeId}`,
-        source: `partner:${partner.partnerId}`,
-        target: subNodeId,
+        id: `${projectNodeId}->partner:${partner.partnerId}`,
+        source: projectNodeId,
+        target: `partner:${partner.partnerId}`,
       });
-    });
 
-    const partnerCenter = groupStart + groupWidth / 2 - NODE_X_GAP / 2;
-    partnerCenters.push(partnerCenter);
+      cursorX = groupStart + groupWidth + PARTNER_GROUP_GAP;
+    }
 
-    nodes.push({
-      id: `partner:${partner.partnerId}`,
+    treeWidth = partnerCenters.length > 0 ? cursorX - PARTNER_GROUP_GAP : 0;
+    nodes.unshift({
+      id: projectNodeId,
       type: "structureNode",
-      position: { x: partnerCenter, y: PARTNER_Y },
-      data: partnerNodeData(partner, viewMode, onSelectPartner),
+      position: { x: treeWidth / 2, y: 0 },
+      data: { kind: "project", label: projectName },
       draggable: false,
     });
-    edges.push({
-      id: `${projectNodeId}->partner:${partner.partnerId}`,
-      source: projectNodeId,
-      target: `partner:${partner.partnerId}`,
-    });
-
-    cursorX = groupStart + groupWidth + PARTNER_GROUP_GAP;
   }
 
-  const totalWidth = partnerCenters.length > 0 ? cursorX - PARTNER_GROUP_GAP : 0;
-  nodes.unshift({
-    id: projectNodeId,
-    type: "structureNode",
-    position: { x: totalWidth / 2, y: 0 },
-    data: { kind: "project", label: projectName },
-    draggable: false,
-  });
+  if (viewMode === "money_flow" && moneyFlowEdges.length > 0) {
+    appendMoneyFlowExtras(nodes, edges, moneyFlowEdges, treeWidth);
+  }
 
   return { nodes, edges };
+}
+
+/**
+ * Money Flow view mode's own edges (founder feedback 2026-09-28) -- one
+ * external reference node per distinct `(counterpartyKind, counterpartyLabel)`
+ * pair (deduped, since several parties can share a destination, e.g. two
+ * Partners both moving money to the same other Project), laid out in a row
+ * below the existing tree, plus one colored/arrowed/labeled `Edge` per flow
+ * edge connecting the owning Partner/Sub-partner node to its external node.
+ * A flow edge whose owning node id isn't in this same (identically-scoped)
+ * tree is silently skipped rather than drawing a dangling edge -- defensive
+ * only, since the route scopes `moneyFlowEdges` and `tree` identically.
+ */
+function appendMoneyFlowExtras(
+  nodes: StructureNode[],
+  edges: Edge[],
+  moneyFlowEdges: readonly MoneyFlowEdge[],
+  treeWidth: number,
+): void {
+  const existingNodeIds = new Set(nodes.map((node) => node.id));
+  const externalNodesById = new Map<string, { label: string; counterpartyKind: MoneyFlowEdge["counterpartyKind"] }>();
+
+  for (const flowEdge of moneyFlowEdges) {
+    const ownerId = flowEdge.partyType === "partner" ? `partner:${flowEdge.shareId}` : `sub:${flowEdge.shareId}`;
+    if (!existingNodeIds.has(ownerId)) {
+      continue;
+    }
+
+    const externalId = `external:${flowEdge.counterpartyKind}:${flowEdge.counterpartyLabel}`;
+    if (!externalNodesById.has(externalId)) {
+      externalNodesById.set(externalId, {
+        label: flowEdge.counterpartyLabel,
+        counterpartyKind: flowEdge.counterpartyKind,
+      });
+    }
+
+    const isInbound = flowEdge.direction === "in";
+    const stroke = isInbound ? "var(--color-success)" : "var(--color-danger)";
+    edges.push({
+      id: `flow:${flowEdge.id}`,
+      source: isInbound ? externalId : ownerId,
+      target: isInbound ? ownerId : externalId,
+      label: formatAmount(flowEdge.amount),
+      style: { stroke },
+      markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
+    });
+  }
+
+  const externalIds = [...externalNodesById.keys()];
+  const rowWidth = Math.max(externalIds.length - 1, 0) * NODE_X_GAP;
+  const startX = treeWidth / 2 - rowWidth / 2;
+
+  externalIds.forEach((externalId, index) => {
+    const info = externalNodesById.get(externalId);
+    if (!info) {
+      return;
+    }
+    nodes.push({
+      id: externalId,
+      type: "structureNode",
+      position: { x: startX + index * NODE_X_GAP, y: EXTERNAL_Y },
+      data: { kind: "external", label: info.label, counterpartyKind: info.counterpartyKind },
+      draggable: false,
+    });
+  });
 }
 
 function partnerNodeData(

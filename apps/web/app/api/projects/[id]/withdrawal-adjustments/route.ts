@@ -1,14 +1,23 @@
 import { NextResponse, type NextRequest } from "next/server";
-import type { Money, SubPartnerShare, WithdrawalTransaction } from "@niveshbook/types";
+import type {
+  Money,
+  SubPartnerShare,
+  WithdrawalTransaction,
+  WithdrawalReallocation,
+  WithdrawalReallocationAllocation,
+} from "@niveshbook/types";
 import {
   getSession,
   authorizeScope,
   listCurrentPartnerShares,
   listCurrentSubPartnerSharesForProject,
   computeWithdrawalAdjustment,
+  computeEffectiveCanTake,
   withdrawalShareKey,
+  resolveAvailableToWithdraw,
   PartnerSharesNotFullyAllocatedError,
   CanTakeSubPartnerSharesOverAllocatedError,
+  type PartnerWithdrawalAdjustment,
 } from "@niveshbook/core";
 import {
   createSessionPort,
@@ -19,6 +28,7 @@ import {
   createInvestmentTransactionPort,
   createWithdrawalTransactionPort,
   createWithdrawalAdjustmentPort,
+  createWithdrawalReallocationPort,
 } from "@niveshbook/db";
 import { readSessionToken } from "@/lib/session";
 import { UNAUTHENTICATED_MESSAGE, FORBIDDEN_MESSAGE } from "@/lib/users";
@@ -72,6 +82,41 @@ function groupTransactionsByShareKey(
     }
   }
   return byShareKey;
+}
+
+/**
+ * Augments `computeWithdrawalAdjustment`'s pure result tree with each
+ * leaf's *effective* Can Take (flexible pro-rata withdrawal reallocation) --
+ * additive only, mirrors `can-take/route.ts`'s identical
+ * `withEffectiveCanTake` helper one ledger over (same per-leaf
+ * `computeEffectiveCanTake` call shape, applied to `PartnerWithdrawalAdjustment`'s
+ * `canTake` field instead of `PartnerCanTake`'s).
+ */
+function withEffectiveCanTake(
+  partners: readonly PartnerWithdrawalAdjustment[],
+  activeReallocations: readonly WithdrawalReallocation[],
+  activeAllocations: readonly WithdrawalReallocationAllocation[],
+) {
+  return partners.map((partner) => ({
+    ...partner,
+    effectiveCanTake: computeEffectiveCanTake(
+      partner.canTake,
+      "partner",
+      partner.partnerId,
+      activeReallocations,
+      activeAllocations,
+    ),
+    subPartners: partner.subPartners.map((sub) => ({
+      ...sub,
+      effectiveCanTake: computeEffectiveCanTake(
+        sub.canTake,
+        "sub_partner",
+        sub.subPartnerId,
+        activeReallocations,
+        activeAllocations,
+      ),
+    })),
+  }));
 }
 
 /**
@@ -139,13 +184,25 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
   const subPartnerSharePort = createSubPartnerSharePort();
   const investmentTransactionPort = createInvestmentTransactionPort();
   const withdrawalTransactionPort = createWithdrawalTransactionPort();
-  const [partnerShares, subPartnerShares, availableToWithdraw, withdrawalTransactions] =
-    await Promise.all([
-      listCurrentPartnerShares(projectId, { partnerShares: partnerSharePort }),
-      listCurrentSubPartnerSharesForProject(projectId, { subPartnerShares: subPartnerSharePort }),
-      investmentTransactionPort.sumActiveAmountByProjectId(projectId),
-      withdrawalTransactionPort.listByProjectId(projectId),
-    ]);
+  const reallocationPort = createWithdrawalReallocationPort();
+  const [
+    partnerShares,
+    subPartnerShares,
+    totalActiveInvested,
+    totalActiveWithdrawn,
+    withdrawalTransactions,
+    activeReallocations,
+    activeAllocations,
+  ] = await Promise.all([
+    listCurrentPartnerShares(projectId, { partnerShares: partnerSharePort }),
+    listCurrentSubPartnerSharesForProject(projectId, { subPartnerShares: subPartnerSharePort }),
+    investmentTransactionPort.sumActiveAmountByProjectId(projectId),
+    withdrawalTransactionPort.sumActiveAmountByProjectId(projectId),
+    withdrawalTransactionPort.listByProjectId(projectId),
+    reallocationPort.listActiveByProjectId(projectId),
+    reallocationPort.listActiveAllocationsByProjectId(projectId),
+  ]);
+  const availableToWithdraw = resolveAvailableToWithdraw(totalActiveInvested, totalActiveWithdrawn);
 
   const withdrawalAdjustmentPort = createWithdrawalAdjustmentPort();
   try {
@@ -157,7 +214,8 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
       groupTransactionsByShareKey(withdrawalTransactions),
       { withdrawalAdjustments: withdrawalAdjustmentPort },
     );
-    return NextResponse.json({ partners });
+    const partnersWithEffective = withEffectiveCanTake(partners, activeReallocations, activeAllocations);
+    return NextResponse.json({ partners: partnersWithEffective });
   } catch (error) {
     if (error instanceof PartnerSharesNotFullyAllocatedError) {
       return NextResponse.json(

@@ -3,7 +3,8 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { render, cleanup } from "@testing-library/react";
 import type { ReactNode } from "react";
-import type { OwnershipStructureTree } from "@niveshbook/core";
+import type { MoneyFlowEdge, OwnershipStructureTree } from "@niveshbook/core";
+import type { Money } from "@niveshbook/types";
 import { StructureCanvas } from "./StructureCanvas";
 
 /**
@@ -49,7 +50,13 @@ afterEach(() => {
 describe("StructureCanvas narrow-viewport tuning (spec-mobile-responsive-phase1-nav-foundation, Decision #4)", () => {
   it("the container collapses to 380px tall below 600px, on top of the existing 520px default", () => {
     const { container } = render(
-      <StructureCanvas tree={makeTree()} viewMode="percentage" projectName="Project A" onSelectPartner={() => {}} />,
+      <StructureCanvas
+        tree={makeTree()}
+        viewMode="percentage"
+        projectName="Project A"
+        onSelectPartner={() => {}}
+        moneyFlowEdges={[]}
+      />,
     );
 
     const canvasContainer = container.firstElementChild as HTMLElement;
@@ -58,11 +65,63 @@ describe("StructureCanvas narrow-viewport tuning (spec-mobile-responsive-phase1-
   });
 
   it("caps minZoom (and fitViewOptions.minZoom) low enough that the initial fit never crops on a phone viewport", () => {
-    render(<StructureCanvas tree={makeTree()} viewMode="percentage" projectName="Project A" onSelectPartner={() => {}} />);
+    render(
+      <StructureCanvas
+        tree={makeTree()}
+        viewMode="percentage"
+        projectName="Project A"
+        onSelectPartner={() => {}}
+        moneyFlowEdges={[]}
+      />,
+    );
 
     expect(lastReactFlowProps).not.toBeNull();
     expect(lastReactFlowProps?.fitView).toBe(true);
     expect(lastReactFlowProps?.minZoom).toBeLessThan(1);
     expect((lastReactFlowProps?.fitViewOptions as { minZoom?: number } | undefined)?.minZoom).toBeLessThan(1);
+  });
+});
+
+describe("StructureCanvas Money Flow edges (founder feedback 2026-09-28)", () => {
+  it("passes an external counterparty node and a flow edge through to ReactFlow when moneyFlowEdges is set in Money Flow mode", () => {
+    const tree = makeTree({
+      partners: [
+        {
+          type: "partner",
+          partnerId: "a",
+          name: "Partner A",
+          sharePercent: "60" as OwnershipStructureTree["partners"][number]["sharePercent"],
+          actualAmount: "0" as OwnershipStructureTree["partners"][number]["actualAmount"],
+          totalIn: "0" as OwnershipStructureTree["partners"][number]["totalIn"],
+          totalOut: "0" as OwnershipStructureTree["partners"][number]["totalOut"],
+          subPartners: [],
+        },
+      ],
+    });
+
+    render(
+      <StructureCanvas
+        tree={tree}
+        viewMode="money_flow"
+        projectName="Project A"
+        onSelectPartner={() => {}}
+        moneyFlowEdges={[
+          {
+            id: "flow-1",
+            partyType: "partner",
+            shareId: "a",
+            direction: "out",
+            counterpartyKind: "project",
+            counterpartyLabel: "Project B",
+            amount: "10000" as Money,
+          } satisfies MoneyFlowEdge,
+        ]}
+      />,
+    );
+
+    const nodes = lastReactFlowProps?.nodes as { id: string; data: { kind: string } }[] | undefined;
+    const edges = lastReactFlowProps?.edges as { id: string }[] | undefined;
+    expect(nodes?.some((n) => n.data.kind === "external")).toBe(true);
+    expect(edges?.some((e) => e.id === "flow:flow-1")).toBe(true);
   });
 });

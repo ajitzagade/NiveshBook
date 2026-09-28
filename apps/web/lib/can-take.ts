@@ -10,10 +10,23 @@ import type { PartnerCanTake } from "@niveshbook/core";
 
 const GENERIC_ERROR_MESSAGE = "Something went wrong. Please try again.";
 
+/**
+ * `PartnerCanTake` augmented with `effectiveCanTake` (flexible pro-rata
+ * withdrawal reallocation) at every leaf -- additive only, mirrors
+ * `apps/web/app/api/projects/[id]/can-take/route.ts`'s own
+ * `PartnerCanTakeWithEffective` route-layer type exactly (kept as a
+ * separate client-side type rather than importing that route-local type,
+ * matching this codebase's "no cross-route-group re-export" precedent).
+ */
+export interface PartnerCanTakeWithEffective extends Omit<PartnerCanTake, "subPartners"> {
+  effectiveCanTake: Money;
+  subPartners: (PartnerCanTake["subPartners"][number] & { effectiveCanTake: Money })[];
+}
+
 /** `GET /api/projects/[id]/can-take`'s response shape. */
 export interface CanTakeResponse {
   availableToWithdraw: Money;
-  partners: PartnerCanTake[];
+  partners: PartnerCanTakeWithEffective[];
 }
 
 async function readErrorMessage(response: Response): Promise<string> {

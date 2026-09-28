@@ -1,4 +1,4 @@
-import type { OwnershipStructureTree } from "@niveshbook/core";
+import type { MoneyFlowEdge, OwnershipStructureTree } from "@niveshbook/core";
 
 /**
  * Thin client-side fetch helper for `GET /api/projects/[id]/ownership-structure`
@@ -20,6 +20,8 @@ export interface OwnershipStructureResponse {
   projectId: string;
   projectName: string;
   tree: OwnershipStructureTree;
+  /** Real money-flow edges (founder feedback 2026-09-28) -- the "Money Flow" view mode's own edges, built on top of `assembleMoneyHistory()`, already scoped/redacted server-side identically to `tree` itself. */
+  moneyFlowEdges: MoneyFlowEdge[];
 }
 
 async function readErrorMessage(response: Response): Promise<string> {

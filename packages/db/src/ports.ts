@@ -35,6 +35,7 @@ import {
   type RecommendedAmountPort,
   type WithdrawalTransactionPort,
   type CreateWithdrawalTransactionInput,
+  type RecordWithdrawalTransactionResult,
   type EditWithdrawalTransactionInput,
   type CancelWithdrawalTransactionInput,
   type WithdrawalAdjustmentPort,
@@ -48,6 +49,18 @@ import {
   type AdjustmentNettingPort,
   type RecordAdjustmentNettingInput,
   type AuditLogPort,
+  type WithdrawalReallocationPort,
+  type RecordWithdrawalReallocationInput,
+  type WithdrawalReallocationAllocationSplit,
+  WithdrawalReallocationIdempotencyKeyConflictError,
+  WithdrawalReallocationNotFoundError,
+  WithdrawalReallocationAlreadyCancelledError,
+  WithdrawalReallocationAlreadyConsumedError,
+  WithdrawalReallocationExceedsAvailableError,
+  planReallocationBonusConsumption,
+  computeEffectiveCanTake,
+  compareMoney,
+  isZeroMoney,
 } from "@niveshbook/core";
 import type {
   User,
@@ -72,6 +85,8 @@ import type {
   AvailableBalance,
   AvailableBalanceSpend,
   AdjustmentNetting,
+  WithdrawalReallocation,
+  WithdrawalReallocationAllocation,
 } from "@niveshbook/types";
 import type { Database } from "./client";
 import { getDb } from "./client";
@@ -92,7 +107,11 @@ import {
   availableBalances,
   availableBalanceSpends,
   adjustmentNettings,
+  withdrawalReallocations,
+  withdrawalReallocationAllocations,
   auditLog,
+  type WithdrawalReallocationRow,
+  type WithdrawalReallocationAllocationRow,
   type SessionRow,
   type UserRow,
   type ProjectRow,
@@ -399,6 +418,34 @@ function toAdjustmentNetting(row: AdjustmentNettingRow): AdjustmentNetting {
     amount: row.amount as Money,
     notes: row.notes,
     actorUserId: row.actorUserId,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function toWithdrawalReallocation(row: WithdrawalReallocationRow): WithdrawalReallocation {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    partyType: row.partyType as WithdrawalReallocation["partyType"],
+    shareId: row.shareId,
+    declinedAmount: row.declinedAmount as Money,
+    notes: row.notes,
+    status: row.status as WithdrawalReallocation["status"],
+    createdByUserId: row.createdByUserId,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function toWithdrawalReallocationAllocation(
+  row: WithdrawalReallocationAllocationRow,
+): WithdrawalReallocationAllocation {
+  return {
+    id: row.id,
+    reallocationId: row.reallocationId,
+    partyType: row.partyType as WithdrawalReallocationAllocation["partyType"],
+    shareId: row.shareId,
+    allocatedAmount: row.allocatedAmount as Money,
+    consumedAmount: row.consumedAmount as Money,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -3070,4 +3117,393 @@ export function createAuditLogPort(database: Database = getDb()): AuditLogPort {
       return rows.map(toAuditLogEntry);
     },
   };
+}
+
+export function matchesWithdrawalReallocationRequest(
+  existing: WithdrawalReallocation,
+  input: RecordWithdrawalReallocationInput,
+): boolean {
+  return (
+    existing.projectId === input.projectId &&
+    existing.partyType === input.partyType &&
+    existing.shareId === input.shareId &&
+    moneyEquals(existing.declinedAmount, input.declinedAmount) &&
+    (existing.notes ?? null) === (input.notes ?? null)
+  );
+}
+
+export function matchesWithdrawalReallocationAllocationLegs(
+  existingRows: readonly WithdrawalReallocationAllocationRow[],
+  legs: readonly WithdrawalReallocationAllocationSplit[],
+): boolean {
+  if (existingRows.length !== legs.length) {
+    return false;
+  }
+  const remaining = [...existingRows];
+  for (const leg of legs) {
+    const matchIndex = remaining.findIndex(
+      (row) =>
+        row.partyType === leg.partyType &&
+        row.shareId === leg.shareId &&
+        moneyEquals(row.allocatedAmount as Money, leg.allocatedAmount),
+    );
+    if (matchIndex === -1) {
+      return false;
+    }
+    remaining.splice(matchIndex, 1);
+  }
+  return true;
+}
+
+/**
+ * Drizzle-backed implementation of `packages/core`'s `WithdrawalReallocationPort`
+ * (flexible pro-rata withdrawal reallocation) -- mirrors
+ * `createAdjustmentNettingPort`'s exact check-first-then-transact idempotency
+ * structure one level deeper (a reallocation's legs are child rows of its
+ * own event row, mirroring `createWithdrawalDestinationAllocationPort`'s
+ * header/legs shape instead of `createAdjustmentNettingPort`'s single-row
+ * shape for that part).
+ */
+export function createWithdrawalReallocationPort(
+  database: Database = getDb(),
+): WithdrawalReallocationPort {
+  async function findByIdempotencyKey(idempotencyKey: string): Promise<WithdrawalReallocationRow | null> {
+    const rows = await database
+      .select()
+      .from(withdrawalReallocations)
+      .where(eq(withdrawalReallocations.idempotencyKey, idempotencyKey))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  async function listLegRows(reallocationId: string): Promise<WithdrawalReallocationAllocationRow[]> {
+    return database
+      .select()
+      .from(withdrawalReallocationAllocations)
+      .where(eq(withdrawalReallocationAllocations.reallocationId, reallocationId))
+      .orderBy(asc(withdrawalReallocationAllocations.createdAt));
+  }
+
+  async function replayIfMatching(
+    row: WithdrawalReallocationRow,
+    input: RecordWithdrawalReallocationInput,
+    allocationLegs: readonly WithdrawalReallocationAllocationSplit[],
+  ) {
+    const existingLegs = await listLegRows(row.id);
+    if (
+      !matchesWithdrawalReallocationRequest(toWithdrawalReallocation(row), input) ||
+      !matchesWithdrawalReallocationAllocationLegs(existingLegs, allocationLegs)
+    ) {
+      throw new WithdrawalReallocationIdempotencyKeyConflictError();
+    }
+    return {
+      reallocation: toWithdrawalReallocation(row),
+      allocations: existingLegs.map(toWithdrawalReallocationAllocation),
+      created: false,
+    };
+  }
+
+  return {
+    async record(input, allocationLegs, idempotencyKey, actorUserId) {
+      const existing = await findByIdempotencyKey(idempotencyKey);
+      if (existing) {
+        return replayIfMatching(existing, input, allocationLegs);
+      }
+
+      try {
+        const { reallocationRow, legRows } = await database.transaction(async (tx) => {
+          // Transaction-scoped advisory lock keyed on the declining share --
+          // see `record`'s own doc comment. No row necessarily exists yet for
+          // this share to `SELECT ... FOR UPDATE` against, so two concurrent
+          // declines for the same share are serialized via this lock instead;
+          // it's automatically released when the transaction ends either way.
+          await tx.execute(
+            sql`select pg_advisory_xact_lock(hashtext(${`${input.projectId}:${input.partyType}:${input.shareId}`})::bigint)`,
+          );
+
+          const freshReallocations = await tx
+            .select()
+            .from(withdrawalReallocations)
+            .where(
+              and(
+                eq(withdrawalReallocations.projectId, input.projectId),
+                eq(withdrawalReallocations.partyType, input.partyType),
+                eq(withdrawalReallocations.shareId, input.shareId),
+                eq(withdrawalReallocations.status, "active"),
+              ),
+            );
+          const freshAllocations = await tx
+            .select({ allocation: withdrawalReallocationAllocations })
+            .from(withdrawalReallocationAllocations)
+            .innerJoin(
+              withdrawalReallocations,
+              eq(withdrawalReallocationAllocations.reallocationId, withdrawalReallocations.id),
+            )
+            .where(
+              and(
+                eq(withdrawalReallocations.projectId, input.projectId),
+                eq(withdrawalReallocationAllocations.partyType, input.partyType),
+                eq(withdrawalReallocationAllocations.shareId, input.shareId),
+                eq(withdrawalReallocations.status, "active"),
+              ),
+            );
+
+          const effectiveCanTake = computeEffectiveCanTake(
+            input.baseCanTake,
+            input.partyType,
+            input.shareId,
+            freshReallocations.map(toWithdrawalReallocation),
+            freshAllocations.map((row) => toWithdrawalReallocationAllocation(row.allocation)),
+          );
+          if (compareMoney(input.declinedAmount, effectiveCanTake) > 0) {
+            throw new WithdrawalReallocationExceedsAvailableError();
+          }
+
+          const [reallocationRow] = await tx
+            .insert(withdrawalReallocations)
+            .values({
+              id: uuidv7(),
+              projectId: input.projectId,
+              partyType: input.partyType,
+              shareId: input.shareId,
+              declinedAmount: input.declinedAmount,
+              notes: input.notes,
+              status: "active",
+              createdByUserId: actorUserId,
+              idempotencyKey,
+            })
+            .returning();
+          if (!reallocationRow) {
+            throw new Error("Failed to record withdrawal reallocation");
+          }
+
+          const legRows =
+            allocationLegs.length > 0
+              ? await tx
+                  .insert(withdrawalReallocationAllocations)
+                  .values(
+                    allocationLegs.map((leg) => ({
+                      id: uuidv7(),
+                      reallocationId: reallocationRow.id,
+                      partyType: leg.partyType,
+                      shareId: leg.shareId,
+                      allocatedAmount: leg.allocatedAmount,
+                    })),
+                  )
+                  .returning()
+              : [];
+
+          await tx.insert(auditLog).values({
+            id: uuidv7(),
+            entityType: "withdrawal_reallocation",
+            entityId: reallocationRow.id,
+            action: "create",
+            actorUserId,
+            oldValue: null,
+            newValue: { reallocation: reallocationRow, allocations: legRows },
+            reason: null,
+          });
+
+          return { reallocationRow, legRows };
+        });
+
+        return {
+          reallocation: toWithdrawalReallocation(reallocationRow),
+          allocations: legRows.map(toWithdrawalReallocationAllocation),
+          created: true,
+        };
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          const winner = await findByIdempotencyKey(idempotencyKey);
+          if (winner) {
+            return replayIfMatching(winner, input, allocationLegs);
+          }
+        }
+        throw error;
+      }
+    },
+
+    async listActiveByProjectId(projectId) {
+      const rows = await database
+        .select()
+        .from(withdrawalReallocations)
+        .where(
+          and(eq(withdrawalReallocations.projectId, projectId), eq(withdrawalReallocations.status, "active")),
+        )
+        .orderBy(asc(withdrawalReallocations.createdAt));
+      return rows.map(toWithdrawalReallocation);
+    },
+
+    async findById(id) {
+      const rows = await database
+        .select()
+        .from(withdrawalReallocations)
+        .where(eq(withdrawalReallocations.id, id))
+        .limit(1);
+      const row = rows[0];
+      return row ? toWithdrawalReallocation(row) : null;
+    },
+
+    async listActiveAllocationsByProjectId(projectId) {
+      const rows = await database
+        .select({ allocation: withdrawalReallocationAllocations })
+        .from(withdrawalReallocationAllocations)
+        .innerJoin(
+          withdrawalReallocations,
+          eq(withdrawalReallocationAllocations.reallocationId, withdrawalReallocations.id),
+        )
+        .where(
+          and(eq(withdrawalReallocations.projectId, projectId), eq(withdrawalReallocations.status, "active")),
+        )
+        .orderBy(asc(withdrawalReallocationAllocations.createdAt));
+      return rows.map((row) => toWithdrawalReallocationAllocation(row.allocation));
+    },
+
+    async listAllocationsByReallocationId(reallocationId) {
+      const rows = await listLegRows(reallocationId);
+      return rows.map(toWithdrawalReallocationAllocation);
+    },
+
+    async cancel(reallocationId, actorUserId) {
+      return database.transaction(async (tx) => {
+        const rows = await tx
+          .select()
+          .from(withdrawalReallocations)
+          .where(eq(withdrawalReallocations.id, reallocationId))
+          .for("update")
+          .limit(1);
+        const row = rows[0];
+        if (!row) {
+          throw new WithdrawalReallocationNotFoundError();
+        }
+        if (row.status === "cancelled") {
+          throw new WithdrawalReallocationAlreadyCancelledError();
+        }
+
+        const legs = await tx
+          .select()
+          .from(withdrawalReallocationAllocations)
+          .where(eq(withdrawalReallocationAllocations.reallocationId, reallocationId))
+          .for("update");
+        const anyConsumed = legs.some((leg) => !isZeroMoney(leg.consumedAmount as Money));
+        if (anyConsumed) {
+          throw new WithdrawalReallocationAlreadyConsumedError();
+        }
+
+        const [updatedRow] = await tx
+          .update(withdrawalReallocations)
+          .set({ status: "cancelled" })
+          .where(eq(withdrawalReallocations.id, reallocationId))
+          .returning();
+        if (!updatedRow) {
+          throw new Error("Failed to cancel withdrawal reallocation");
+        }
+
+        await tx.insert(auditLog).values({
+          id: uuidv7(),
+          entityType: "withdrawal_reallocation",
+          entityId: reallocationId,
+          action: "cancel",
+          actorUserId,
+          oldValue: row,
+          newValue: updatedRow,
+          reason: null,
+        });
+
+        return toWithdrawalReallocation(updatedRow);
+      });
+    },
+
+    async consumeAllocationLegs(updates) {
+      for (const update of updates) {
+        // Sequential (not `Promise.all`) so these commit within the
+        // caller's own transaction-bound `database` (a `tx` passed in by
+        // `recordWithdrawalTransactionWithBonusConsumption`) in the order
+        // planned, not raced.
+        await database
+          .update(withdrawalReallocationAllocations)
+          .set({ consumedAmount: update.newConsumedAmount })
+          .where(eq(withdrawalReallocationAllocations.id, update.id));
+      }
+    },
+
+    async listAll() {
+      const rows = await database.select().from(withdrawalReallocations);
+      return rows.map(toWithdrawalReallocation);
+    },
+
+    async listAllAllocations() {
+      const rows = await database.select().from(withdrawalReallocationAllocations);
+      return rows.map(toWithdrawalReallocationAllocation);
+    },
+  };
+}
+
+/**
+ * Atomically consumes a recipient's oldest active, not-fully-consumed
+ * reallocation-bonus legs (FIFO, `packages/core`'s
+ * `planReallocationBonusConsumption`) and records the withdrawal transaction
+ * that drew on them, inside one DB transaction -- so a failed insert never
+ * leaves a leg partially consumed, and a successful consumption never leaves
+ * the withdrawal transaction unrecorded.
+ *
+ * When `bonusToConsume` is `"0"` (the overwhelmingly common case -- no
+ * active bonus for this recipient, or the withdrawal amount didn't exceed
+ * their own base Can Take), this delegates straight to
+ * `createWithdrawalTransactionPort(database).recordTransaction(input)` with
+ * zero behavior change from before this feature existed (Open/Closed: the
+ * existing, stable `recordTransaction` contract is never modified).
+ *
+ * Locks the candidate legs with `SELECT ... FOR UPDATE` before planning,
+ * inside the same transaction the plan is written back in and the
+ * withdrawal transaction is inserted in -- `createWithdrawalTransactionPort(tx)`'s
+ * own `recordTransaction` opens its own nested transaction (a Postgres
+ * SAVEPOINT under `postgres-js`) against this same `tx`, the identical
+ * pattern `moveWithdrawalToProject`'s callers already rely on elsewhere in
+ * this file.
+ */
+export async function recordWithdrawalTransactionWithBonusConsumption(
+  input: CreateWithdrawalTransactionInput,
+  bonusToConsume: Money,
+  database: Database = getDb(),
+): Promise<RecordWithdrawalTransactionResult> {
+  if (isZeroMoney(bonusToConsume)) {
+    return createWithdrawalTransactionPort(database).recordTransaction(input);
+  }
+
+  return database.transaction(async (tx) => {
+    const legRows = await tx
+      .select({ allocation: withdrawalReallocationAllocations })
+      .from(withdrawalReallocationAllocations)
+      .innerJoin(
+        withdrawalReallocations,
+        eq(withdrawalReallocationAllocations.reallocationId, withdrawalReallocations.id),
+      )
+      .where(
+        and(
+          eq(withdrawalReallocations.projectId, input.projectId),
+          eq(withdrawalReallocations.status, "active"),
+          eq(withdrawalReallocationAllocations.partyType, input.partyType),
+          eq(withdrawalReallocationAllocations.shareId, input.shareId),
+        ),
+      )
+      .orderBy(asc(withdrawalReallocationAllocations.createdAt))
+      .for("update");
+
+    const legs = legRows.map((row) => ({
+      id: row.allocation.id,
+      allocatedAmount: row.allocation.allocatedAmount as Money,
+      consumedAmount: row.allocation.consumedAmount as Money,
+    }));
+
+    const plan = planReallocationBonusConsumption(legs, bonusToConsume);
+    // The port's own `consumeAllocationLegs`, transaction-bound to this same
+    // `tx` -- never a second, hand-rolled copy of the same update loop
+    // (Open/Closed: one write path for "apply a FIFO consumption plan",
+    // reused here exactly as its own doc comment says it's meant to be
+    // called -- "from inside the SAME `database.transaction()`").
+    await createWithdrawalReallocationPort(tx).consumeAllocationLegs(plan);
+
+    return createWithdrawalTransactionPort(tx).recordTransaction(input);
+  });
 }

@@ -3,11 +3,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { render, screen, waitFor, cleanup, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { PartnerCanTake, PartnerWithdrawalAdjustment } from "@niveshbook/core";
+import type { PartnerWithdrawalAdjustment } from "@niveshbook/core";
 import type { Money, Percent } from "@niveshbook/types";
-import type { CanTakeResponse } from "@/lib/can-take";
+import type { CanTakeResponse, PartnerCanTakeWithEffective } from "@/lib/can-take";
 import type { WithdrawalTransactionsResponse } from "@/lib/withdrawal-transactions";
 import type { WithdrawalAdjustmentsResponse } from "@/lib/withdrawal-adjustments";
+import { WithdrawalReallocationsForbiddenError } from "@/lib/withdrawal-reallocations";
 import WithdrawMoneyPage, {
   digitsToInt,
   scaleMoneyForCompare,
@@ -86,13 +87,52 @@ vi.mock("@/lib/subpartner-shares", () => ({
   listSubPartnerShares: (...args: unknown[]) => listSubPartnerShares(...args),
 }));
 
+/**
+ * Flexible pro-rata withdrawal reallocation ("Skip this round") -- the
+ * endpoint is Owner/Admin-only, so a real (non-Owner/Admin) session would
+ * 403 on every page load. Defaults every existing test in this file (none
+ * of which exercise this feature) to that exact real-world "forbidden"
+ * outcome via the top-level `beforeEach` below -- hides the Skip buttons/
+ * Active Reallocations panel entirely, the same as before this feature
+ * existed, rather than changing any pre-existing test's rendered button set.
+ * Dedicated tests for this feature override it to `"loaded"`.
+ */
+const listWithdrawalReallocations = vi.fn();
+const createWithdrawalReallocation = vi.fn();
+const cancelWithdrawalReallocation = vi.fn();
+const previewWithdrawalReallocation = vi.fn();
+
+vi.mock("@/lib/withdrawal-reallocations", () => {
+  class WithdrawalReallocationsForbiddenError extends Error {}
+  return {
+    listWithdrawalReallocations: (...args: unknown[]) => listWithdrawalReallocations(...args),
+    createWithdrawalReallocation: (...args: unknown[]) => createWithdrawalReallocation(...args),
+    cancelWithdrawalReallocation: (...args: unknown[]) => cancelWithdrawalReallocation(...args),
+    previewWithdrawalReallocation: (...args: unknown[]) => previewWithdrawalReallocation(...args),
+    WithdrawalReallocationsForbiddenError,
+  };
+});
+
+beforeEach(() => {
+  listWithdrawalReallocations.mockReset().mockRejectedValue(new WithdrawalReallocationsForbiddenError());
+  createWithdrawalReallocation.mockReset();
+  cancelWithdrawalReallocation.mockReset();
+  // Never resolves by default (a pending promise) -- the 400ms-debounced
+  // preview fires in the background of most tests (any Skip dialog open),
+  // and none of the pre-existing tests assert on it; a never-resolving
+  // promise means it just stays "loading" quietly rather than a test
+  // needing to explicitly wait it out or risk an unmocked-call crash.
+  previewWithdrawalReallocation.mockReset().mockImplementation(() => new Promise(() => {}));
+});
+
 const EMPTY_ADJUSTMENTS_RESPONSE: WithdrawalAdjustmentsResponse = { partners: [] };
 
-const PARTNER_WITH_SUBS: PartnerCanTake = {
+const PARTNER_WITH_SUBS: PartnerCanTakeWithEffective = {
   partnerId: "a",
   name: "A",
   sharePercent: "50" as Percent,
   canTake: "250000" as Money,
+  effectiveCanTake: "250000" as Money,
   ownCanTake: "125000" as Money,
   subPartners: [
     {
@@ -100,21 +140,24 @@ const PARTNER_WITH_SUBS: PartnerCanTake = {
       name: "Sub1",
       sharePercent: "12.5" as Percent,
       canTake: "62500" as Money,
+      effectiveCanTake: "62500" as Money,
     },
     {
       subPartnerId: "sub2",
       name: "Sub2",
       sharePercent: "12.5" as Percent,
       canTake: "62500" as Money,
+      effectiveCanTake: "62500" as Money,
     },
   ],
 };
 
-const PARTNER_NO_SUBS: PartnerCanTake = {
+const PARTNER_NO_SUBS: PartnerCanTakeWithEffective = {
   partnerId: "b",
   name: "B",
   sharePercent: "50" as Percent,
   canTake: "250000" as Money,
+  effectiveCanTake: "250000" as Money,
   ownCanTake: "250000" as Money,
   subPartners: [],
 };
@@ -1126,6 +1169,54 @@ describe("WithdrawMoneyPage -- Authorize Extra Withdrawal confirmation dialog (S
     expect(recordWithdrawalTransaction).not.toHaveBeenCalled();
   });
 
+  it("uses effectiveCanTake, not the plain canTake, for the exceeds-check -- a recipient's unconsumed bonus needs no confirmation dialog even though the amount exceeds their plain canTake", async () => {
+    getCanTake.mockResolvedValue({
+      availableToWithdraw: "500000" as Money,
+      partners: [{ ...PARTNER_NO_SUBS, effectiveCanTake: "300000" as Money }, PARTNER_WITH_SUBS],
+    });
+    recordWithdrawalTransaction.mockResolvedValue(makeWithdrawalTransaction({ shareId: "b", amount: "300000" }));
+    const user = userEvent.setup();
+    render(<WithdrawMoneyPage />);
+    await screen.findByText("A");
+
+    const bCard = screen.getByText("B").closest(".nb-person-card") as HTMLElement;
+    await user.click(within(bCard).getByRole("button", { name: "Record Withdrawal" }));
+    // 300000 exceeds B's plain canTake (250000) but fits within their boosted effectiveCanTake (300000).
+    fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "300000" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(recordWithdrawalTransaction).toHaveBeenCalledTimes(1);
+    });
+    expect(recordWithdrawalTransaction).toHaveBeenCalledWith(
+      "project-1",
+      expect.objectContaining({ amount: "300000", extraWithdrawalAuthorized: false }),
+      expect.any(String),
+    );
+    expect(screen.queryByText("Authorize Extra Withdrawal?")).not.toBeInTheDocument();
+  });
+
+  it("uses effectiveCanTake, not the plain canTake, for the exceeds-check -- a decliner's own reduced ceiling still triggers the confirmation dialog for an amount within their plain canTake", async () => {
+    getCanTake.mockResolvedValue({
+      availableToWithdraw: "500000" as Money,
+      partners: [{ ...PARTNER_NO_SUBS, effectiveCanTake: "150000" as Money }, PARTNER_WITH_SUBS],
+    });
+    const user = userEvent.setup();
+    render(<WithdrawMoneyPage />);
+    await screen.findByText("A");
+
+    const bCard = screen.getByText("B").closest(".nb-person-card") as HTMLElement;
+    await user.click(within(bCard).getByRole("button", { name: "Record Withdrawal" }));
+    // 200000 is within B's plain canTake (250000) but exceeds their reduced effectiveCanTake (150000).
+    fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "200000" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText("Authorize Extra Withdrawal?")).toBeInTheDocument();
+    expect(recordWithdrawalTransaction).not.toHaveBeenCalled();
+  });
+
   it("over-cap amount -> confirm dialog -> confirm -> success (extraWithdrawalAuthorized: true)", async () => {
     recordWithdrawalTransaction.mockResolvedValue(makeWithdrawalTransaction({ amount: "300000" }));
     const user = await renderAndReady();
@@ -1684,5 +1775,307 @@ describe("WithdrawMoneyPage -- destination-allocation dialog (Story 4.7, extende
     });
 
     expect(await screen.findByText("Couldn't load Projects: Could not load Projects.")).toBeInTheDocument();
+  });
+});
+
+describe("Withdraw Money page -- flexible pro-rata withdrawal reallocation", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("hides Skip this round and the Active Reallocations panel for a non-Owner/Admin session (the default, forbidden fetch)", async () => {
+    await renderAndReady();
+
+    expect(screen.queryByRole("button", { name: "Skip this round" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Active Reallocations")).not.toBeInTheDocument();
+  });
+
+  it("shows Skip this round for an Owner/Admin session (the reallocations fetch succeeds)", async () => {
+    listWithdrawalReallocations.mockResolvedValue({ reallocations: [], allocations: [], isOwnerAdminView: true });
+    await renderAndReady();
+
+    expect(screen.getAllByRole("button", { name: "Skip this round" }).length).toBeGreaterThan(0);
+  });
+
+  it("shows a boosted (success) badge when a leaf's effectiveCanTake exceeds its plain canTake", async () => {
+    listWithdrawalReallocations.mockResolvedValue({ reallocations: [], allocations: [], isOwnerAdminView: true });
+    getCanTake.mockResolvedValue({
+      availableToWithdraw: "500000" as Money,
+      partners: [
+        { ...PARTNER_NO_SUBS, effectiveCanTake: "300000" as Money },
+        PARTNER_WITH_SUBS,
+      ],
+    });
+    render(<WithdrawMoneyPage />);
+
+    await screen.findByText("B");
+
+    expect(screen.getByText(/Bonus/)).toBeInTheDocument();
+    expect(screen.getByText("₹50,000")).toBeInTheDocument();
+  });
+
+  it("shows the decliner's name on a boosted badge, and hides Skip/the oversight panel, for a Partner's own row-scoped (non-Owner/Admin) view", async () => {
+    listWithdrawalReallocations.mockResolvedValue({
+      reallocations: [
+        {
+          id: "realloc-1",
+          projectId: "project-1",
+          partyType: "partner",
+          shareId: "a",
+          declinedAmount: "50000",
+          notes: null,
+          status: "active",
+          createdByUserId: "owner-1",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+      allocations: [
+        {
+          id: "leg-1",
+          reallocationId: "realloc-1",
+          partyType: "partner",
+          shareId: "b",
+          allocatedAmount: "50000",
+          consumedAmount: "0",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+      isOwnerAdminView: false,
+    });
+    getCanTake.mockResolvedValue({
+      availableToWithdraw: "500000" as Money,
+      partners: [{ ...PARTNER_NO_SUBS, effectiveCanTake: "300000" as Money }, PARTNER_WITH_SUBS],
+    });
+    render(<WithdrawMoneyPage />);
+
+    await screen.findByText("B");
+
+    expect(screen.getByText(/Bonus/)).toBeInTheDocument();
+    expect(screen.getByText(/declined by A/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Skip this round" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Active Reallocations")).not.toBeInTheDocument();
+  });
+
+  it("shows a reduced (neutral) badge when a leaf's effectiveCanTake is below its plain canTake", async () => {
+    listWithdrawalReallocations.mockResolvedValue({ reallocations: [], allocations: [], isOwnerAdminView: true });
+    getCanTake.mockResolvedValue({
+      availableToWithdraw: "500000" as Money,
+      partners: [
+        { ...PARTNER_NO_SUBS, effectiveCanTake: "190000" as Money },
+        PARTNER_WITH_SUBS,
+      ],
+    });
+    render(<WithdrawMoneyPage />);
+
+    await screen.findByText("B");
+
+    expect(screen.getByText(/Declined/)).toBeInTheDocument();
+    expect(screen.getByText("₹60,000")).toBeInTheDocument();
+  });
+
+  it("declines an amount via the Skip dialog, refreshing Can Take/adjustments/reallocations on success", async () => {
+    listWithdrawalReallocations.mockResolvedValue({ reallocations: [], allocations: [], isOwnerAdminView: true });
+    createWithdrawalReallocation.mockResolvedValue({
+      reallocation: {
+        id: "realloc-1",
+        projectId: "project-1",
+        partyType: "partner",
+        shareId: "b",
+        declinedAmount: "100000",
+        notes: null,
+        status: "active",
+        createdByUserId: "owner-1",
+        createdAt: new Date().toISOString(),
+      },
+      allocations: [],
+    });
+    const user = await renderAndReady();
+
+    expect(getCanTake).toHaveBeenCalledTimes(1);
+    expect(getWithdrawalAdjustments).toHaveBeenCalledTimes(1);
+    expect(listWithdrawalReallocations).toHaveBeenCalledTimes(1);
+    getCanTake.mockResolvedValueOnce(CAN_TAKE_RESPONSE);
+    getWithdrawalAdjustments.mockResolvedValueOnce(EMPTY_ADJUSTMENTS_RESPONSE);
+    listWithdrawalReallocations.mockResolvedValueOnce({ reallocations: [], allocations: [], isOwnerAdminView: true });
+
+    const skipButtons = screen.getAllByRole("button", { name: "Skip this round" });
+    await user.click(skipButtons[skipButtons.length - 1] as HTMLElement);
+
+    await screen.findByText("Skip this round — B");
+    // Pre-filled with B's own effectiveCanTake (250000, unchanged from canTake here).
+    expect(screen.getByLabelText("Amount to decline")).toHaveValue("250000");
+
+    fireEvent.change(screen.getByLabelText("Amount to decline"), { target: { value: "100000" } });
+    await user.click(screen.getByRole("button", { name: "Skip" }));
+
+    await waitFor(() => {
+      expect(createWithdrawalReallocation).toHaveBeenCalledTimes(1);
+    });
+    expect(createWithdrawalReallocation).toHaveBeenCalledWith(
+      "project-1",
+      { partyType: "partner", shareId: "b", declinedAmount: "100000", notes: null },
+      expect.any(String),
+    );
+
+    await waitFor(() => {
+      expect(getCanTake).toHaveBeenCalledTimes(2);
+    });
+    expect(listWithdrawalReallocations).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows the debounced pro-rata split preview -- every other recipient's name and computed amount", async () => {
+    listWithdrawalReallocations.mockResolvedValue({ reallocations: [], allocations: [], isOwnerAdminView: true });
+    previewWithdrawalReallocation.mockResolvedValue({
+      effectiveCanTake: "250000",
+      allocationLegs: [
+        { partyType: "partner", shareId: "a", allocatedAmount: "250000" },
+      ],
+    });
+    const user = await renderAndReady();
+
+    const skipButtons = screen.getAllByRole("button", { name: "Skip this round" });
+    await user.click(skipButtons[skipButtons.length - 1] as HTMLElement);
+    await screen.findByText("Skip this round — B");
+
+    await waitFor(
+      () => {
+        expect(previewWithdrawalReallocation).toHaveBeenCalledWith("project-1", "partner", "b", "250000");
+      },
+      { timeout: 1000 },
+    );
+    expect(await screen.findByText("This will be split as:")).toBeInTheDocument();
+    expect(screen.getByText(/A:/)).toBeInTheDocument();
+  });
+
+  it("re-fetches the preview when the declined amount changes", async () => {
+    listWithdrawalReallocations.mockResolvedValue({ reallocations: [], allocations: [], isOwnerAdminView: true });
+    previewWithdrawalReallocation.mockResolvedValue({
+      effectiveCanTake: "250000",
+      allocationLegs: [{ partyType: "partner", shareId: "a", allocatedAmount: "50000" }],
+    });
+    const user = await renderAndReady();
+
+    const skipButtons = screen.getAllByRole("button", { name: "Skip this round" });
+    await user.click(skipButtons[skipButtons.length - 1] as HTMLElement);
+    await screen.findByText("Skip this round — B");
+
+    fireEvent.change(screen.getByLabelText("Amount to decline"), { target: { value: "60000" } });
+
+    await waitFor(
+      () => {
+        expect(previewWithdrawalReallocation).toHaveBeenCalledWith("project-1", "partner", "b", "60000");
+      },
+      { timeout: 1000 },
+    );
+  });
+
+  it("shows an inline error, without blocking the Skip button, when the preview fetch fails", async () => {
+    listWithdrawalReallocations.mockResolvedValue({ reallocations: [], allocations: [], isOwnerAdminView: true });
+    previewWithdrawalReallocation.mockRejectedValue(new Error("Could not compute the split."));
+    const user = await renderAndReady();
+
+    const skipButtons = screen.getAllByRole("button", { name: "Skip this round" });
+    await user.click(skipButtons[skipButtons.length - 1] as HTMLElement);
+    await screen.findByText("Skip this round — B");
+
+    expect(
+      await screen.findByText("Couldn't preview the split: Could not compute the split.", {}, { timeout: 1000 }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Skip" })).not.toBeDisabled();
+  });
+
+  it("shows the server's error message and keeps the Skip dialog open on a failed decline", async () => {
+    listWithdrawalReallocations.mockResolvedValue({ reallocations: [], allocations: [], isOwnerAdminView: true });
+    createWithdrawalReallocation.mockRejectedValue(
+      new Error("Cannot decline more than this Partner/Sub-partner's own currently-available Can Take."),
+    );
+    const user = await renderAndReady();
+
+    const skipButtons = screen.getAllByRole("button", { name: "Skip this round" });
+    await user.click(skipButtons[skipButtons.length - 1] as HTMLElement);
+    await screen.findByLabelText("Amount to decline");
+    await user.click(screen.getByRole("button", { name: "Skip" }));
+
+    expect(
+      await screen.findByText("Cannot decline more than this Partner/Sub-partner's own currently-available Can Take."),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Amount to decline")).toBeInTheDocument();
+  });
+
+  it("shows Undo Skip instead of Skip this round once a share has an active decline, and cancels it via the confirm dialog", async () => {
+    const activeReallocation = {
+      id: "realloc-1",
+      projectId: "project-1",
+      partyType: "partner" as const,
+      shareId: "b",
+      declinedAmount: "100000",
+      notes: "Taking a step back this round",
+      status: "active" as const,
+      createdByUserId: "owner-1",
+      createdAt: new Date().toISOString(),
+    };
+    listWithdrawalReallocations.mockResolvedValue({
+      reallocations: [activeReallocation],
+      allocations: [
+        {
+          id: "leg-1",
+          reallocationId: "realloc-1",
+          partyType: "partner",
+          shareId: "a",
+          allocatedAmount: "100000",
+          consumedAmount: "0",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+      isOwnerAdminView: true,
+    });
+    cancelWithdrawalReallocation.mockResolvedValue({ ...activeReallocation, status: "cancelled" });
+    const user = await renderAndReady();
+
+    expect(screen.getByText("Active Reallocations")).toBeInTheDocument();
+    expect(screen.getByText(/B declined/)).toBeInTheDocument();
+    expect(screen.getByText("Taking a step back this round")).toBeInTheDocument();
+
+    const undoButtons = screen.getAllByRole("button", { name: "Undo Skip" });
+    expect(undoButtons.length).toBeGreaterThan(0);
+
+    getCanTake.mockResolvedValueOnce(CAN_TAKE_RESPONSE);
+    getWithdrawalAdjustments.mockResolvedValueOnce(EMPTY_ADJUSTMENTS_RESPONSE);
+    listWithdrawalReallocations.mockResolvedValueOnce({ reallocations: [], allocations: [], isOwnerAdminView: true });
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await screen.findByText("Cancel this reallocation?");
+    await user.click(screen.getByRole("button", { name: "Yes, cancel it" }));
+
+    await waitFor(() => {
+      expect(cancelWithdrawalReallocation).toHaveBeenCalledWith("project-1", "realloc-1");
+    });
+  });
+
+  it("shows the server's error message and keeps the confirm dialog open on a failed cancel (e.g. already consumed)", async () => {
+    const activeReallocation = {
+      id: "realloc-1",
+      projectId: "project-1",
+      partyType: "partner" as const,
+      shareId: "b",
+      declinedAmount: "100000",
+      notes: null,
+      status: "active" as const,
+      createdByUserId: "owner-1",
+      createdAt: new Date().toISOString(),
+    };
+    listWithdrawalReallocations.mockResolvedValue({ reallocations: [activeReallocation], allocations: [], isOwnerAdminView: true });
+    cancelWithdrawalReallocation.mockRejectedValue(
+      new Error("Cannot cancel a reallocation once any part of it has been consumed."),
+    );
+    const user = await renderAndReady();
+
+    await user.click(screen.getAllByRole("button", { name: "Undo Skip" })[0] as HTMLElement);
+    await screen.findByText("Cancel this reallocation?");
+    await user.click(screen.getByRole("button", { name: "Yes, cancel it" }));
+
+    expect(
+      await screen.findByText("Cannot cancel a reallocation once any part of it has been consumed."),
+    ).toBeInTheDocument();
   });
 });

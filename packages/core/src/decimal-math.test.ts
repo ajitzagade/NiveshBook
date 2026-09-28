@@ -16,6 +16,8 @@ import {
   subtractMoney,
   compareMoney,
   NegativeMoneyResultError,
+  splitMoneyByWeights,
+  SplitWeightTotalError,
 } from "./decimal-math";
 
 describe("toPercent", () => {
@@ -415,5 +417,89 @@ describe("splitMoneyByPercents", () => {
     const result = splitMoneyByPercents(amount, percents);
 
     expect(sumMoney(result)).toBe("999999999999");
+  });
+});
+
+describe("splitMoneyByWeights", () => {
+  it("splits proportionally by weight even when weights don't sum to 100", () => {
+    const amount = toMoney("850000");
+    const weights = ["60", "25"].map(toPercent);
+
+    const result = splitMoneyByWeights(amount, weights);
+
+    expect(result).toEqual(["600000", "250000"]);
+  });
+
+  it("sums to exactly the amount for an uneven weight list, via largest-remainder", () => {
+    const amount = toMoney("100");
+    const weights = ["1", "1", "1"].map(toPercent);
+
+    const result = splitMoneyByWeights(amount, weights);
+
+    expect(sumMoney(result)).toBe("100");
+  });
+
+  it("distributes leftover paise to the largest remainders first (classic 100/3 case)", () => {
+    const amount = toMoney("100");
+    const weights = ["1", "1", "1"].map(toPercent);
+
+    const result = splitMoneyByWeights(amount, weights);
+
+    expect(result).toEqual(["33.34", "33.33", "33.33"]);
+  });
+
+  it("breaks a tied remainder deterministically by ascending original index", () => {
+    const amount = toMoney("0.01");
+    const weights = ["50", "50"].map(toPercent);
+
+    const result = splitMoneyByWeights(amount, weights);
+
+    expect(result).toEqual(["0.01", "0"]);
+  });
+
+  it("gives a zero-weight entry exactly 0, never a stray paisa", () => {
+    const amount = toMoney("1000000");
+    const zeroPercent = "0" as Percent;
+
+    const result = splitMoneyByWeights(amount, [toPercent("100"), zeroPercent]);
+
+    expect(result).toEqual(["1000000", "0"]);
+  });
+
+  it("handles a single weight -- the whole amount, no split needed", () => {
+    const amount = toMoney("1000000");
+    expect(splitMoneyByWeights(amount, [toPercent("30")])).toEqual(["1000000"]);
+  });
+
+  it("throws SplitWeightTotalError when every weight is zero -- nothing to split proportionally against", () => {
+    const amount = toMoney("1000000");
+    const weights = ["0", "0"] as Percent[];
+
+    expect(() => splitMoneyByWeights(amount, weights)).toThrow(SplitWeightTotalError);
+  });
+
+  it("throws SplitWeightTotalError for an empty weights array", () => {
+    const amount = toMoney("1000000");
+
+    expect(() => splitMoneyByWeights(amount, [])).toThrow(SplitWeightTotalError);
+  });
+
+  it("handles a large amount without precision loss (BigInt, not Number, for the amount*weight product)", () => {
+    const amount = toMoney("999999999999");
+    const weights = ["33.3333", "33.3333", "33.3334"].map(toPercent);
+
+    const result = splitMoneyByWeights(amount, weights);
+
+    expect(sumMoney(result)).toBe("999999999999");
+  });
+
+  it("is deterministic across repeated calls with the same tied input", () => {
+    const amount = toMoney("0.01");
+    const weights = ["50", "50"].map(toPercent);
+
+    const first = splitMoneyByWeights(amount, weights);
+    const second = splitMoneyByWeights(amount, weights);
+
+    expect(first).toEqual(second);
   });
 });

@@ -11,6 +11,8 @@ const listPartnerSharesByProjectId = vi.fn();
 const listSubPartnerSharesByProjectId = vi.fn();
 const sumActiveAmountByProjectId = vi.fn();
 const sumActiveWithdrawnAmountByProjectId = vi.fn();
+const listActiveByProjectId = vi.fn();
+const listActiveAllocationsByProjectId = vi.fn();
 
 vi.mock("@niveshbook/db", () => ({
   createSessionPort: () => ({
@@ -57,6 +59,17 @@ vi.mock("@niveshbook/db", () => ({
     recordTransaction: vi.fn(),
     listByProjectId: vi.fn(),
     sumActiveAmountByProjectId: sumActiveWithdrawnAmountByProjectId,
+  }),
+  createWithdrawalReallocationPort: () => ({
+    record: vi.fn(),
+    listActiveByProjectId,
+    listActiveAllocationsByProjectId,
+    listAllocationsByReallocationId: vi.fn(),
+    cancel: vi.fn(),
+    consumeAllocationLegs: vi.fn(),
+    findById: vi.fn(),
+    listAll: vi.fn(),
+    listAllAllocations: vi.fn(),
   }),
 }));
 
@@ -164,6 +177,10 @@ function resetMocks() {
   // unchanged unless a test explicitly overrides it -- a dedicated test
   // below exercises the actual subtraction.
   sumActiveWithdrawnAmountByProjectId.mockResolvedValue("0");
+  listActiveByProjectId.mockReset();
+  listActiveByProjectId.mockResolvedValue([]);
+  listActiveAllocationsByProjectId.mockReset();
+  listActiveAllocationsByProjectId.mockResolvedValue([]);
 }
 
 describe("GET /api/projects/[id]/can-take", () => {
@@ -234,6 +251,53 @@ describe("GET /api/projects/[id]/can-take", () => {
     expect(b.canTake).toBe("150000");
     const c = body.partners.find((p: { partnerId: string }) => p.partnerId === "c");
     expect(c.canTake).toBe("100000");
+  });
+
+  it("effectiveCanTake matches canTake for every leaf when there is no active reallocation activity", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+
+    const response = await GET(makeRequest(`${SESSION_COOKIE_NAME}=some-token`), makeContext());
+
+    const body = await response.json();
+    for (const partner of body.partners) {
+      expect(partner.effectiveCanTake).toBe(partner.canTake);
+    }
+  });
+
+  it("effectiveCanTake reflects a Partner's own active decline", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    listActiveByProjectId.mockResolvedValue([
+      { id: "r1", projectId: PROJECT_ID, partyType: "partner", shareId: "a", declinedAmount: "100000", notes: null, status: "active", createdByUserId: "owner-1", createdAt: new Date().toISOString() },
+    ]);
+
+    const response = await GET(makeRequest(`${SESSION_COOKIE_NAME}=some-token`), makeContext());
+
+    const body = await response.json();
+    const a = body.partners.find((p: { partnerId: string }) => p.partnerId === "a");
+    expect(a.canTake).toBe("250000");
+    expect(a.effectiveCanTake).toBe("150000");
+  });
+
+  it("effectiveCanTake reflects a Sub-partner's own unconsumed bonus, independent of the parent Partner's figure", async () => {
+    findSessionByTokenHash.mockResolvedValue(LIVE_SESSION);
+    findUserById.mockResolvedValue(OWNER_USER);
+    listSubPartnerSharesByProjectId.mockResolvedValue([
+      makeSubPartnerShareRow({ subPartnerId: "sub1", partnerId: "a", name: "Sub1", sharePercent: "12.5" }),
+    ]);
+    listActiveAllocationsByProjectId.mockResolvedValue([
+      { id: "leg1", reallocationId: "r1", partyType: "sub_partner", shareId: "sub1", allocatedAmount: "10000", consumedAmount: "0", createdAt: new Date().toISOString() },
+    ]);
+
+    const response = await GET(makeRequest(`${SESSION_COOKIE_NAME}=some-token`), makeContext());
+
+    const body = await response.json();
+    const a = body.partners.find((p: { partnerId: string }) => p.partnerId === "a");
+    const sub1 = a.subPartners.find((s: { subPartnerId: string }) => s.subPartnerId === "sub1");
+    expect(sub1.canTake).toBe("62500");
+    expect(sub1.effectiveCanTake).toBe("72500");
+    expect(a.effectiveCanTake).toBe(a.canTake);
   });
 
   it("groups Sub-partner Shares by partnerId, nested under the right Partner", async () => {

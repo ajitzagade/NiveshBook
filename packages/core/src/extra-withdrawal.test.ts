@@ -108,4 +108,78 @@ describe("assertExtraWithdrawalAuthorized", () => {
       ),
     ).toThrow(OwnerAdminRequiredForExtraWithdrawalError);
   });
+
+  it("availableReallocationBonus omitted defaults to '0' -- byte-for-byte the same gate behavior as before this field existed", () => {
+    expect(() =>
+      assertExtraWithdrawalAuthorized(
+        makeInput({
+          requestedAmount: "300000" as Money,
+          canTake: "250000" as Money,
+          actorRole: "partner" as UserRole,
+          actorCanApproveExtraWithdrawal: false,
+          extraWithdrawalAuthorized: false,
+        }),
+      ),
+    ).toThrow(OwnerAdminRequiredForExtraWithdrawalError);
+  });
+
+  it("an amount within canTake + availableReallocationBonus is a no-op with no Owner/Admin authorization needed at all", () => {
+    expect(() =>
+      assertExtraWithdrawalAuthorized(
+        makeInput({
+          requestedAmount: "300000" as Money,
+          canTake: "250000" as Money,
+          availableReallocationBonus: "50000" as Money,
+          actorRole: "partner" as UserRole,
+          actorCanApproveExtraWithdrawal: false,
+          extraWithdrawalAuthorized: false,
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it("an exact-match amount (requestedAmount === canTake + bonus) is within the boosted ceiling, not 'exceeds'", () => {
+    expect(() =>
+      assertExtraWithdrawalAuthorized(
+        makeInput({
+          requestedAmount: "300000" as Money,
+          canTake: "250000" as Money,
+          availableReallocationBonus: "50000" as Money,
+          actorRole: "partner" as UserRole,
+          actorCanApproveExtraWithdrawal: false,
+          extraWithdrawalAuthorized: false,
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it("an amount beyond canTake + availableReallocationBonus still requires the existing Owner/Admin gate for the excess", () => {
+    expect(() =>
+      assertExtraWithdrawalAuthorized(
+        makeInput({
+          requestedAmount: "310000" as Money,
+          canTake: "250000" as Money,
+          availableReallocationBonus: "50000" as Money,
+          actorRole: "partner" as UserRole,
+          actorCanApproveExtraWithdrawal: false,
+          extraWithdrawalAuthorized: false,
+        }),
+      ),
+    ).toThrow(OwnerAdminRequiredForExtraWithdrawalError);
+  });
+
+  it("an amount beyond canTake + availableReallocationBonus, authorized by an eligible Owner/Admin, is a no-op", () => {
+    expect(() =>
+      assertExtraWithdrawalAuthorized(
+        makeInput({
+          requestedAmount: "310000" as Money,
+          canTake: "250000" as Money,
+          availableReallocationBonus: "50000" as Money,
+          actorRole: "owner_admin" as UserRole,
+          actorCanApproveExtraWithdrawal: true,
+          extraWithdrawalAuthorized: true,
+        }),
+      ),
+    ).not.toThrow();
+  });
 });

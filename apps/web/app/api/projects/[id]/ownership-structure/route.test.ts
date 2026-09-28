@@ -7,10 +7,14 @@ const findSessionByTokenHash = vi.fn();
 const touchSession = vi.fn();
 const findUserById = vi.fn();
 const findProjectById = vi.fn();
+const listProjects = vi.fn();
 const listPartnerSharesByProjectId = vi.fn();
 const listSubPartnerSharesByProjectId = vi.fn();
 const investmentListAll = vi.fn();
 const listWithdrawalTransactionsByProjectId = vi.fn();
+const withdrawalDestinationAllocationListAll = vi.fn();
+const moneyMovementListByDestinationProjectId = vi.fn();
+const availableBalanceSpendListAll = vi.fn();
 
 vi.mock("@niveshbook/db", () => ({
   createSessionPort: () => ({
@@ -30,7 +34,7 @@ vi.mock("@niveshbook/db", () => ({
     createProject: vi.fn(),
     updateProject: vi.fn(),
     findProjectById,
-    listProjects: vi.fn(),
+    listProjects,
   }),
   createPartnerSharePort: () => ({
     createPartnerShare: vi.fn(),
@@ -66,6 +70,25 @@ vi.mock("@niveshbook/db", () => ({
     listAll: vi.fn(),
     findAuditLogByTransactionId: vi.fn(),
     findByReversalOfTransactionId: vi.fn(),
+  }),
+  createWithdrawalDestinationAllocationPort: () => ({
+    recordAllocation: vi.fn(),
+    listByWithdrawalTransactionId: vi.fn(),
+    hasConflictingAllocation: vi.fn(),
+    findById: vi.fn(),
+    listAll: withdrawalDestinationAllocationListAll,
+  }),
+  createMoneyMovementPort: () => ({
+    record: vi.fn(),
+    listByDestinationProjectId: moneyMovementListByDestinationProjectId,
+    findByDestinationInvestmentTransactionId: vi.fn(),
+    findByWithdrawalDestinationAllocationId: vi.fn(),
+    findByAvailableBalanceSpendId: vi.fn(),
+    listAll: vi.fn(),
+  }),
+  createAvailableBalanceSpendPort: () => ({
+    recordSpend: vi.fn(),
+    listAll: availableBalanceSpendListAll,
   }),
 }));
 
@@ -170,6 +193,24 @@ function makeInvestmentTransactionRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeWithdrawalDestinationAllocationRow(overrides: Record<string, unknown> = {}) {
+  const now = new Date().toISOString();
+  return {
+    id: "leg-1",
+    withdrawalTransactionId: "wtx-1",
+    destinationType: "project",
+    amount: "300",
+    destinationProjectId: OTHER_PROJECT_ID,
+    personName: null,
+    notes: null,
+    destinationRequirementId: null,
+    destinationShareId: null,
+    destinationPartyType: null,
+    createdAt: now,
+    ...overrides,
+  };
+}
+
 function makeWithdrawalTransactionRow(overrides: Record<string, unknown> = {}) {
   const now = new Date().toISOString();
   return {
@@ -198,6 +239,8 @@ function resetMocks() {
   findUserById.mockReset();
   findProjectById.mockReset();
   findProjectById.mockResolvedValue(EXISTING_PROJECT);
+  listProjects.mockReset();
+  listProjects.mockResolvedValue([EXISTING_PROJECT]);
   listPartnerSharesByProjectId.mockReset();
   listPartnerSharesByProjectId.mockResolvedValue([
     makePartnerShareRow({ partnerId: "a", name: "Partner A", sharePercent: "60", userId: "partner-user-a" }),
@@ -211,6 +254,12 @@ function resetMocks() {
   investmentListAll.mockResolvedValue([]);
   listWithdrawalTransactionsByProjectId.mockReset();
   listWithdrawalTransactionsByProjectId.mockResolvedValue([]);
+  withdrawalDestinationAllocationListAll.mockReset();
+  withdrawalDestinationAllocationListAll.mockResolvedValue([]);
+  moneyMovementListByDestinationProjectId.mockReset();
+  moneyMovementListByDestinationProjectId.mockResolvedValue([]);
+  availableBalanceSpendListAll.mockReset();
+  availableBalanceSpendListAll.mockResolvedValue([]);
 }
 
 function ownerSession() {
@@ -429,6 +478,180 @@ describe("GET /api/projects/[id]/ownership-structure", () => {
       const response = await GET(makeRequest({ subPartnerId: "sub-2" }, COOKIE), makeContext());
 
       expect(response.status).toBe(403);
+    });
+  });
+
+  describe("money-flow edges (moneyFlowEdges)", () => {
+    const OTHER_PROJECT = {
+      id: OTHER_PROJECT_ID,
+      name: "Other Project",
+      description: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    it("owner_admin sees a moved_to_project edge for every party that has one", async () => {
+      ownerSession();
+      listProjects.mockResolvedValue([EXISTING_PROJECT, OTHER_PROJECT]);
+      listWithdrawalTransactionsByProjectId.mockResolvedValue([
+        makeWithdrawalTransactionRow({ id: "wtx-a", shareId: "a", partyType: "partner", amount: "300" }),
+        makeWithdrawalTransactionRow({ id: "wtx-b", shareId: "b", partyType: "partner", amount: "200" }),
+      ]);
+      withdrawalDestinationAllocationListAll.mockResolvedValue([
+        makeWithdrawalDestinationAllocationRow({
+          id: "leg-a",
+          withdrawalTransactionId: "wtx-a",
+          amount: "300",
+          destinationProjectId: OTHER_PROJECT_ID,
+        }),
+        makeWithdrawalDestinationAllocationRow({
+          id: "leg-b",
+          withdrawalTransactionId: "wtx-b",
+          amount: "200",
+          destinationProjectId: OTHER_PROJECT_ID,
+        }),
+      ]);
+
+      const response = await GET(makeRequest({}, COOKIE), makeContext());
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.moneyFlowEdges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            shareId: "a",
+            direction: "out",
+            counterpartyKind: "project",
+            counterpartyLabel: "Other Project",
+            amount: "300",
+          }),
+          expect.objectContaining({
+            shareId: "b",
+            direction: "out",
+            counterpartyKind: "project",
+            counterpartyLabel: "Other Project",
+            amount: "200",
+          }),
+        ]),
+      );
+    });
+
+    it("a Partner's own scoped view only includes their own money-flow edges, never a sibling Partner's", async () => {
+      partnerASession();
+      listProjects.mockResolvedValue([EXISTING_PROJECT, OTHER_PROJECT]);
+      listWithdrawalTransactionsByProjectId.mockResolvedValue([
+        makeWithdrawalTransactionRow({ id: "wtx-a", shareId: "a", partyType: "partner", amount: "300" }),
+        makeWithdrawalTransactionRow({ id: "wtx-b", shareId: "b", partyType: "partner", amount: "999999" }),
+      ]);
+      withdrawalDestinationAllocationListAll.mockResolvedValue([
+        makeWithdrawalDestinationAllocationRow({
+          id: "leg-a",
+          withdrawalTransactionId: "wtx-a",
+          amount: "300",
+          destinationProjectId: OTHER_PROJECT_ID,
+        }),
+        makeWithdrawalDestinationAllocationRow({
+          id: "leg-b",
+          withdrawalTransactionId: "wtx-b",
+          amount: "999999",
+          destinationProjectId: OTHER_PROJECT_ID,
+        }),
+      ]);
+
+      const response = await GET(makeRequest({ partnerId: "a" }, COOKIE), makeContext());
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.moneyFlowEdges).toHaveLength(1);
+      expect(body.moneyFlowEdges[0]).toMatchObject({ shareId: "a", amount: "300" });
+      expect(JSON.stringify(body)).not.toContain("999999");
+    });
+
+    it("a Partner's own scoped view includes their own Sub-partner's money-flow edges too", async () => {
+      partnerASession();
+      listProjects.mockResolvedValue([EXISTING_PROJECT, OTHER_PROJECT]);
+      listWithdrawalTransactionsByProjectId.mockResolvedValue([
+        makeWithdrawalTransactionRow({ id: "wtx-sub1", shareId: "sub-1", partyType: "sub_partner", amount: "150" }),
+      ]);
+      withdrawalDestinationAllocationListAll.mockResolvedValue([
+        makeWithdrawalDestinationAllocationRow({
+          id: "leg-sub1",
+          withdrawalTransactionId: "wtx-sub1",
+          amount: "150",
+          destinationProjectId: OTHER_PROJECT_ID,
+        }),
+      ]);
+
+      const response = await GET(makeRequest({ partnerId: "a" }, COOKIE), makeContext());
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.moneyFlowEdges).toEqual([
+        expect.objectContaining({ partyType: "sub_partner", shareId: "sub-1", amount: "150" }),
+      ]);
+    });
+
+    it("a Sub-partner's own scoped view only includes their own money-flow edges, never their parent Partner's or a sibling's", async () => {
+      subPartner1Session();
+      listProjects.mockResolvedValue([EXISTING_PROJECT, OTHER_PROJECT]);
+      listWithdrawalTransactionsByProjectId.mockResolvedValue([
+        makeWithdrawalTransactionRow({ id: "wtx-sub1", shareId: "sub-1", partyType: "sub_partner", amount: "150" }),
+        makeWithdrawalTransactionRow({ id: "wtx-a", shareId: "a", partyType: "partner", amount: "999999" }),
+      ]);
+      withdrawalDestinationAllocationListAll.mockResolvedValue([
+        makeWithdrawalDestinationAllocationRow({
+          id: "leg-sub1",
+          withdrawalTransactionId: "wtx-sub1",
+          amount: "150",
+          destinationProjectId: OTHER_PROJECT_ID,
+        }),
+        makeWithdrawalDestinationAllocationRow({
+          id: "leg-a",
+          withdrawalTransactionId: "wtx-a",
+          amount: "999999",
+          destinationProjectId: OTHER_PROJECT_ID,
+        }),
+      ]);
+
+      const response = await GET(makeRequest({ subPartnerId: "sub-1" }, COOKIE), makeContext());
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.moneyFlowEdges).toHaveLength(1);
+      expect(body.moneyFlowEdges[0]).toMatchObject({ shareId: "sub-1", amount: "150" });
+      expect(JSON.stringify(body)).not.toContain("999999");
+    });
+
+    it("includes an inbound edge when this Project's investment transaction was created by a cross-project money movement", async () => {
+      ownerSession();
+      listProjects.mockResolvedValue([EXISTING_PROJECT, OTHER_PROJECT]);
+      investmentListAll.mockResolvedValue([makeInvestmentTransactionRow({ id: "itx-moved", shareId: "a", amount: "400" })]);
+      moneyMovementListByDestinationProjectId.mockResolvedValue([
+        {
+          id: "move-1",
+          withdrawalDestinationAllocationId: "leg-other",
+          availableBalanceSpendId: null,
+          sourceProjectId: OTHER_PROJECT_ID,
+          destinationProjectId: PROJECT_ID,
+          destinationInvestmentTransactionId: "itx-moved",
+          amount: "400",
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+
+      const response = await GET(makeRequest({}, COOKIE), makeContext());
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.moneyFlowEdges).toEqual([
+        expect.objectContaining({
+          shareId: "a",
+          direction: "in",
+          counterpartyKind: "project",
+          counterpartyLabel: "Other Project",
+          amount: "400",
+        }),
+      ]);
     });
   });
 });

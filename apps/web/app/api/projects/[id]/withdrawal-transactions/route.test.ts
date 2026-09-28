@@ -13,6 +13,10 @@ const listSubPartnerSharesByProjectId = vi.fn();
 const sumActiveAmountByProjectId = vi.fn();
 const recordTransaction = vi.fn();
 const listByProjectId = vi.fn();
+const withdrawalSumActiveAmountByProjectId = vi.fn();
+const listActiveByProjectId = vi.fn();
+const listActiveAllocationsByProjectId = vi.fn();
+const recordWithdrawalTransactionWithBonusConsumption = vi.fn();
 
 vi.mock("@niveshbook/db", () => ({
   createSessionPort: () => ({
@@ -58,7 +62,26 @@ vi.mock("@niveshbook/db", () => ({
   createWithdrawalTransactionPort: () => ({
     recordTransaction,
     listByProjectId,
+    sumActiveAmountByProjectId: withdrawalSumActiveAmountByProjectId,
   }),
+  createWithdrawalReallocationPort: () => ({
+    record: vi.fn(),
+    listActiveByProjectId,
+    listActiveAllocationsByProjectId,
+    listAllocationsByReallocationId: vi.fn(),
+    cancel: vi.fn(),
+    consumeAllocationLegs: vi.fn(),
+    findById: vi.fn(),
+    listAll: vi.fn(),
+    listAllAllocations: vi.fn(),
+  }),
+  // Wrapped (not referenced directly) -- `vi.mock`'s factory runs at the
+  // hoisted top of the file, before the `recordWithdrawalTransactionWithBonusConsumption`
+  // const below has initialized; a wrapper arrow function defers the actual
+  // reference until this is invoked from within the route, well after
+  // module init completes.
+  recordWithdrawalTransactionWithBonusConsumption: (...args: unknown[]) =>
+    recordWithdrawalTransactionWithBonusConsumption(...args),
 }));
 
 const PROJECT_ID = "0192f5a0-4444-7000-8000-000000000004";
@@ -218,6 +241,25 @@ function resetMocks() {
   recordTransaction.mockResolvedValue({ transaction: SAVED_WITHDRAWAL, created: true });
   listByProjectId.mockReset();
   listByProjectId.mockResolvedValue([SAVED_WITHDRAWAL]);
+  withdrawalSumActiveAmountByProjectId.mockReset();
+  // "0" by default -- preserves every existing test's Can Take numbers
+  // (availableToWithdraw = totalActiveInvested - "0" = totalActiveInvested,
+  // matching this route's pre-fix behavior exactly) unless a test overrides
+  // it to exercise the pool actually shrinking.
+  withdrawalSumActiveAmountByProjectId.mockResolvedValue("0");
+  listActiveByProjectId.mockReset();
+  listActiveByProjectId.mockResolvedValue([]);
+  listActiveAllocationsByProjectId.mockReset();
+  listActiveAllocationsByProjectId.mockResolvedValue([]);
+  recordWithdrawalTransactionWithBonusConsumption.mockReset();
+  // Delegates straight to the plain `recordTransaction` mock -- preserves
+  // every existing test's assertions on `recordTransaction`'s own call args/
+  // resolved value unless a test explicitly wants to exercise bonus
+  // consumption (in which case it asserts on
+  // `recordWithdrawalTransactionWithBonusConsumption` directly instead).
+  recordWithdrawalTransactionWithBonusConsumption.mockImplementation((input: unknown) =>
+    recordTransaction(input),
+  );
 }
 
 function ownerSession() {
@@ -346,6 +388,33 @@ describe("POST /api/projects/[id]/withdrawal-transactions", () => {
         amount: "250000",
         actorUserId: "owner-1",
       }),
+    );
+  });
+
+  it("Can Take shrinks when money has already been withdrawn from the pool -- proves availableToWithdraw actually subtracts totalActiveWithdrawn on this route, not just the raw invested total", async () => {
+    ownerSession();
+    sumActiveAmountByProjectId.mockResolvedValue("500000");
+    withdrawalSumActiveAmountByProjectId.mockResolvedValue("200000");
+    recordTransaction.mockResolvedValue({
+      transaction: { ...SAVED_WITHDRAWAL, amount: "150000", canTakeSnapshot: "150000" },
+      created: true,
+    });
+
+    const response = await POST(
+      makeRequest({
+        cookie: `${SESSION_COOKIE_NAME}=t`,
+        method: "POST",
+        body: makeWithdrawalBody({ amount: "150000" }),
+      }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(201);
+    // availableToWithdraw = 500000 - 200000 = 300000; A's 50% share = 150000 -- an
+    // amount of 150000 is exactly at the (shrunk) ceiling, needing no Extra
+    // Withdrawal authorization.
+    expect(recordTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ canTakeSnapshot: "150000", amount: "150000" }),
     );
   });
 
@@ -616,6 +685,166 @@ describe("POST /api/projects/[id]/withdrawal-transactions", () => {
       expect(response.status).toBe(409);
       expect((await response.json()).code).toBe("shares_not_fully_allocated");
       expect(recordTransaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("withdrawal reallocation bonus", () => {
+    // Partner A's live Can Take is 2,50,000 (50% of the 5,00,000 available-
+    // to-withdraw) throughout this block.
+
+    it("passes bonusToConsume '0' through recordWithdrawalTransactionWithBonusConsumption for a normal, within-entitlement withdrawal", async () => {
+      ownerSession();
+
+      const response = await POST(
+        makeRequest({
+          cookie: `${SESSION_COOKIE_NAME}=t`,
+          method: "POST",
+          body: makeWithdrawalBody({ amount: "200000" }),
+        }),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(201);
+      expect(recordWithdrawalTransactionWithBonusConsumption).toHaveBeenCalledWith(
+        expect.objectContaining({ amount: "200000" }),
+        "0",
+      );
+    });
+
+    it("a share's own active decline immediately reduces their effective ceiling -- withdrawing what used to be within Can Take now requires Extra Withdrawal authorization", async () => {
+      ownerSession();
+      listActiveByProjectId.mockResolvedValue([
+        {
+          id: "realloc-1",
+          projectId: PROJECT_ID,
+          partyType: "partner",
+          shareId: "a",
+          declinedAmount: "100000",
+          notes: null,
+          status: "active",
+          createdByUserId: "owner-1",
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+
+      // Reduced ceiling: 250000 - 100000 = 150000; 200000 now exceeds it.
+      const response = await POST(
+        makeRequest({
+          cookie: `${SESSION_COOKIE_NAME}=t`,
+          method: "POST",
+          body: makeWithdrawalBody({ amount: "200000" }),
+        }),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(400);
+      expect((await response.json()).code).toBe("extra_withdrawal_authorization_required");
+      expect(recordWithdrawalTransactionWithBonusConsumption).not.toHaveBeenCalled();
+    });
+
+    it("an unconsumed bonus lets a recipient withdraw beyond their own Can Take with no Extra Withdrawal confirmation needed", async () => {
+      ownerSession();
+      listActiveAllocationsByProjectId.mockResolvedValue([
+        {
+          id: "leg-1",
+          reallocationId: "realloc-1",
+          partyType: "partner",
+          shareId: "a",
+          allocatedAmount: "80000",
+          consumedAmount: "0",
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+      recordTransaction.mockResolvedValue({
+        transaction: { ...SAVED_WITHDRAWAL, amount: "300000" },
+        created: true,
+      });
+
+      // Base Can Take 250000 + 80000 unconsumed bonus = 330000 ceiling;
+      // 300000 fits within it, no extraWithdrawalAuthorized needed.
+      const response = await POST(
+        makeRequest({
+          cookie: `${SESSION_COOKIE_NAME}=t`,
+          method: "POST",
+          body: makeWithdrawalBody({ amount: "300000" }),
+        }),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(201);
+      expect(recordWithdrawalTransactionWithBonusConsumption).toHaveBeenCalledWith(
+        expect.objectContaining({ amount: "300000" }),
+        "50000",
+      );
+    });
+
+    it("caps bonusToConsume at the full unconsumed bonus even when the withdrawal is authorized well beyond the combined ceiling", async () => {
+      ownerSession();
+      listActiveAllocationsByProjectId.mockResolvedValue([
+        {
+          id: "leg-1",
+          reallocationId: "realloc-1",
+          partyType: "partner",
+          shareId: "a",
+          allocatedAmount: "20000",
+          consumedAmount: "0",
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+      recordTransaction.mockResolvedValue({
+        transaction: { ...SAVED_WITHDRAWAL, amount: "400000" },
+        created: true,
+      });
+
+      // Combined ceiling is 250000 + 20000 = 270000; 400000 exceeds it, so
+      // Extra Withdrawal authorization is required -- but the bonus itself
+      // (20000) is still fully consumed, not the whole 150000 excess.
+      const response = await POST(
+        makeRequest({
+          cookie: `${SESSION_COOKIE_NAME}=t`,
+          method: "POST",
+          body: makeWithdrawalBody({ amount: "400000", extraWithdrawalAuthorized: true }),
+        }),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(201);
+      expect(recordWithdrawalTransactionWithBonusConsumption).toHaveBeenCalledWith(
+        expect.objectContaining({ amount: "400000" }),
+        "20000",
+      );
+    });
+
+    it("returns 409 reallocation_bonus_changed (not an unhandled 500) when a concurrent change shrinks the bonus between this route's snapshot and the port's own lock-guarded re-check", async () => {
+      ownerSession();
+      const { ReallocationBonusInsufficientError } = await import("@niveshbook/core");
+      listActiveAllocationsByProjectId.mockResolvedValue([
+        {
+          id: "leg-1",
+          reallocationId: "realloc-1",
+          partyType: "partner",
+          shareId: "a",
+          allocatedAmount: "80000",
+          consumedAmount: "0",
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+      recordWithdrawalTransactionWithBonusConsumption.mockRejectedValue(
+        new ReallocationBonusInsufficientError(),
+      );
+
+      const response = await POST(
+        makeRequest({
+          cookie: `${SESSION_COOKIE_NAME}=t`,
+          method: "POST",
+          body: makeWithdrawalBody({ amount: "300000" }),
+        }),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(409);
+      const body = await response.json();
+      expect(body.code).toBe("reallocation_bonus_changed");
     });
   });
 

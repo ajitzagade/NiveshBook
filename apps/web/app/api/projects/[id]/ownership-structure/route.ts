@@ -7,7 +7,12 @@ import {
   listCurrentPartnerShares,
   listCurrentSubPartnerSharesForProject,
   assembleOwnershipStructure,
+  assembleMoneyHistory,
+  deriveMoneyFlowEdges,
+  moneyHistoryShareKey,
+  moneyHistoryPersonNameKey,
   type OwnershipStructureScope,
+  type MoneyHistoryScope,
 } from "@niveshbook/core";
 import {
   createSessionPort,
@@ -17,6 +22,9 @@ import {
   createSubPartnerSharePort,
   createInvestmentTransactionPort,
   createWithdrawalTransactionPort,
+  createWithdrawalDestinationAllocationPort,
+  createMoneyMovementPort,
+  createAvailableBalanceSpendPort,
 } from "@niveshbook/db";
 import { readSessionToken } from "@/lib/session";
 import { UNAUTHENTICATED_MESSAGE, FORBIDDEN_MESSAGE } from "@/lib/users";
@@ -158,15 +166,30 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
 
   const investmentTransactionPort = createInvestmentTransactionPort();
   const withdrawalTransactionPort = createWithdrawalTransactionPort();
+  const withdrawalDestinationAllocationPort = createWithdrawalDestinationAllocationPort();
+  const moneyMovementPort = createMoneyMovementPort();
+  const availableBalanceSpendPort = createAvailableBalanceSpendPort();
 
-  const [currentPartnerShares, currentSubPartnerShares, allInvestmentTransactions, withdrawalTransactions] =
-    await Promise.all([
-      resolvedPartnerShares ?? listCurrentPartnerShares(projectId, { partnerShares: partnerSharePort }),
-      resolvedSubPartnerShares ??
-        listCurrentSubPartnerSharesForProject(projectId, { subPartnerShares: subPartnerSharePort }),
-      investmentTransactionPort.listAll(),
-      withdrawalTransactionPort.listByProjectId(projectId),
-    ]);
+  const [
+    currentPartnerShares,
+    currentSubPartnerShares,
+    allInvestmentTransactions,
+    withdrawalTransactions,
+    withdrawalDestinationAllocations,
+    moneyMovements,
+    availableBalanceSpends,
+    allProjects,
+  ] = await Promise.all([
+    resolvedPartnerShares ?? listCurrentPartnerShares(projectId, { partnerShares: partnerSharePort }),
+    resolvedSubPartnerShares ??
+      listCurrentSubPartnerSharesForProject(projectId, { subPartnerShares: subPartnerSharePort }),
+    investmentTransactionPort.listAll(),
+    withdrawalTransactionPort.listByProjectId(projectId),
+    withdrawalDestinationAllocationPort.listAll(),
+    moneyMovementPort.listByDestinationProjectId(projectId),
+    availableBalanceSpendPort.listAll(),
+    projectPort.listProjects(),
+  ]);
 
   const investmentTransactions = allInvestmentTransactions.filter((tx) => tx.projectId === projectId);
 
@@ -177,5 +200,64 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     withdrawalTransactions,
   });
 
-  return NextResponse.json({ projectId, projectName: project.name, tree });
+  // Money-flow edges (founder feedback 2026-09-28): built on TOP of
+  // `assembleMoneyHistory()`'s already-tested join/scoping rather than a
+  // second parallel implementation -- see `deriveMoneyFlowEdges`'s own doc
+  // comment. `projectNamesById` is intentionally system-wide (every
+  // Project's name, not just ones this actor has a Share in) -- mirrors
+  // `GET /api/money-history`'s own identical, already-shipped precedent: a
+  // partner/sub_partner may see another Project's NAME as a plain-language
+  // label on their own entry, never that Project's own tree/shares/nodes.
+  const projectNamesById = Object.fromEntries(allProjects.map((p) => [p.id, p.name]));
+  const partnerNamesById = Object.fromEntries(
+    currentPartnerShares.map((share) => [moneyHistoryPersonNameKey(share.partnerId, share.projectId), share.name]),
+  );
+  const subPartnerNamesById = Object.fromEntries(
+    currentSubPartnerShares.map((share) => [
+      moneyHistoryPersonNameKey(share.subPartnerId, share.projectId),
+      share.name,
+    ]),
+  );
+
+  // Mirrors the tree's own scoping exactly (never new privacy logic): the
+  // unscoped Project view sees every party's entries; a Partner's own scoped
+  // view includes their own Sub-partners' entries too (matching
+  // `assembleOwnershipStructure`'s own `buildPartnerNode` always nesting
+  // `subPartners`); a Sub-partner's own scoped view sees only their own
+  // single share, no parent Partner data.
+  let historyScope: MoneyHistoryScope;
+  if (scope.type === "project") {
+    historyScope = { unrestricted: true };
+  } else if (scope.type === "partner") {
+    const ownSubPartnerKeys = currentSubPartnerShares
+      .filter((share) => share.partnerId === scope.partnerId)
+      .map((share) => moneyHistoryShareKey("sub_partner", share.subPartnerId, projectId));
+    historyScope = {
+      unrestricted: false,
+      shareKeys: new Set([moneyHistoryShareKey("partner", scope.partnerId, projectId), ...ownSubPartnerKeys]),
+    };
+  } else {
+    historyScope = {
+      unrestricted: false,
+      shareKeys: new Set([moneyHistoryShareKey("sub_partner", scope.subPartnerId, projectId)]),
+    };
+  }
+
+  const entries = assembleMoneyHistory(
+    {
+      investmentTransactions,
+      withdrawalTransactions,
+      withdrawalDestinationAllocations,
+      moneyMovements,
+      availableBalanceSpends,
+      projectNamesById,
+      partnerNamesById,
+      subPartnerNamesById,
+    },
+    historyScope,
+    { projectId },
+  );
+  const moneyFlowEdges = deriveMoneyFlowEdges(entries);
+
+  return NextResponse.json({ projectId, projectName: project.name, tree, moneyFlowEdges });
 }

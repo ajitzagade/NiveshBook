@@ -12,6 +12,9 @@ const listSubPartnerSharesByProjectId = vi.fn();
 const sumActiveAmountByProjectId = vi.fn();
 const listWithdrawalTransactionsByProjectId = vi.fn();
 const upsertAdjustment = vi.fn();
+const withdrawalSumActiveAmountByProjectId = vi.fn();
+const listActiveByProjectId = vi.fn();
+const listActiveAllocationsByProjectId = vi.fn();
 
 vi.mock("@niveshbook/db", () => ({
   createSessionPort: () => ({
@@ -57,10 +60,22 @@ vi.mock("@niveshbook/db", () => ({
   createWithdrawalTransactionPort: () => ({
     recordTransaction: vi.fn(),
     listByProjectId: listWithdrawalTransactionsByProjectId,
+    sumActiveAmountByProjectId: withdrawalSumActiveAmountByProjectId,
   }),
   createWithdrawalAdjustmentPort: () => ({
     upsert: upsertAdjustment,
     listByProjectId: vi.fn(),
+  }),
+  createWithdrawalReallocationPort: () => ({
+    record: vi.fn(),
+    listActiveByProjectId,
+    listActiveAllocationsByProjectId,
+    listAllocationsByReallocationId: vi.fn(),
+    cancel: vi.fn(),
+    consumeAllocationLegs: vi.fn(),
+    findById: vi.fn(),
+    listAll: vi.fn(),
+    listAllAllocations: vi.fn(),
   }),
 }));
 
@@ -240,6 +255,15 @@ function resetMocks() {
   listWithdrawalTransactionsByProjectId.mockResolvedValue([]);
   upsertAdjustment.mockReset();
   upsertAdjustment.mockImplementation(makeUpsertImpl());
+  withdrawalSumActiveAmountByProjectId.mockReset();
+  // "0" by default -- preserves every existing test's Can Take numbers
+  // (availableToWithdraw = totalActiveInvested - "0") unless a test
+  // overrides it to exercise the pool actually shrinking.
+  withdrawalSumActiveAmountByProjectId.mockResolvedValue("0");
+  listActiveByProjectId.mockReset();
+  listActiveByProjectId.mockResolvedValue([]);
+  listActiveAllocationsByProjectId.mockReset();
+  listActiveAllocationsByProjectId.mockResolvedValue([]);
 }
 
 function ownerSession() {
@@ -438,6 +462,39 @@ describe("GET /api/projects/[id]/my-withdrawal-status", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.status.partnerId).toBe("c");
+  });
+
+  it("effectiveCanTake reflects the target share's own active decline, additive to status's untouched fields", async () => {
+    ownerSession();
+    listActiveByProjectId.mockResolvedValue([
+      { id: "r1", projectId: PROJECT_ID, partyType: "partner", shareId: "b", declinedAmount: "25000", notes: null, status: "active", createdByUserId: "owner-1", createdAt: new Date().toISOString() },
+    ]);
+
+    const response = await GET(
+      makeRequest({ cookie: `${SESSION_COOKIE_NAME}=t`, partyType: "partner", shareId: "b" }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.status.canTake).toBe("75000");
+    expect(body.status.effectiveCanTake).toBe("50000");
+  });
+
+  it("Can Take shrinks when money has already been withdrawn from the pool -- proves availableToWithdraw actually subtracts totalActiveWithdrawn on this route, not just the raw invested total", async () => {
+    ownerSession();
+    sumActiveAmountByProjectId.mockResolvedValue("250000");
+    withdrawalSumActiveAmountByProjectId.mockResolvedValue("100000");
+
+    const response = await GET(
+      makeRequest({ cookie: `${SESSION_COOKIE_NAME}=t`, partyType: "partner", shareId: "b" }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    // availableToWithdraw = 250000 - 100000 = 150000; B's 30% share = 45000.
+    expect(body.status.canTake).toBe("45000");
   });
 
   it("returns 200 for an Owner/Admin viewing any share's status unconditionally", async () => {

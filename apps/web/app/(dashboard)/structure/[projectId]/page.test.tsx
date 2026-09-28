@@ -91,6 +91,7 @@ describe("OwnershipStructurePage (Story 5.10)", () => {
       projectId: "project-1",
       projectName: "My Project",
       tree: { scope: { type: "project" }, partners: [makePartner()], soloSubPartner: null },
+      moneyFlowEdges: [],
     });
 
     render(<OwnershipStructurePage />);
@@ -110,6 +111,7 @@ describe("OwnershipStructurePage (Story 5.10)", () => {
       projectId: "project-1",
       projectName: "My Project",
       tree: { scope: { type: "partner", partnerId: "partner-xyz" }, partners: [makePartner({ partnerId: "partner-xyz" })], soloSubPartner: null },
+      moneyFlowEdges: [],
     });
 
     render(<OwnershipStructurePage />);
@@ -127,6 +129,7 @@ describe("OwnershipStructurePage (Story 5.10)", () => {
       projectId: "project-1",
       projectName: "My Project",
       tree: { scope: { type: "project" }, partners: [], soloSubPartner: null },
+      moneyFlowEdges: [],
     });
 
     render(<OwnershipStructurePage />);
@@ -141,6 +144,7 @@ describe("OwnershipStructurePage (Story 5.10)", () => {
       projectId: "project-1",
       projectName: "My Project",
       tree: { scope: { type: "project" }, partners: [makePartner()], soloSubPartner: null },
+      moneyFlowEdges: [],
     });
 
     render(<OwnershipStructurePage />);
@@ -163,6 +167,7 @@ describe("OwnershipStructurePage (Story 5.10)", () => {
         partners: [makePartner({ partnerId: "a" }), makePartner({ partnerId: "b" })],
         soloSubPartner: null,
       },
+      moneyFlowEdges: [],
     });
 
     render(<OwnershipStructurePage />);
@@ -185,6 +190,7 @@ describe("OwnershipStructurePage (Story 5.10)", () => {
       projectId: "project-1",
       projectName: "My Project",
       tree: { scope: { type: "partner", partnerId: "a" }, partners: [makePartner({ partnerId: "a" })], soloSubPartner: null },
+      moneyFlowEdges: [],
     });
 
     render(<OwnershipStructurePage />);

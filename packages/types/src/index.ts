@@ -488,6 +488,71 @@ export interface AdjustmentNetting {
 }
 
 /**
+ * An Owner/Admin's record of one Partner/Sub-partner declining some amount of
+ * their currently-available Can Take, so it can flexibly benefit the other
+ * current Partners/Sub-partners right now -- a one-time bonus for this pool
+ * of money, never a change to anyone's underlying `sharePercent`. The
+ * declined amount is split pro-rata across every other current leaf's Share
+ * % at the moment this record is created (see `WithdrawalReallocationAllocation`
+ * for the resulting legs).
+ *
+ * `partyType`/`shareId` identify the DECLINING party -- the stable
+ * `PartnerShare.partnerId`/`SubPartnerShare.subPartnerId`, never `User.id`
+ * (AD-4), mirroring `WithdrawalAdjustment.shareId`'s convention.
+ *
+ * `status: "cancelled"` reverses the decline (only permitted while every
+ * allocation leg's `consumedAmount` is still `"0"` -- once any recipient has
+ * drawn on it, it can no longer be undone). A cancelled record's
+ * `declinedAmount` no longer counts against the decliner's effective Can
+ * Take, and its allocations no longer count toward any recipient's.
+ */
+export interface WithdrawalReallocation {
+  id: string;
+  projectId: string;
+  partyType: "partner" | "sub_partner";
+  /** The stable `partnerId`/`subPartnerId` of the party declining this amount -- never `User.id` (AD-4). */
+  shareId: string;
+  /** The amount this party declined, off their own Can Take, at the moment this record was created. */
+  declinedAmount: Money;
+  notes: string | null;
+  status: "active" | "cancelled";
+  /** The Owner/Admin who recorded this decline. */
+  createdByUserId: string;
+  /** ISO 8601 timestamp */
+  createdAt: string;
+}
+
+/**
+ * One pro-rata leg of a `WithdrawalReallocation` -- the portion of the
+ * decliner's `declinedAmount` this specific recipient became eligible for,
+ * computed once at creation time by the recipients' relative Share % (never
+ * recomputed later, even if shares subsequently change).
+ *
+ * `consumedAmount` tracks how much of `allocatedAmount` this recipient has
+ * actually drawn on via a withdrawal beyond their own base Can Take so far
+ * -- consumption is FIFO across a recipient's legs and partial-safe (a leg
+ * can be topped up by future declines and drawn down across more than one
+ * withdrawal). `allocatedAmount - consumedAmount` is this leg's remaining
+ * unconsumed bonus.
+ *
+ * `partyType`/`shareId` identify the RECIPIENT -- the stable
+ * `PartnerShare.partnerId`/`SubPartnerShare.subPartnerId`, never `User.id`
+ * (AD-4).
+ */
+export interface WithdrawalReallocationAllocation {
+  id: string;
+  reallocationId: string;
+  partyType: "partner" | "sub_partner";
+  /** The stable `partnerId`/`subPartnerId` of the party eligible for this leg -- never `User.id` (AD-4). */
+  shareId: string;
+  allocatedAmount: Money;
+  /** Running total drawn against this leg so far -- `"0"` until a withdrawal beyond this recipient's own base Can Take consumes some of it. */
+  consumedAmount: Money;
+  /** ISO 8601 timestamp */
+  createdAt: string;
+}
+
+/**
  * Story 4.7 (Epic 4, FR27): the four places a withdrawn amount can be
  * allocated to in the "Where did this money go?" prompt -- "another
  * Project" (`"project"`), a free-text Person (`"person"`, no Person/contact

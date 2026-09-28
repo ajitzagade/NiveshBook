@@ -560,6 +560,102 @@ export const withdrawalAdjustments = pgTable(
 export type WithdrawalAdjustmentRow = typeof withdrawalAdjustments.$inferSelect;
 
 /**
+ * Flexible pro-rata withdrawal reallocation ("declined share"): the decline
+ * event -- one row per Owner/Admin action marking a Partner/Sub-partner as
+ * giving up some amount of their currently-available Can Take, so it can
+ * flexibly benefit the other current Partners/Sub-partners right now. This
+ * is a one-time bonus for this specific pool of money, never a change to
+ * anyone's underlying `partner_shares`/`subpartner_shares` `sharePercent`.
+ *
+ * `partyType`/`shareId` identify the DECLINING party -- the *stable*
+ * `partner_shares.partnerId`/`subpartner_shares.subPartnerId` (disambiguated
+ * by `partyType`), never this row's own `id` and never `users.id` (AD-4) --
+ * deliberately **not** a foreign key, mirroring `withdrawal_adjustments.shareId`'s
+ * identical precedent.
+ *
+ * `status: "cancelled"` reverses the decline -- only permitted while every
+ * child `withdrawal_reallocation_allocations` row's `consumedAmount` is
+ * still `"0"` (enforced by `packages/db`'s `WithdrawalReallocationPort.cancel`,
+ * not a DB constraint, since "has anything been consumed" is a cross-row
+ * check). A cancelled row's `declinedAmount` stops counting against the
+ * decliner's effective Can Take, and its allocations stop counting toward
+ * any recipient's.
+ *
+ * `idempotencyKey` mirrors `adjustment_nettings.idempotencyKey`'s identical
+ * table-wide UNIQUE, client-generated, audit-record precedent -- a genuine
+ * duplicate submit replays the existing row instead of double-declining.
+ */
+export const withdrawalReallocations = pgTable("withdrawal_reallocations", {
+  id: uuid("id").primaryKey(),
+  projectId: uuid("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  partyType: text("party_type").notNull(),
+  shareId: uuid("share_id").notNull(),
+  declinedAmount: numeric("declined_amount", { precision: 14, scale: 2 }).notNull(),
+  notes: text("notes"),
+  status: text("status").notNull().default("active"),
+  createdByUserId: uuid("created_by_user_id")
+    .notNull()
+    .references(() => users.id),
+  idempotencyKey: text("idempotency_key").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type WithdrawalReallocationRow = typeof withdrawalReallocations.$inferSelect;
+
+/**
+ * One pro-rata leg of a `withdrawal_reallocations` decline -- the portion of
+ * `declinedAmount` this specific recipient became eligible for, computed
+ * once at creation time (all legs of one decline inserted together, same
+ * transaction) by the recipients' relative Share % at that moment (never
+ * recomputed later, even if shares subsequently change).
+ *
+ * No FK to `withdrawal_transactions` -- consumption isn't a single-consumer
+ * link: one withdrawal can draw partly from a leg, and a leg can be topped
+ * up by a future decline. `consumedAmount` is instead a running total,
+ * incremented atomically alongside the withdrawal-transaction insert that
+ * draws on it (`packages/db`'s withdrawal-recording orchestration), FIFO
+ * across a recipient's legs, oldest `createdAt` first.
+ * `allocatedAmount - consumedAmount` is this leg's remaining unconsumed
+ * bonus.
+ *
+ * `partyType`/`shareId` identify the RECIPIENT -- same stable-id, non-FK
+ * convention as `withdrawal_reallocations.shareId` above.
+ */
+export const withdrawalReallocationAllocations = pgTable(
+  "withdrawal_reallocation_allocations",
+  {
+    id: uuid("id").primaryKey(),
+    reallocationId: uuid("reallocation_id")
+      .notNull()
+      .references(() => withdrawalReallocations.id, { onDelete: "cascade" }),
+    partyType: text("party_type").notNull(),
+    shareId: uuid("share_id").notNull(),
+    allocatedAmount: numeric("allocated_amount", { precision: 14, scale: 2 }).notNull(),
+    consumedAmount: numeric("consumed_amount", { precision: 14, scale: 2 }).notNull().default("0"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // `listActiveByProjectId`/the FIFO consumption walk both filter by
+    // reallocation_id -- this table's primary read/lookup pattern, and the
+    // ordering column (`createdAt`) it's paired with for the FIFO walk.
+    index("withdrawal_reallocation_allocations_reallocation_id_idx").on(table.reallocationId),
+    // The FIFO consumption walk and "does this recipient have any bonus"
+    // lookup both filter by (party_type, share_id) across every active
+    // reallocation for a Project -- mirrors
+    // `withdrawal_destination_allocations_idempotency_key_idx`'s precedent
+    // of indexing the actual query-time filter column, not just the FK.
+    index("withdrawal_reallocation_allocations_party_share_idx").on(
+      table.partyType,
+      table.shareId,
+    ),
+  ],
+);
+
+export type WithdrawalReallocationAllocationRow = typeof withdrawalReallocationAllocations.$inferSelect;
+
+/**
  * Story 4.7 (Epic 4, FR27): one row per destination leg of a withdrawal's
  * post-withdrawal allocation ("Where did this money go?") -- a `POST` saves
  * every leg of one allocation together (this story's Boundaries: one DB

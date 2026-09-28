@@ -1,5 +1,35 @@
 import type { Money, Percent, PartnerShare, SubPartnerShare } from "@niveshbook/types";
-import { sumPercents, subtractPercents, splitMoneyByPercents, sumMoney, NegativePercentResultError } from "./decimal-math";
+import {
+  sumPercents,
+  subtractPercents,
+  splitMoneyByPercents,
+  sumMoney,
+  compareMoney,
+  subtractMoney,
+  NegativePercentResultError,
+} from "./decimal-math";
+
+/**
+ * The Project's single available-to-withdraw pool (founder feedback
+ * 2026-09-28) -- `totalActiveInvested - totalActiveWithdrawn`, floored at
+ * `"0"` rather than ever throwing. Extracted from `GET /api/projects/[id]/can-take`'s
+ * own Story 4.9 fix ("the Can Take fix") so every caller of `computeCanTake`
+ * resolves `availableToWithdraw` the exact same way -- before this
+ * extraction, 3 of 4 call sites across `apps/web` had silently drifted back
+ * to the pre-Story-4.9 raw-invested-only formula (never subtracting
+ * anything withdrawn), which meant Can Take never actually shrank as money
+ * left the pool on those screens. `totalActiveWithdrawn` can exceed
+ * `totalActiveInvested` once an investment is cancelled/reversed after a
+ * withdrawal was already taken against it (no withdrawal-cancel path exists
+ * to undo that symmetrically) -- `compareMoney` decides the direction first
+ * so a would-be-negative result resolves to `"0"` instead of `subtractMoney`
+ * throwing `NegativeMoneyResultError`.
+ */
+export function resolveAvailableToWithdraw(totalActiveInvested: Money, totalActiveWithdrawn: Money): Money {
+  return compareMoney(totalActiveInvested, totalActiveWithdrawn) >= 0
+    ? subtractMoney(totalActiveInvested, totalActiveWithdrawn)
+    : ("0" as Money);
+}
 
 /**
  * Thrown when the Project's current Partner Shares don't sum to exactly

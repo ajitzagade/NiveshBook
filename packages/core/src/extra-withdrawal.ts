@@ -1,5 +1,5 @@
 import type { Money, UserRole } from "@niveshbook/types";
-import { compareMoney } from "./decimal-math";
+import { compareMoney, sumMoney } from "./decimal-math";
 
 /**
  * Thrown by `assertExtraWithdrawalAuthorized` when the requested amount
@@ -50,6 +50,16 @@ export interface AssertExtraWithdrawalAuthorizedInput {
   actorCanApproveExtraWithdrawal: boolean;
   /** Whether this specific request carried the distinct Authorize Extra Withdrawal confirmation (FR25) -- `false`/absent unless the caller explicitly set it `true`. */
   extraWithdrawalAuthorized: boolean;
+  /**
+   * The target's currently-unconsumed withdrawal-reallocation bonus (a
+   * different Partner/Sub-partner's declined Can Take, allocated pro-rata to
+   * this share) -- `sum(unconsumed allocatedAmount)` across every active leg
+   * for this `(partyType, shareId)`. Optional, defaults to `"0"` (this
+   * codebase's withdrawal-reallocation feature is additive -- a caller that
+   * doesn't know about it, or a share with no active bonus, sees byte-for-
+   * byte the same gate behavior as before this field existed).
+   */
+  availableReallocationBonus?: Money;
 }
 
 /**
@@ -60,15 +70,20 @@ export interface AssertExtraWithdrawalAuthorizedInput {
  * this story leaves untouched (this story's Boundaries).
  *
  * No-op (returns normally, throws nothing) whenever `requestedAmount`
- * doesn't exceed `canTake` -- decided via `compareMoney(requestedAmount,
- * canTake) <= 0` (AD-2, never a raw `>`/`parseFloat`/`Number()` comparison).
- * An *exact* match is "within Can Take", not "exceeds" (this story's I/O
- * matrix) -- `<= 0`, not `< 0`. `extraWithdrawalAuthorized` is never even
- * inspected for a normal (within-entitlement) withdrawal, matching this
- * story's Boundaries: "no behavior change for the common case."
+ * doesn't exceed `canTake + availableReallocationBonus` -- decided via
+ * `compareMoney(requestedAmount, sumMoney([canTake, availableReallocationBonus]))
+ * <= 0` (AD-2, never a raw `>`/`parseFloat`/`Number()` comparison). An
+ * *exact* match is "within the (boosted) ceiling", not "exceeds" (this
+ * story's I/O matrix, extended by the withdrawal-reallocation feature) --
+ * `<= 0`, not `< 0`. `extraWithdrawalAuthorized` is never even inspected for
+ * a request within that combined ceiling, matching this story's Boundaries:
+ * "no behavior change for the common case" -- and, per the withdrawal-
+ * reallocation feature's own confirmed design, consuming an already-approved
+ * reallocation bonus needs no separate Owner/Admin confirmation click either,
+ * since someone else's decline was itself already an Owner/Admin action.
  *
- * Once `requestedAmount` *does* exceed `canTake`, two distinct failure modes
- * in a fixed order (this story's Decisions):
+ * Once `requestedAmount` *does* exceed that combined ceiling, two distinct
+ * failure modes in a fixed order (this story's Decisions):
  * 1. `actorRole !== "owner_admin"` or `!actorCanApproveExtraWithdrawal` --
  *    an actor who could never authorize this regardless of what they sent
  *    throws `OwnerAdminRequiredForExtraWithdrawalError`, checked *before*
@@ -89,7 +104,8 @@ export interface AssertExtraWithdrawalAuthorizedInput {
  * for the excess.
  */
 export function assertExtraWithdrawalAuthorized(input: AssertExtraWithdrawalAuthorizedInput): void {
-  if (compareMoney(input.requestedAmount, input.canTake) <= 0) {
+  const effectiveCeiling = sumMoney([input.canTake, input.availableReallocationBonus ?? ("0" as Money)]);
+  if (compareMoney(input.requestedAmount, effectiveCeiling) <= 0) {
     return;
   }
 

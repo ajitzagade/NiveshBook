@@ -1,0 +1,2 @@
+ALTER TABLE "withdrawal_reallocations" ADD COLUMN "idempotency_key" text NOT NULL;--> statement-breakpoint
+ALTER TABLE "withdrawal_reallocations" ADD CONSTRAINT "withdrawal_reallocations_idempotency_key_unique" UNIQUE("idempotency_key");

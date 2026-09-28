@@ -66,7 +66,10 @@ export type Action =
   | "reports:adjustment"
   | "reports:money_history"
   | "ownership_structure:view_project"
-  | "ownership_structure:view_partner";
+  | "ownership_structure:view_partner"
+  | "withdrawal_reallocations:create"
+  | "withdrawal_reallocations:view"
+  | "withdrawal_reallocations:cancel";
 
 /**
  * Role -> allowed-actions permission table. All actions here are
@@ -383,6 +386,30 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   // slice, since only `resourceRef.ownerId` (resolved by the route from
   // whichever share the query param names) differs between the two.
   "ownership_structure:view_partner": new Set(["owner_admin"]),
+  // Flexible pro-rata withdrawal reallocation ("declined share"): confirmed
+  // with the founder that only an Owner/Admin may trigger a decline on
+  // anyone's behalf -- a Partner/Sub-partner never declines their own share
+  // via this action, mirroring `adjustment_nettings:create`'s/
+  // `withdrawal_destination_allocations:create`'s identical all-or-nothing-
+  // for-the-role shape, checked via `authorizeScope()` only, no
+  // `SELF_ACCESS_ACTIONS`/`SCOPE_SELF_ACCESS_ACTIONS` entry.
+  "withdrawal_reallocations:create": new Set(["owner_admin"]),
+  // Listing reallocations for a Project -- granted to all 3 roles directly
+  // in this table (this codebase's approved plan's explicit requirement:
+  // "so a Partner can see their own incoming bonus"), mirroring
+  // `adjust_next_time:view`'s/`money_history:list`'s identical "all 3 roles
+  // in the table, real row-level scoping computed downstream" shape rather
+  // than a `SELF_ACCESS_ACTIONS` single-resource override (this is a list
+  // endpoint, not a single resourceRef). The route itself does the actual
+  // scoping: an `owner_admin` caller gets every row unfiltered (oversight);
+  // a `partner`/`sub_partner` caller gets only reallocations where they are
+  // the decliner, or a recipient of at least one allocation leg -- and only
+  // their OWN allocation legs, never another recipient's, mirroring this
+  // codebase's existing "a Partner's Sub-partner split is private" norm.
+  "withdrawal_reallocations:view": new Set(["owner_admin", "partner", "sub_partner"]),
+  // Cancelling a decline mirrors `create`'s identical Owner/Admin-only,
+  // no-self-access shape.
+  "withdrawal_reallocations:cancel": new Set(["owner_admin"]),
 };
 
 /**

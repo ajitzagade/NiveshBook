@@ -1,6 +1,24 @@
 import { describe, it, expect, vi } from "vitest";
-import type { OwnershipStructurePartnerNode, OwnershipStructureSubPartnerNode, OwnershipStructureTree } from "@niveshbook/core";
+import type {
+  MoneyFlowEdge,
+  OwnershipStructurePartnerNode,
+  OwnershipStructureSubPartnerNode,
+  OwnershipStructureTree,
+} from "@niveshbook/core";
 import { buildNodesAndEdges, computeRetainedPercent, formatSharePercent } from "./structure-layout";
+
+function makeFlowEdge(overrides: Partial<MoneyFlowEdge> = {}): MoneyFlowEdge {
+  return {
+    id: "flow-1",
+    partyType: "partner",
+    shareId: "a",
+    direction: "out",
+    counterpartyKind: "project",
+    counterpartyLabel: "Project B",
+    amount: "10000" as MoneyFlowEdge["amount"],
+    ...overrides,
+  };
+}
 
 function makeSubPartner(overrides: Partial<OwnershipStructureSubPartnerNode> = {}): OwnershipStructureSubPartnerNode {
   return {
@@ -149,10 +167,118 @@ describe("buildNodesAndEdges", () => {
     const tree = makeTree({ partners: [makePartner({ partnerId: "a", subPartners: [makeSubPartner()] })] });
     const { nodes } = buildNodesAndEdges(tree, "money_flow", "My Project", vi.fn());
     for (const node of nodes) {
-      if (node.data.kind !== "project") {
+      if (node.data.kind === "partner" || node.data.kind === "sub_partner") {
         expect(node.data.display.mode).toBe("money_flow");
       }
     }
+  });
+});
+
+describe("Money Flow edges (moneyFlowEdges, founder feedback 2026-09-28)", () => {
+  function makeTree(overrides: Partial<OwnershipStructureTree> = {}): OwnershipStructureTree {
+    return { scope: { type: "project" }, partners: [], soloSubPartner: null, ...overrides };
+  }
+
+  it("is a no-op when moneyFlowEdges is empty, in any view mode", () => {
+    const tree = makeTree({ partners: [makePartner({ partnerId: "a" })] });
+    const { nodes, edges } = buildNodesAndEdges(tree, "money_flow", "My Project", vi.fn(), []);
+    expect(nodes.every((n) => n.data.kind !== "external")).toBe(true);
+    expect(edges.some((e) => e.id.startsWith("flow:"))).toBe(false);
+  });
+
+  it("is a no-op in Percentage/Actual Amount modes, even when moneyFlowEdges is non-empty", () => {
+    const tree = makeTree({ partners: [makePartner({ partnerId: "a" })] });
+    const flowEdges = [makeFlowEdge()];
+    for (const viewMode of ["percentage", "actual"] as const) {
+      const { nodes, edges } = buildNodesAndEdges(tree, viewMode, "My Project", vi.fn(), flowEdges);
+      expect(nodes.every((n) => n.data.kind !== "external")).toBe(true);
+      expect(edges.some((e) => e.id.startsWith("flow:"))).toBe(false);
+    }
+  });
+
+  it("adds one external node and one outbound edge from the owning Partner to it", () => {
+    const tree = makeTree({ partners: [makePartner({ partnerId: "a" })] });
+    const { nodes, edges } = buildNodesAndEdges(tree, "money_flow", "My Project", vi.fn(), [
+      makeFlowEdge({ partyType: "partner", shareId: "a", direction: "out", counterpartyLabel: "Project B" }),
+    ]);
+
+    const external = nodes.find((n) => n.data.kind === "external");
+    expect(external).toBeDefined();
+    expect(external?.data).toMatchObject({ kind: "external", label: "Project B", counterpartyKind: "project" });
+
+    const flowEdge = edges.find((e) => e.id === "flow:flow-1");
+    expect(flowEdge).toMatchObject({ source: "partner:a", target: external?.id, label: "₹10,000" });
+    expect((flowEdge?.style as { stroke?: string } | undefined)?.stroke).toBe("var(--color-danger)");
+  });
+
+  it("an inbound edge points FROM the external node TO the owning share, styled with the success tone", () => {
+    const tree = makeTree({ partners: [makePartner({ partnerId: "a" })] });
+    const { nodes, edges } = buildNodesAndEdges(tree, "money_flow", "My Project", vi.fn(), [
+      makeFlowEdge({ direction: "in", counterpartyLabel: "Project B" }),
+    ]);
+
+    const external = nodes.find((n) => n.data.kind === "external");
+    const flowEdge = edges.find((e) => e.id === "flow:flow-1");
+    expect(flowEdge).toMatchObject({ source: external?.id, target: "partner:a" });
+    expect((flowEdge?.style as { stroke?: string } | undefined)?.stroke).toBe("var(--color-success)");
+  });
+
+  it("routes a Sub-partner's own flow edge to/from their own sub node id", () => {
+    const tree = makeTree({
+      partners: [makePartner({ partnerId: "a", subPartners: [makeSubPartner({ subPartnerId: "sub-1" })] })],
+    });
+    const { edges } = buildNodesAndEdges(tree, "money_flow", "My Project", vi.fn(), [
+      makeFlowEdge({ partyType: "sub_partner", shareId: "sub-1", direction: "out", counterpartyLabel: "Someone" }),
+    ]);
+
+    expect(edges.some((e) => e.source === "sub:sub-1")).toBe(true);
+  });
+
+  it("dedupes multiple flow edges to the same counterparty into one external node, but keeps each as its own edge", () => {
+    const tree = makeTree({
+      partners: [makePartner({ partnerId: "a" }), makePartner({ partnerId: "b" })],
+    });
+    const { nodes, edges } = buildNodesAndEdges(tree, "money_flow", "My Project", vi.fn(), [
+      makeFlowEdge({ id: "flow-a", partyType: "partner", shareId: "a", counterpartyLabel: "Project B" }),
+      makeFlowEdge({ id: "flow-b", partyType: "partner", shareId: "b", counterpartyLabel: "Project B" }),
+    ]);
+
+    expect(nodes.filter((n) => n.data.kind === "external")).toHaveLength(1);
+    expect(edges.filter((e) => e.id.startsWith("flow:"))).toHaveLength(2);
+  });
+
+  it("keeps distinct counterparties as distinct external nodes", () => {
+    const tree = makeTree({ partners: [makePartner({ partnerId: "a" })] });
+    const { nodes } = buildNodesAndEdges(tree, "money_flow", "My Project", vi.fn(), [
+      makeFlowEdge({ id: "flow-1", counterpartyKind: "project", counterpartyLabel: "Project B" }),
+      makeFlowEdge({ id: "flow-2", counterpartyKind: "person", counterpartyLabel: "Deepa" }),
+    ]);
+
+    expect(nodes.filter((n) => n.data.kind === "external")).toHaveLength(2);
+  });
+
+  it("silently skips a flow edge whose owning share has no node in this (identically-scoped) tree, rather than drawing a dangling edge", () => {
+    const tree = makeTree({ partners: [makePartner({ partnerId: "a" })] });
+    const { nodes, edges } = buildNodesAndEdges(tree, "money_flow", "My Project", vi.fn(), [
+      makeFlowEdge({ partyType: "partner", shareId: "not-in-tree", counterpartyLabel: "Project B" }),
+    ]);
+
+    expect(nodes.every((n) => n.data.kind !== "external")).toBe(true);
+    expect(edges.some((e) => e.id.startsWith("flow:"))).toBe(false);
+  });
+
+  it("works in the solo Sub-partner scope too", () => {
+    const tree: OwnershipStructureTree = {
+      scope: { type: "sub_partner", subPartnerId: "sub-1" },
+      partners: [],
+      soloSubPartner: makeSubPartner({ subPartnerId: "sub-1" }),
+    };
+    const { nodes, edges } = buildNodesAndEdges(tree, "money_flow", "My Project", vi.fn(), [
+      makeFlowEdge({ partyType: "sub_partner", shareId: "sub-1", counterpartyLabel: "Project B" }),
+    ]);
+
+    expect(nodes.some((n) => n.data.kind === "external")).toBe(true);
+    expect(edges.some((e) => e.source === "sub:sub-1")).toBe(true);
   });
 });
 

@@ -6,8 +6,10 @@ import {
   listCurrentPartnerShares,
   listCurrentSubPartnerSharesForProject,
   computeWithdrawalAdjustment,
+  computeEffectiveCanTake,
   extractWithdrawalStatus,
   withdrawalShareKey,
+  resolveAvailableToWithdraw,
   PartnerSharesNotFullyAllocatedError,
   CanTakeSubPartnerSharesOverAllocatedError,
   WithdrawalShareNotFoundError,
@@ -21,6 +23,7 @@ import {
   createInvestmentTransactionPort,
   createWithdrawalTransactionPort,
   createWithdrawalAdjustmentPort,
+  createWithdrawalReallocationPort,
 } from "@niveshbook/db";
 import { readSessionToken } from "@/lib/session";
 import { UNAUTHENTICATED_MESSAGE, FORBIDDEN_MESSAGE } from "@/lib/users";
@@ -136,13 +139,25 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
   const subPartnerSharePort = createSubPartnerSharePort();
   const investmentTransactionPort = createInvestmentTransactionPort();
   const withdrawalTransactionPort = createWithdrawalTransactionPort();
-  const [partnerShares, subPartnerShares, availableToWithdraw, withdrawalTransactions] =
-    await Promise.all([
-      listCurrentPartnerShares(projectId, { partnerShares: partnerSharePort }),
-      listCurrentSubPartnerSharesForProject(projectId, { subPartnerShares: subPartnerSharePort }),
-      investmentTransactionPort.sumActiveAmountByProjectId(projectId),
-      withdrawalTransactionPort.listByProjectId(projectId),
-    ]);
+  const reallocationPort = createWithdrawalReallocationPort();
+  const [
+    partnerShares,
+    subPartnerShares,
+    totalActiveInvested,
+    totalActiveWithdrawn,
+    withdrawalTransactions,
+    activeReallocations,
+    activeAllocations,
+  ] = await Promise.all([
+    listCurrentPartnerShares(projectId, { partnerShares: partnerSharePort }),
+    listCurrentSubPartnerSharesForProject(projectId, { subPartnerShares: subPartnerSharePort }),
+    investmentTransactionPort.sumActiveAmountByProjectId(projectId),
+    withdrawalTransactionPort.sumActiveAmountByProjectId(projectId),
+    withdrawalTransactionPort.listByProjectId(projectId),
+    reallocationPort.listActiveByProjectId(projectId),
+    reallocationPort.listActiveAllocationsByProjectId(projectId),
+  ]);
+  const availableToWithdraw = resolveAvailableToWithdraw(totalActiveInvested, totalActiveWithdrawn);
 
   const target =
     query.partyType === "partner"
@@ -186,7 +201,19 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
         ? extractWithdrawalStatus("partner", query.shareId, partners)
         : extractWithdrawalStatus("sub_partner", query.shareId, partners);
 
-    return NextResponse.json({ partyType: query.partyType, status });
+    // Flexible pro-rata withdrawal reallocation: this share's own boosted/
+    // reduced ceiling, additive to `status`'s own untouched fields --
+    // mirrors `can-take/route.ts`'s/`withdrawal-adjustments/route.ts`'s
+    // identical per-leaf `computeEffectiveCanTake` call shape.
+    const effectiveCanTake = computeEffectiveCanTake(
+      status.canTake,
+      query.partyType,
+      query.shareId,
+      activeReallocations,
+      activeAllocations,
+    );
+
+    return NextResponse.json({ partyType: query.partyType, status: { ...status, effectiveCanTake } });
   } catch (error) {
     if (error instanceof PartnerSharesNotFullyAllocatedError) {
       return NextResponse.json(

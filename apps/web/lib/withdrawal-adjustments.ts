@@ -11,9 +11,21 @@ import type { PartnerWithdrawalAdjustment } from "@niveshbook/core";
 
 const GENERIC_ERROR_MESSAGE = "Something went wrong. Please try again.";
 
+/**
+ * `PartnerWithdrawalAdjustment` augmented with `effectiveCanTake` (flexible
+ * pro-rata withdrawal reallocation) at every leaf -- additive only, mirrors
+ * `apps/web/lib/can-take.ts`'s identical `PartnerCanTakeWithEffective` shape
+ * one ledger over.
+ */
+export interface PartnerWithdrawalAdjustmentWithEffective
+  extends Omit<PartnerWithdrawalAdjustment, "subPartners"> {
+  effectiveCanTake: string;
+  subPartners: (PartnerWithdrawalAdjustment["subPartners"][number] & { effectiveCanTake: string })[];
+}
+
 /** `GET /api/projects/[id]/withdrawal-adjustments`'s response shape. */
 export interface WithdrawalAdjustmentsResponse {
-  partners: PartnerWithdrawalAdjustment[];
+  partners: PartnerWithdrawalAdjustmentWithEffective[];
 }
 
 async function readErrorMessage(response: Response): Promise<string> {
