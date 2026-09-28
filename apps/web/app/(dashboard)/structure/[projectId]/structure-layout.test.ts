@@ -172,6 +172,16 @@ describe("buildNodesAndEdges", () => {
       }
     }
   });
+
+  it("founder feedback 2026-09-28 (round 2): no node pins `draggable: false` -- every node is draggable so the user can manually resolve Money Flow's label overlap", () => {
+    const tree = makeTree({
+      partners: [makePartner({ partnerId: "a", subPartners: [makeSubPartner({ subPartnerId: "sub-a1" })] })],
+    });
+    const { nodes } = buildNodesAndEdges(tree, "percentage", "My Project", vi.fn());
+    for (const node of nodes) {
+      expect(node.draggable).not.toBe(false);
+    }
+  });
 });
 
 describe("Money Flow edges (moneyFlowEdges, founder feedback 2026-09-28)", () => {
@@ -209,6 +219,14 @@ describe("Money Flow edges (moneyFlowEdges, founder feedback 2026-09-28)", () =>
     const flowEdge = edges.find((e) => e.id === "flow:flow-1");
     expect(flowEdge).toMatchObject({ source: "partner:a", target: external?.id, label: "₹10,000" });
     expect((flowEdge?.style as { stroke?: string } | undefined)?.stroke).toBe("var(--color-danger)");
+    // Founder feedback 2026-09-28 (round 2): bigger, bolder, colored label with
+    // its own background so amounts read clearly (and stay legible where
+    // several edges converge), not just a thin colored line.
+    expect((flowEdge?.labelStyle as { fill?: string; fontWeight?: number } | undefined)?.fill).toBe(
+      "var(--color-danger)",
+    );
+    expect((flowEdge?.labelStyle as { fill?: string; fontWeight?: number } | undefined)?.fontWeight).toBe(700);
+    expect(flowEdge?.labelBgStyle).toBeDefined();
   });
 
   it("an inbound edge points FROM the external node TO the owning share, styled with the success tone", () => {

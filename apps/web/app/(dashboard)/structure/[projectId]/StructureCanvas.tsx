@@ -1,10 +1,18 @@
 "use client";
 
-import { useMemo } from "react";
-import { Background, Controls, Handle, Position, ReactFlow, type NodeProps } from "@xyflow/react";
+import { useCallback, useMemo, useState } from "react";
+import {
+  Background,
+  Controls,
+  Handle,
+  Position,
+  ReactFlow,
+  type NodeChange,
+  type NodeProps,
+} from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { FolderKanban, HelpCircle, User, Wallet } from "lucide-react";
-import { Amount } from "@niveshbook/ui";
+import { FolderKanban, HelpCircle, RotateCcw, User, Wallet } from "lucide-react";
+import { Amount, Button } from "@niveshbook/ui";
 import { buildNodesAndEdges, type NodeDisplay, type StructureNode, type StructureNodeData, type ViewMode } from "./structure-layout";
 import type { MoneyFlowEdge, OwnershipStructureTree } from "@niveshbook/core";
 
@@ -15,11 +23,17 @@ import type { MoneyFlowEdge, OwnershipStructureTree } from "@niveshbook/core";
  * codebase's existing token/Card visual language rather than the library's
  * default look (this story's Decision #1) -- see `StructureNodeCard` below.
  *
- * Node positions are entirely deterministic (`buildNodesAndEdges`) -- pan/
- * zoom stay enabled (the library's own free default, this story's Decision
- * #1 leaves this to the implementer), but dragging is disabled per node
- * (`draggable: false`, set in `structure-layout.ts`) since there is no
- * persisted custom layout to drag into.
+ * `buildNodesAndEdges` computes a deterministic STARTING layout; pan/zoom
+ * stay enabled (the library's own free default). Founder feedback
+ * 2026-09-28 (round 2): Money Flow view can converge enough edges that
+ * labels overlap (no collision-avoidance exists in the layout algorithm),
+ * so nodes are now draggable -- `positionOverrides` below tracks any node the
+ * user has manually moved, keyed by node id, merged over the computed
+ * position on every render. This state lives in `StructureCanvas` itself,
+ * OUTSIDE the `key={canvasKey}`-remounted `<ReactFlow>` below, so a dragged
+ * position survives a view-mode toggle (same node ids); it's session-only,
+ * not persisted anywhere -- a fresh page load or drilling into a different
+ * Partner/Sub-partner's own scope (entirely different node ids) starts clean.
  *
  * Review finding (High): every field this component renders arrives via
  * `data.display` -- an already-resolved `NodeDisplay` from
@@ -112,13 +126,16 @@ function ModeFigure({ display }: { display: NodeDisplay }) {
   if (display.mode === "actual") {
     return <Amount value={display.value} size="sm" />;
   }
+  // Founder feedback 2026-09-28 (round 2): bigger, bolder In/Out so invested
+  // (green) vs. withdrawn (red) reads clearly at a glance, not just via a
+  // faint color difference at the previous, smaller size.
   return (
-    <div className="flex flex-col items-center gap-0.5 text-[12px]">
+    <div className="flex flex-col items-center gap-1 text-[13.5px] font-semibold">
       <span className="flex items-center gap-1 text-success">
-        In <Amount value={display.totalIn} size="sm" tone="success" />
+        In <Amount value={display.totalIn} size="md" tone="success" className="text-[13.5px] font-bold" />
       </span>
       <span className="flex items-center gap-1 text-danger">
-        Out <Amount value={display.totalOut} size="sm" tone="danger" />
+        Out <Amount value={display.totalOut} size="md" tone="danger" className="text-[13.5px] font-bold" />
       </span>
     </div>
   );
@@ -143,6 +160,36 @@ export function StructureCanvas({ tree, viewMode, projectName, onSelectPartner, 
     [tree, viewMode, projectName, moneyFlowEdges],
   );
 
+  // Manually-dragged positions, keyed by node id -- see this component's own
+  // doc comment above for why this lives here rather than in `nodes` itself.
+  const [positionOverrides, setPositionOverrides] = useState<Record<string, { x: number; y: number }>>({});
+
+  const onNodesChange = useCallback((changes: NodeChange<StructureNode>[]) => {
+    const positionChanges = changes.filter(
+      (change): change is Extract<NodeChange<StructureNode>, { type: "position" }> =>
+        change.type === "position" && change.position !== undefined,
+    );
+    if (positionChanges.length === 0) {
+      return;
+    }
+    setPositionOverrides((prev) => {
+      const next = { ...prev };
+      for (const change of positionChanges) {
+        next[change.id] = change.position as { x: number; y: number };
+      }
+      return next;
+    });
+  }, []);
+
+  const positionedNodes = useMemo(
+    () =>
+      nodes.map((node) => {
+        const override = positionOverrides[node.id];
+        return override ? { ...node, position: override } : node;
+      }),
+    [nodes, positionOverrides],
+  );
+
   // `fitView` (below) only ever runs on `<ReactFlow>`'s OWN initial mount,
   // never again on a later `nodes` change -- founder feedback 2026-09-28:
   // switching into Money Flow mode adds a whole new row of external nodes
@@ -161,6 +208,21 @@ export function StructureCanvas({ tree, viewMode, projectName, onSelectPartner, 
         : "project";
   const canvasKey = `${scopeKey}:${viewMode}`;
 
+  // A drill-down into a different Partner/Sub-partner's own scope is a
+  // different diagram (even where a node id happens to collide) -- clear any
+  // dragged positions rather than carry them over. A view-mode toggle alone
+  // (same `scopeKey`) intentionally does NOT reset this, so dragged
+  // positions survive switching between Percentage/Actual/Money Flow.
+  // React's own "adjusting state when a prop changes" pattern (setState
+  // during render, guarded by comparing against the last-seen value) --
+  // deliberately not a `useEffect`, which would fire the reset one render
+  // late and briefly show the previous scope's dragged positions.
+  const [lastScopeKey, setLastScopeKey] = useState(scopeKey);
+  if (scopeKey !== lastScopeKey) {
+    setLastScopeKey(scopeKey);
+    setPositionOverrides({});
+  }
+
   return (
     // spec-mobile-responsive-phase1-nav-foundation (Decision #4): a fixed
     // 520px container went off the bottom of a 375px-tall phone viewport
@@ -168,12 +230,25 @@ export function StructureCanvas({ tree, viewMode, projectName, onSelectPartner, 
     // below 600px keeps the whole diagram, plus its Controls, on-screen at
     // first paint. Node width (190px) stays as-is; pan/zoom (below) already
     // handles any horizontal overflow that causes.
-    <div className="h-[520px] w-full overflow-hidden rounded-el border border-border bg-surface-alt max-[600px]:h-[380px]">
+    <div className="relative h-[520px] w-full overflow-hidden rounded-el border border-border bg-surface-alt max-[600px]:h-[380px]">
+      {Object.keys(positionOverrides).length > 0 ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          icon={<RotateCcw size={13} />}
+          onClick={() => setPositionOverrides({})}
+          className="absolute right-2 top-2 z-10 bg-surface shadow-sm"
+        >
+          Reset layout
+        </Button>
+      ) : null}
       <ReactFlow
         key={canvasKey}
-        nodes={nodes}
+        nodes={positionedNodes}
         edges={edges}
         nodeTypes={NODE_TYPES}
+        onNodesChange={onNodesChange}
         // `fitView` alone can still crop on a narrow phone viewport if the
         // computed fit would need to zoom in past 1x to fill it -- capping
         // `minZoom` well below 1 (and `fitViewOptions.minZoom` to match)

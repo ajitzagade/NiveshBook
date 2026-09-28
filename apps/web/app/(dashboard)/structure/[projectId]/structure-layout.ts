@@ -156,14 +156,21 @@ const PARTNER_GROUP_GAP = 60;
 const EXTERNAL_Y = SUB_PARTNER_Y + 170;
 
 /**
- * Deterministic left-to-right layout (this story's Decision #1: no user
- * dragging/persisted layout) -- one column per Partner, wide enough to fit
- * that Partner's own current Sub-partners underneath it, side by side;
- * Partners are laid out left to right in the order the tree already lists
- * them (the route's own `Array.map` order over `currentPartnerShares`, no
- * further sort applied here). A Partner with zero Sub-partners still
- * reserves one column's width, so it renders as a plain leaf under the
- * Project root (I/O matrix row 9), never overlapping its neighbor.
+ * Deterministic left-to-right layout used as the STARTING position -- one
+ * column per Partner, wide enough to fit that Partner's own current
+ * Sub-partners underneath it, side by side; Partners are laid out left to
+ * right in the order the tree already lists them (the route's own
+ * `Array.map` order over `currentPartnerShares`, no further sort applied
+ * here). A Partner with zero Sub-partners still reserves one column's width,
+ * so it renders as a plain leaf under the Project root (I/O matrix row 9),
+ * never overlapping its neighbor.
+ *
+ * Founder feedback 2026-09-28 (round 2): Money Flow view can converge many
+ * edges on a few nodes, and this layout has no collision-avoidance logic for
+ * that, so labels can overlap at these starting coordinates. Nodes are no
+ * longer pinned (`draggable: false` removed) -- `StructureCanvas.tsx` lets
+ * the user drag any node to a clearer spot, session-only (not persisted;
+ * resets on reload/reopen), which is the escape hatch for exactly this case.
  */
 export function buildNodesAndEdges(
   tree: OwnershipStructureTree,
@@ -185,7 +192,6 @@ export function buildNodesAndEdges(
       type: "structureNode",
       position: { x: 0, y: 0 },
       data: { kind: "project", label: projectName },
-      draggable: false,
     });
     const subNodeId = `sub:${sub.subPartnerId}`;
     nodes.push({
@@ -193,7 +199,6 @@ export function buildNodesAndEdges(
       type: "structureNode",
       position: { x: 0, y: PARTNER_Y },
       data: subPartnerNodeData(sub, viewMode),
-      draggable: false,
     });
     edges.push({ id: `${projectNodeId}->${subNodeId}`, source: projectNodeId, target: subNodeId });
     treeWidth = NODE_X_GAP;
@@ -213,7 +218,6 @@ export function buildNodesAndEdges(
           type: "structureNode",
           position: { x: groupStart + index * NODE_X_GAP, y: SUB_PARTNER_Y },
           data: subPartnerNodeData(sub, viewMode),
-          draggable: false,
         });
         edges.push({
           id: `partner:${partner.partnerId}->${subNodeId}`,
@@ -230,7 +234,6 @@ export function buildNodesAndEdges(
         type: "structureNode",
         position: { x: partnerCenter, y: PARTNER_Y },
         data: partnerNodeData(partner, viewMode, onSelectPartner),
-        draggable: false,
       });
       edges.push({
         id: `${projectNodeId}->partner:${partner.partnerId}`,
@@ -247,7 +250,6 @@ export function buildNodesAndEdges(
       type: "structureNode",
       position: { x: treeWidth / 2, y: 0 },
       data: { kind: "project", label: projectName },
-      draggable: false,
     });
   }
 
@@ -292,6 +294,11 @@ function appendMoneyFlowExtras(
       });
     }
 
+    // Founder feedback 2026-09-28 (round 2): the amount label needs to read
+    // as invested (green, inbound) vs. withdrawn (red, outbound) at a glance,
+    // and stay legible even where several edges converge -- a bigger, bold,
+    // colored label on its own opaque background (not just a thin colored
+    // line) instead of the library's plain small default label text.
     const isInbound = flowEdge.direction === "in";
     const stroke = isInbound ? "var(--color-success)" : "var(--color-danger)";
     edges.push({
@@ -299,7 +306,11 @@ function appendMoneyFlowExtras(
       source: isInbound ? externalId : ownerId,
       target: isInbound ? ownerId : externalId,
       label: formatAmount(flowEdge.amount),
-      style: { stroke },
+      labelStyle: { fill: stroke, fontWeight: 700, fontSize: 13 },
+      labelBgStyle: { fill: "var(--color-surface)", fillOpacity: 0.92 },
+      labelBgPadding: [6, 3],
+      labelBgBorderRadius: 4,
+      style: { stroke, strokeWidth: 1.5 },
       markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
     });
   }
