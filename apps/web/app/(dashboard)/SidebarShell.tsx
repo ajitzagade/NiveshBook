@@ -68,13 +68,19 @@ export function SidebarShell({
   const router = useRouter();
   const [projects, setProjects] = useState<readonly MyProjectSummary[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  // Reset to `true` in the effect setup (not just declared `useRef(true)`)
+  // -- React 18 Strict Mode double-invokes this effect once on initial
+  // mount in dev (mount -> cleanup -> mount again), and without the reset
+  // that dev-only cleanup pass permanently stuck the ref at `false` for
+  // this component's whole real lifetime, silently dropping
+  // `handleProjectCreated`'s post-fetch `setProjects` call below.
   const mountedRef = useRef(true);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;

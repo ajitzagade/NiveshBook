@@ -48,14 +48,19 @@ export function UserQuickAddForm({ role, onCancel, onCreated, compact = false }:
   const passwordId = useId();
   // Guards against `createUserAccount()` resolving after this form has
   // unmounted (the popover was dismissed before the request finished) --
-  // mirrors `ProjectQuickAddForm`'s identical `mountedRef` guard.
+  // mirrors `ProjectQuickAddForm`'s identical `mountedRef` guard, including
+  // resetting to `true` in the effect setup: React 18 Strict Mode
+  // double-invokes this effect once on initial mount in dev (mount ->
+  // cleanup -> mount again), and without the reset that dev-only cleanup
+  // pass permanently stuck the ref at `false` for the component's whole
+  // real lifetime, silently dropping every guarded callback below.
   const mountedRef = useRef(true);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

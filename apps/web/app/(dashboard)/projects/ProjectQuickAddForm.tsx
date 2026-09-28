@@ -47,12 +47,19 @@ export function ProjectQuickAddForm({ onCancel, onCreated, compact = false }: Pr
   // into the still-mounted `Combobox`, silently re-selecting/navigating to
   // the new Project after the user had already backed out.
   const mountedRef = useRef(true);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // React 18 Strict Mode double-invokes this effect on initial mount in
+    // dev (mount -> cleanup -> mount again) to surface missing cleanup --
+    // without resetting the ref back to `true` here, that dev-only cleanup
+    // pass permanently stuck `mountedRef.current` at `false` for the rest
+    // of this component's real lifetime, silently dropping `onCreated`
+    // (and thus the post-create navigation) on every submit even though
+    // the form was still fully mounted and visible.
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

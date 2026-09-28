@@ -151,13 +151,19 @@ export default function MoneyHistoryPage() {
     projectId: searchParams.get("projectId") ?? "",
   }));
   const [traceState, setTraceState] = useState<TraceState>({ status: "loading" });
+  // Reset to `true` in the effect setup (not just declared `useRef(true)`)
+  // -- React 18 Strict Mode double-invokes this effect once on initial
+  // mount in dev (mount -> cleanup -> mount again), and without the reset
+  // that dev-only cleanup pass permanently stuck the ref at `false` for
+  // this component's whole real lifetime, silently dropping every
+  // guarded post-fetch state update below.
   const mountedRef = useRef(true);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
 
   // Story 5.9's post-review fix: the View Audit History dialog -- read-only,
   // no form fields of its own, mirrors `add-money/page.tsx`'s original
