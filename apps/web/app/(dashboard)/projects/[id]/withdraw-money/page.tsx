@@ -2629,7 +2629,7 @@ export default function WithdrawMoneyPage() {
             </Field>
 
             <Field>
-              <Label htmlFor="distribute-destination">Where did this money go?</Label>
+              <Label htmlFor="distribute-destination">Default destination for this batch</Label>
               <select
                 id="distribute-destination"
                 className="w-full rounded-el border border-border bg-surface px-3 py-2.5 text-[14px] text-ink focus:border-accent focus:outline focus:outline-2 focus:outline-accent-soft"

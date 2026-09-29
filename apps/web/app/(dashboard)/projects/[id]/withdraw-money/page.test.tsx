@@ -1922,7 +1922,9 @@ describe("WithdrawMoneyPage -- Distribute a Withdrawal (Withdrawal Flow redesign
     await user.click(screen.getByRole("button", { name: "Distribute a Withdrawal" }));
     await user.type(screen.getByLabelText("Total Withdrawal Amount"), "500000");
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
-    fireEvent.change(screen.getByLabelText("Where did this money go?"), { target: { value: "available_balance" } });
+    fireEvent.change(screen.getByLabelText("Default destination for this batch"), {
+      target: { value: "available_balance" },
+    });
 
     await user.click(screen.getByRole("button", { name: "Save Distribution" }));
 
