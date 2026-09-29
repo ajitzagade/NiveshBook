@@ -7,12 +7,21 @@ import { test, expect } from "@playwright/test";
  * the "Authorize Extra Withdrawal?" over-allocation gate. Mirrors
  * `add-money.spec.ts`'s established create-Project-and-fund-it setup shape.
  *
- * A wider/taller viewport than Playwright's default (900x600ish per the
- * suite's implicit default) -- the "Distribute a Withdrawal" dialog is
- * taller than that, and its "Save Distribution" button sat below the fold
- * with no scroll-into-view in a default-sized viewport, confirmed live.
+ * A realistic laptop-sized viewport (2026-09-29 fix): this suite used to
+ * paper over a real bug with an inflated 1400x1400 viewport -- `DialogContent`
+ * (`packages/ui/src/components/dialog.tsx`) had no `max-h`/`overflow-y-auto`
+ * at all, so any dialog taller than the viewport (like "Distribute a
+ * Withdrawal" with 5 rows) rendered with its top AND bottom clipped off-screen
+ * and no way to scroll to reach them -- confirmed live via a founder-reported
+ * screenshot. Now that `DialogContent` itself scrolls internally
+ * (`max-h-[90vh] overflow-y-auto`), a normal viewport plus an explicit
+ * `scrollIntoViewIfNeeded()` on "Save Distribution" is the real regression
+ * test for this -- a `position: fixed` element with no internal overflow
+ * can't be scrolled into view at all, so this fails loudly if the fix ever
+ * regresses, rather than silently passing because the viewport was inflated
+ * to hide the symptom.
  */
-test.use({ viewport: { width: 1400, height: 1400 } });
+test.use({ viewport: { width: 1280, height: 800 } });
 
 function uniqueName(label: string) {
   return `${label} ${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -97,7 +106,15 @@ test("Distribute a Withdrawal: auto-suggests a per-Partner split, blocks a misma
   // Probe: a mismatched total is blocked, with no partial save.
   await actualInputs.nth(0).fill("99999");
   await page.getByLabel("Date").fill("2027-03-05");
-  await page.getByRole("button", { name: "Save Distribution" }).click();
+  const saveDistributionButton = page.getByRole("button", { name: "Save Distribution" });
+  // Explicit regression proof for the dialog-scroll fix (2026-09-29, see
+  // this file's own top-of-file comment): a `position: fixed` dialog with
+  // no internal overflow can't be scrolled into view at all, so this fails
+  // loudly (not just a slow/flaky `.click()`) if `DialogContent`'s
+  // `max-h`/`overflow-y-auto` ever regresses.
+  await saveDistributionButton.scrollIntoViewIfNeeded();
+  await expect(saveDistributionButton).toBeInViewport();
+  await saveDistributionButton.click();
   await expect(page.getByText("The Actual amounts must add up to exactly the Total Withdrawal amount.")).toBeVisible();
 
   // Fix it back to a valid split and save for real.
