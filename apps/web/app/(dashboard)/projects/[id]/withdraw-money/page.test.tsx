@@ -185,6 +185,28 @@ function findParagraphContaining(text: string): HTMLElement {
 }
 
 /**
+ * Every Partner/Sub-partner `PersonCard` on this page now starts
+ * collapsed (2026-09-29, founder feedback) -- most of this file's
+ * existing coverage is about content that only renders once expanded
+ * (buttons, recorded withdrawals, nested Sub-partner cards). Rather than
+ * add an expand step to every one of those tests individually, this
+ * helper expands everything up front, mirroring how a real user would
+ * open every row to work through them. Loops because a collapsed Partner
+ * hides its Sub-partners' cards entirely (`nested` doesn't render at
+ * all while collapsed) -- expanding the Partner can reveal fresh
+ * collapsed Sub-partner buttons that weren't in the DOM yet. Uses
+ * `fireEvent` (not `userEvent`) so it works from a plain, non-`async`
+ * `it()` with no `userEvent.setup()` in scope.
+ */
+function expandAllPersonCards() {
+  let collapsedNameButtons = screen.queryAllByRole("button", { expanded: false });
+  while (collapsedNameButtons.length > 0) {
+    collapsedNameButtons.forEach((button) => fireEvent.click(button));
+    collapsedNameButtons = screen.queryAllByRole("button", { expanded: false });
+  }
+}
+
+/**
  * Story 4.5 (FR25): direct unit coverage for the page's hand-rolled,
  * client-side decimal-safe money helpers -- exercised only indirectly
  * elsewhere (via round-number page tests), so the edge cases their own doc
@@ -305,6 +327,9 @@ describe("WithdrawMoneyPage (Story 4.1)", () => {
 
     await screen.findByText("A");
     expect(screen.getByText("B")).toBeInTheDocument();
+    // Sub-partner cards don't exist in the DOM until their parent Partner
+    // is expanded (collapsed by default, 2026-09-29 feedback).
+    expandAllPersonCards();
     expect(screen.getByText("Sub1")).toBeInTheDocument();
     expect(screen.getByText("Sub2")).toBeInTheDocument();
 
@@ -330,6 +355,7 @@ describe("WithdrawMoneyPage (Story 4.1)", () => {
     render(<WithdrawMoneyPage />);
 
     await screen.findByText("A");
+    expandAllPersonCards();
     const hint = findParagraphContaining("A's normal Can Take is");
     expect(hint).toHaveTextContent("Share 50% means if");
     expect(hint).toHaveTextContent("A's normal Can Take is");
@@ -356,7 +382,7 @@ describe("WithdrawMoneyPage (Story 4.1)", () => {
     ).toBeInTheDocument();
   });
 
-  it("collapsing a Partner's card (click their name) hides the explanation/Withdraw Money button but keeps their Own figure visible (2026-09-29, founder feedback)", async () => {
+  it("every Partner card starts collapsed (2026-09-29 follow-up feedback) -- Own figure visible up front, explanation/Withdraw Money button revealed by clicking the name", async () => {
     const user = userEvent.setup();
     getCanTake.mockResolvedValue(CAN_TAKE_RESPONSE);
 
@@ -365,26 +391,25 @@ describe("WithdrawMoneyPage (Story 4.1)", () => {
 
     const partnerCard = screen.getByText("A").closest(".nb-person-card") as HTMLElement;
     const nameButton = within(partnerCard).getByRole("button", { name: "A" });
+    expect(nameButton).toHaveAttribute("aria-expanded", "false");
+    // Collapsed by default -- children (buttons, explanation) and nested
+    // (Sub1/Sub2's own cards) aren't in the DOM at all yet.
+    expect(within(partnerCard).queryAllByRole("button", { name: "Withdraw Money" })).toHaveLength(0);
+    expect(screen.queryByText(/A's normal Can Take is/)).not.toBeInTheDocument();
+    // The retained "Own" figure is visible up front regardless -- it's in `summary`, not `children`.
+    expect(findParagraphContaining("Own:")).toHaveTextContent("₹1,25,000");
+
+    await user.click(nameButton);
+
     expect(nameButton).toHaveAttribute("aria-expanded", "true");
-    // `partnerCard` also contains the nested Sub1/Sub2 cards' own "Withdraw
-    // Money" buttons -- Partner A's own button renders first (`children`
-    // precedes `nested`), so index 0 is unambiguously theirs.
+    // Partner A's own button renders first (`children` precedes `nested`),
+    // so index 0 is unambiguously theirs, not Sub1/Sub2's.
     expect(within(partnerCard).getAllByRole("button", { name: "Withdraw Money" })[0]).toBeInTheDocument();
     expect(findParagraphContaining("A's normal Can Take is")).toBeInTheDocument();
 
     await user.click(nameButton);
-
     expect(nameButton).toHaveAttribute("aria-expanded", "false");
-    // Collapsing hides children AND nested together -- Sub1/Sub2's own
-    // Withdraw Money buttons disappear along with Partner A's.
     expect(within(partnerCard).queryAllByRole("button", { name: "Withdraw Money" })).toHaveLength(0);
-    expect(screen.queryByText(/A's normal Can Take is/)).not.toBeInTheDocument();
-    // The retained "Own" figure survives the collapse -- it's in `summary`, not `children`.
-    expect(findParagraphContaining("Own:")).toHaveTextContent("₹1,25,000");
-
-    await user.click(nameButton);
-    expect(nameButton).toHaveAttribute("aria-expanded", "true");
-    expect(within(partnerCard).getAllByRole("button", { name: "Withdraw Money" })[0]).toBeInTheDocument();
   });
 });
 
@@ -531,6 +556,9 @@ describe("WithdrawMoneyPage -- Withdrawal Adjustment chip (Story 4.3)", () => {
     render(<WithdrawMoneyPage />);
 
     await screen.findByText("A");
+    // Sub-partner cards don't exist in the DOM until their parent Partner
+    // is expanded (collapsed by default, 2026-09-29 feedback).
+    expandAllPersonCards();
     // Each sub's own content now lives inside its nested `PersonCard`
     // (spec-partner-hierarchy-cards) -- scope lookups to that card.
     const sub1Row = screen.getByText("Sub1").closest(".nb-person-card") as HTMLElement;
@@ -701,6 +729,9 @@ describe("WithdrawMoneyPage -- Recommended Available Withdrawal (Story 4.4)", ()
     render(<WithdrawMoneyPage />);
 
     await screen.findByText("A");
+    // Sub-partner cards don't exist in the DOM until their parent Partner
+    // is expanded (collapsed by default, 2026-09-29 feedback).
+    expandAllPersonCards();
     // Each sub's own content now lives inside its nested `PersonCard`
     // (spec-partner-hierarchy-cards) -- scope lookups to that card.
     const sub1Row = screen.getByText("Sub1").closest(".nb-person-card") as HTMLElement;
@@ -729,6 +760,7 @@ async function renderAndReady() {
   getCanTake.mockResolvedValue(CAN_TAKE_RESPONSE);
   render(<WithdrawMoneyPage />);
   await screen.findByText("A");
+  expandAllPersonCards();
   return user;
 }
 
@@ -782,6 +814,7 @@ describe("WithdrawMoneyPage -- recorded-withdrawals list persists across reload 
     await waitFor(() => {
       expect(listWithdrawalTransactions).toHaveBeenCalledWith("project-1");
     });
+    expandAllPersonCards();
     expect(await screen.findByText("2026-10-05")).toBeInTheDocument();
     expect(screen.getByText("Cash")).toBeInTheDocument();
   });
@@ -807,6 +840,8 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     });
 
     render(<WithdrawMoneyPage />);
+    await screen.findByText("A");
+    expandAllPersonCards();
     await screen.findByText("2026-10-05");
 
     expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
@@ -821,6 +856,8 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     });
 
     render(<WithdrawMoneyPage />);
+    await screen.findByText("A");
+    expandAllPersonCards();
     await screen.findByText("2026-10-05");
 
     expect(screen.getByText("Cancelled")).toBeInTheDocument();
@@ -843,6 +880,8 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     });
 
     render(<WithdrawMoneyPage />);
+    await screen.findByText("A");
+    expandAllPersonCards();
     await screen.findAllByText("2026-10-05");
 
     expect(screen.getByText("Cancelled")).toBeInTheDocument();
@@ -860,6 +899,8 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     const user = userEvent.setup();
 
     render(<WithdrawMoneyPage />);
+    await screen.findByText("A");
+    expandAllPersonCards();
     await screen.findByText("2026-10-05");
     listWithdrawalTransactions.mockResolvedValueOnce({
       transactions: [makeWithdrawalTransaction({ id: "wtx-1", amount: "150000" })],
@@ -899,6 +940,8 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     const user = userEvent.setup();
 
     render(<WithdrawMoneyPage />);
+    await screen.findByText("A");
+    expandAllPersonCards();
     await screen.findByText("2026-10-05");
 
     await user.click(screen.getByRole("button", { name: "Edit" }));
@@ -930,6 +973,8 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     const user = userEvent.setup();
 
     render(<WithdrawMoneyPage />);
+    await screen.findByText("A");
+    expandAllPersonCards();
     await screen.findByText("2026-10-05");
     listWithdrawalTransactions.mockResolvedValueOnce({
       transactions: [
@@ -972,6 +1017,8 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     const user = userEvent.setup();
 
     render(<WithdrawMoneyPage />);
+    await screen.findByText("A");
+    expandAllPersonCards();
     await screen.findByText("2026-10-05");
 
     await user.click(screen.getByRole("button", { name: "Cancel" }));
@@ -993,6 +1040,7 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
 
     render(<WithdrawMoneyPage />);
     await screen.findByText("A");
+    expandAllPersonCards();
 
     // Record the withdrawal -- `submitWithdrawal` refreshes the
     // recorded-withdrawals list right after saving (before the allocation
@@ -1211,6 +1259,7 @@ describe("WithdrawMoneyPage -- Authorize Extra Withdrawal confirmation dialog (S
     const user = userEvent.setup();
     render(<WithdrawMoneyPage />);
     await screen.findByText("A");
+    expandAllPersonCards();
 
     const bCard = screen.getByText("B").closest(".nb-person-card") as HTMLElement;
     await user.click(within(bCard).getByRole("button", { name: "Withdraw Money" }));
@@ -1238,6 +1287,7 @@ describe("WithdrawMoneyPage -- Authorize Extra Withdrawal confirmation dialog (S
     const user = userEvent.setup();
     render(<WithdrawMoneyPage />);
     await screen.findByText("A");
+    expandAllPersonCards();
 
     const bCard = screen.getByText("B").closest(".nb-person-card") as HTMLElement;
     await user.click(within(bCard).getByRole("button", { name: "Withdraw Money" }));

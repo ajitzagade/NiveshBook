@@ -447,16 +447,20 @@ export default function WithdrawMoneyPage() {
    * Collapse state for each Partner/Sub-partner `PersonCard` (2026-09-29,
    * founder feedback -- the full-detail cards made this screen too long to
    * scan with several Partners each carrying their own transaction
-   * history). A `Set` of COLLAPSED ids, starting empty, so every row opens
-   * expanded exactly like before this feature existed -- nothing here
-   * changes default behavior, it only adds a way to hide a row once
-   * reviewed. Keyed by `partnerId`/`subPartnerId` -- both id spaces are
-   * disjoint UUIDs, so one `Set` safely covers both levels.
+   * history). A `Set` of EXPANDED ids, starting empty, so every row opens
+   * COLLAPSED by default (founder follow-up feedback the same day) --
+   * clicking a name reveals it. Tracking "expanded" rather than "collapsed"
+   * means this needs no upfront knowledge of which partnerIds/
+   * subPartnerIds exist yet (the fetch hasn't resolved when this state is
+   * initialized) -- an empty `Set` alone already means "everything
+   * collapsed," with no ids to pre-populate. Keyed by `partnerId`/
+   * `subPartnerId` -- both id spaces are disjoint UUIDs, so one `Set`
+   * safely covers both levels.
    */
-  const [collapsedPersonIds, setCollapsedPersonIds] = useState<Set<string>>(new Set());
+  const [expandedPersonIds, setExpandedPersonIds] = useState<Set<string>>(new Set());
 
-  function toggleCollapsedPerson(id: string) {
-    setCollapsedPersonIds((prev) => {
+  function toggleExpandedPerson(id: string) {
+    setExpandedPersonIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) {
         next.delete(id);
@@ -1769,8 +1773,8 @@ export default function WithdrawMoneyPage() {
                                   />
                                 </div>
                               }
-                              collapsed={collapsedPersonIds.has(sub.subPartnerId)}
-                              onToggleCollapse={() => toggleCollapsedPerson(sub.subPartnerId)}
+                              collapsed={!expandedPersonIds.has(sub.subPartnerId)}
+                              onToggleCollapse={() => toggleExpandedPerson(sub.subPartnerId)}
                               summary={
                                 <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
                                   <AdjustmentChip adjustment={subAdjustment} />
@@ -1830,8 +1834,8 @@ export default function WithdrawMoneyPage() {
                         })
                       : null
                   }
-                  collapsed={collapsedPersonIds.has(partner.partnerId)}
-                  onToggleCollapse={() => toggleCollapsedPerson(partner.partnerId)}
+                  collapsed={!expandedPersonIds.has(partner.partnerId)}
+                  onToggleCollapse={() => toggleExpandedPerson(partner.partnerId)}
                   summary={
                     <>
                       {partner.subPartners.length > 0 ? (

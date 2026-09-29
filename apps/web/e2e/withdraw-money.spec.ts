@@ -91,7 +91,10 @@ test("Distribute a Withdrawal: auto-suggests a per-Partner split, blocks a misma
   await fundProject(page, "100000", "2027-03-01");
 
   await page.goto(page.url().replace(/\/add-money$/, "/withdraw-money"));
-  await expect(page.getByRole("button", { name: "Withdraw Money" }).first()).toBeVisible();
+  // Partner cards start collapsed (2026-09-29 follow-up feedback) -- the
+  // per-Partner "Withdraw Money" button isn't rendered until expanded, but
+  // this test only needs the page-level "Distribute a Withdrawal" flow.
+  await expect(page.getByText("Dist Partner A", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Distribute a Withdrawal" })).toBeVisible();
 
   await page.getByRole("button", { name: "Distribute a Withdrawal" }).click();
@@ -123,6 +126,10 @@ test("Distribute a Withdrawal: auto-suggests a per-Partner split, blocks a misma
   await page.getByRole("button", { name: "Save Distribution" }).click();
 
   await expect(page.getByLabel("Total Withdrawal Amount")).not.toBeVisible();
+  // The recorded transactions live inside each Partner's own (collapsed by
+  // default) card -- expand both to see them.
+  await page.getByRole("button", { name: "Dist Partner A" }).click();
+  await page.getByRole("button", { name: "Dist Partner B" }).click();
   await expect(page.getByText("2027-03-05").first()).toBeVisible();
   await expect(page.getByText("₹30,000").first()).toBeVisible();
   await expect(page.getByText("₹20,000").first()).toBeVisible();
@@ -170,7 +177,7 @@ test("Distribute a Withdrawal: a row exceeding its own Can Take requires explici
   await expect(page.getByText("₹20,000").first()).toBeVisible();
 });
 
-test("clicking a Partner's name collapses their card, hiding the buttons/detail but keeping the Can Take figures visible (2026-09-29, founder feedback)", async ({
+test("Partner cards start collapsed, clicking the name reveals the buttons/detail while keeping the Can Take figures visible throughout (2026-09-29, incl. founder follow-up to default to collapsed)", async ({
   page,
 }) => {
   const projectName = uniqueName("E2E Collapse Project");
@@ -178,24 +185,26 @@ test("clicking a Partner's name collapses their card, hiding the buttons/detail 
   await fundProject(page, "100000", "2027-07-01");
 
   await page.goto(page.url().replace(/\/add-money$/, "/withdraw-money"));
-  await expect(page.getByRole("button", { name: "Withdraw Money" }).first()).toBeVisible();
+  await expect(page.getByText("Dist Partner A", { exact: true })).toBeVisible();
 
   const partnerNameButton = page.getByRole("button", { name: "Dist Partner A" });
-  await expect(partnerNameButton).toHaveAttribute("aria-expanded", "true");
+  await expect(partnerNameButton).toHaveAttribute("aria-expanded", "false");
 
   const partnerCard = page
     .getByText("Dist Partner A", { exact: true })
     .locator("xpath=ancestor::div[contains(@class,'nb-person-card-partner')][1]");
-  await expect(partnerCard.getByRole("button", { name: "Withdraw Money" })).toBeVisible();
-
-  await partnerNameButton.click();
-
-  await expect(partnerNameButton).toHaveAttribute("aria-expanded", "false");
+  // Collapsed by default -- the per-Partner "Withdraw Money" button isn't
+  // rendered at all yet, but the Can Take figure is visible up front.
   await expect(partnerCard.getByRole("button", { name: "Withdraw Money" })).not.toBeVisible();
-  // The header-level Can Take figure stays visible regardless of collapse.
   await expect(partnerCard.getByText("₹60,000").first()).toBeVisible();
 
   await partnerNameButton.click();
+
   await expect(partnerNameButton).toHaveAttribute("aria-expanded", "true");
   await expect(partnerCard.getByRole("button", { name: "Withdraw Money" })).toBeVisible();
+  await expect(partnerCard.getByText("₹60,000").first()).toBeVisible();
+
+  await partnerNameButton.click();
+  await expect(partnerNameButton).toHaveAttribute("aria-expanded", "false");
+  await expect(partnerCard.getByRole("button", { name: "Withdraw Money" })).not.toBeVisible();
 });
