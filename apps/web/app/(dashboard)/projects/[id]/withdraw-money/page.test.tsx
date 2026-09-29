@@ -355,6 +355,37 @@ describe("WithdrawMoneyPage (Story 4.1)", () => {
       screen.getByText("Can Take isn't available until Partner Shares total 100%."),
     ).toBeInTheDocument();
   });
+
+  it("collapsing a Partner's card (click their name) hides the explanation/Withdraw Money button but keeps their Own figure visible (2026-09-29, founder feedback)", async () => {
+    const user = userEvent.setup();
+    getCanTake.mockResolvedValue(CAN_TAKE_RESPONSE);
+
+    render(<WithdrawMoneyPage />);
+    await screen.findByText("A");
+
+    const partnerCard = screen.getByText("A").closest(".nb-person-card") as HTMLElement;
+    const nameButton = within(partnerCard).getByRole("button", { name: "A" });
+    expect(nameButton).toHaveAttribute("aria-expanded", "true");
+    // `partnerCard` also contains the nested Sub1/Sub2 cards' own "Withdraw
+    // Money" buttons -- Partner A's own button renders first (`children`
+    // precedes `nested`), so index 0 is unambiguously theirs.
+    expect(within(partnerCard).getAllByRole("button", { name: "Withdraw Money" })[0]).toBeInTheDocument();
+    expect(findParagraphContaining("A's normal Can Take is")).toBeInTheDocument();
+
+    await user.click(nameButton);
+
+    expect(nameButton).toHaveAttribute("aria-expanded", "false");
+    // Collapsing hides children AND nested together -- Sub1/Sub2's own
+    // Withdraw Money buttons disappear along with Partner A's.
+    expect(within(partnerCard).queryAllByRole("button", { name: "Withdraw Money" })).toHaveLength(0);
+    expect(screen.queryByText(/A's normal Can Take is/)).not.toBeInTheDocument();
+    // The retained "Own" figure survives the collapse -- it's in `summary`, not `children`.
+    expect(findParagraphContaining("Own:")).toHaveTextContent("₹1,25,000");
+
+    await user.click(nameButton);
+    expect(nameButton).toHaveAttribute("aria-expanded", "true");
+    expect(within(partnerCard).getAllByRole("button", { name: "Withdraw Money" })[0]).toBeInTheDocument();
+  });
 });
 
 function makePartnerAdjustment(

@@ -123,3 +123,85 @@ describe("PersonCard className (review fix, 2026-09-26)", () => {
     expect(classNameOf(el)).toContain("nb-person-card-partner");
   });
 });
+
+describe("PersonCard collapse affordance (2026-09-29)", () => {
+  it("without onToggleCollapse, name stays a plain non-interactive span (every pre-existing caller is unaffected)", () => {
+    const el = PersonCard({ role: "partner", name: "A", children: "body", nested: "subs" }) as ReactElement;
+    const header = childrenOf(el)[0] as ReactElement;
+    const nameNode = childrenOf(header)[0] as ReactElement;
+    expect(nameNode.type).toBe("span");
+    // children/nested render unconditionally when there's no collapse control at all.
+    expect(childrenOf(el)).toContain("body");
+    expect(nestOf(el)).toBeDefined();
+  });
+
+  it("with onToggleCollapse and collapsed=true, name becomes a button showing a collapsed chevron, and children/nested are hidden", () => {
+    const onToggleCollapse = () => {};
+    const el = PersonCard({
+      role: "partner",
+      name: "A",
+      collapsed: true,
+      onToggleCollapse,
+      children: "body",
+      nested: "subs",
+    }) as ReactElement;
+    const header = childrenOf(el)[0] as ReactElement;
+    const button = childrenOf(header)[0] as ReactElement;
+    expect(button.type).toBe("button");
+    expect((button.props as { "aria-expanded": boolean })["aria-expanded"]).toBe(false);
+    expect((button.props as { onClick: unknown }).onClick).toBe(onToggleCollapse);
+
+    expect(childrenOf(el)).not.toContain("body");
+    expect(nestOf(el)).toBeUndefined();
+  });
+
+  it("with onToggleCollapse and collapsed=false, children/nested render, aria-expanded is true", () => {
+    const el = PersonCard({
+      role: "partner",
+      name: "A",
+      collapsed: false,
+      onToggleCollapse: () => {},
+      children: "body",
+      nested: "subs",
+    }) as ReactElement;
+    const header = childrenOf(el)[0] as ReactElement;
+    const button = childrenOf(header)[0] as ReactElement;
+    expect((button.props as { "aria-expanded": boolean })["aria-expanded"]).toBe(true);
+
+    expect(childrenOf(el)).toContain("body");
+    expect(nestOf(el)).toBeDefined();
+  });
+
+  it("the name span's own text is untouched inside the button -- just the plain name, nothing appended", () => {
+    const el = PersonCard({
+      role: "partner",
+      name: "Asha",
+      collapsed: true,
+      onToggleCollapse: () => {},
+    }) as ReactElement;
+    const header = childrenOf(el)[0] as ReactElement;
+    const button = childrenOf(header)[0] as ReactElement;
+    const buttonChildren = childrenOf(button) as ReactElement[];
+    const nameSpan = buttonChildren[buttonChildren.length - 1];
+    expect(childrenOf(nameSpan)).toEqual(["Asha"]);
+  });
+
+  it("summary renders regardless of collapsed state", () => {
+    const collapsedEl = PersonCard({
+      role: "partner",
+      name: "A",
+      summary: "always-visible-summary",
+      collapsed: true,
+      onToggleCollapse: () => {},
+    }) as ReactElement;
+    const expandedEl = PersonCard({
+      role: "partner",
+      name: "A",
+      summary: "always-visible-summary",
+      collapsed: false,
+      onToggleCollapse: () => {},
+    }) as ReactElement;
+    expect(childrenOf(collapsedEl)).toContain("always-visible-summary");
+    expect(childrenOf(expandedEl)).toContain("always-visible-summary");
+  });
+});

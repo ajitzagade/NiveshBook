@@ -443,6 +443,30 @@ export default function WithdrawMoneyPage() {
   const [adjustmentsState, setAdjustmentsState] = useState<AdjustmentsState>({ status: "loading" });
   const [reallocationsState, setReallocationsState] = useState<ReallocationsState>({ status: "loading" });
 
+  /**
+   * Collapse state for each Partner/Sub-partner `PersonCard` (2026-09-29,
+   * founder feedback -- the full-detail cards made this screen too long to
+   * scan with several Partners each carrying their own transaction
+   * history). A `Set` of COLLAPSED ids, starting empty, so every row opens
+   * expanded exactly like before this feature existed -- nothing here
+   * changes default behavior, it only adds a way to hide a row once
+   * reviewed. Keyed by `partnerId`/`subPartnerId` -- both id spaces are
+   * disjoint UUIDs, so one `Set` safely covers both levels.
+   */
+  const [collapsedPersonIds, setCollapsedPersonIds] = useState<Set<string>>(new Set());
+
+  function toggleCollapsedPerson(id: string) {
+    setCollapsedPersonIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
   // Flexible pro-rata withdrawal reallocation: the "Skip this round" dialog
   // -- mirrors `recordTarget`'s form-state shape, minus the fields this
   // action doesn't need (date/paymentMode/referenceNumber).
@@ -1745,11 +1769,15 @@ export default function WithdrawMoneyPage() {
                                   />
                                 </div>
                               }
+                              collapsed={collapsedPersonIds.has(sub.subPartnerId)}
+                              onToggleCollapse={() => toggleCollapsedPerson(sub.subPartnerId)}
+                              summary={
+                                <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                                  <AdjustmentChip adjustment={subAdjustment} />
+                                  <RecommendedWithdrawal adjustment={subAdjustment} />
+                                </div>
+                              }
                             >
-                              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-                                <AdjustmentChip adjustment={subAdjustment} />
-                                <RecommendedWithdrawal adjustment={subAdjustment} />
-                              </div>
                               <div className="mt-1.5 flex flex-wrap gap-2">
                                 <Button
                                   variant="ghost"
@@ -1802,28 +1830,36 @@ export default function WithdrawMoneyPage() {
                         })
                       : null
                   }
+                  collapsed={collapsedPersonIds.has(partner.partnerId)}
+                  onToggleCollapse={() => toggleCollapsedPerson(partner.partnerId)}
+                  summary={
+                    <>
+                      {partner.subPartners.length > 0 ? (
+                        // A Partner with Sub-partners has delegated part of their Can
+                        // Take away -- the card's header amount is the pooled
+                        // *total* (`ownCanTake + Σ subCanTake`), so their actual
+                        // retained ("Own") entitlement must be called out as its own
+                        // distinct figure, never conflated with that total. Mirrors
+                        // the Add Money page's identical "Own:" line for Should Pay.
+                        // Kept in `summary` (always visible, even collapsed) --
+                        // it's the one figure the pooled header total alone can hide.
+                        <p className="mt-1 text-[12.6px] font-semibold text-ink-soft">
+                          Own: <Amount value={partner.ownCanTake} size="sm" />
+                        </p>
+                      ) : null}
+                      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <AdjustmentChip adjustment={partnerAdjustment} />
+                        <RecommendedWithdrawal adjustment={partnerAdjustment} />
+                      </div>
+                    </>
+                  }
                 >
-                  {partner.subPartners.length > 0 ? (
-                    // A Partner with Sub-partners has delegated part of their Can
-                    // Take away -- the card's header amount is the pooled
-                    // *total* (`ownCanTake + Σ subCanTake`), so their actual
-                    // retained ("Own") entitlement must be called out as its own
-                    // distinct figure, never conflated with that total. Mirrors
-                    // the Add Money page's identical "Own:" line for Should Pay.
-                    <p className="mt-1 text-[12.6px] font-semibold text-ink-soft">
-                      Own: <Amount value={partner.ownCanTake} size="sm" />
-                    </p>
-                  ) : null}
                   <p className="mt-1 text-[11.6px] text-ink-faint">
                     Share {formatSharePercent(partner.sharePercent)}% means if{" "}
                     <Amount value={state.availableToWithdraw} size="sm" /> is available to withdraw,{" "}
                     {partner.name}&apos;s normal Can Take is{" "}
                     <Amount value={partner.ownCanTake} size="sm" />.
                   </p>
-                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-                    <AdjustmentChip adjustment={partnerAdjustment} />
-                    <RecommendedWithdrawal adjustment={partnerAdjustment} />
-                  </div>
 
                   <div className="mt-1.5 flex flex-wrap gap-2">
                     <Button
