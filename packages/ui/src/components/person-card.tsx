@@ -60,9 +60,9 @@ export interface PersonCardProps {
    * operable control (mirrors `RowCard`'s identical whole-row-click
    * pattern, incl. its "a nested action's own onClick must call
    * `event.stopPropagation()` if it shouldn't also toggle collapse"
-   * convention -- not needed by any current caller, since only Withdraw
-   * Money opts into `onToggleCollapse` today, and its own `value`/`action`
-   * carry no nested buttons). `children`/`nested` render only while
+   * convention -- not needed by any current caller: Withdraw Money and Add
+   * Money's Should Pay panel opt into `onToggleCollapse` today, and neither's
+   * `value`/`action` carry nested buttons). `children`/`nested` render only while
    * `collapsed` is falsy. Fully controlled, mirroring this package's
    * `Dialog` -- every call site owns its own collapse state (e.g. a
    * `Set<string>` of expanded ids) rather than `PersonCard` holding

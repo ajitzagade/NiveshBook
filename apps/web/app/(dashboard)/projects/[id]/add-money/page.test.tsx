@@ -121,6 +121,37 @@ function findParagraphContaining(text: string): HTMLElement {
   });
 }
 
+/**
+ * Every Partner/Sub-partner `PersonCard` in the Should Pay panel starts
+ * collapsed (2026-09-29, founder follow-up extending Withdraw Money's
+ * identical collapse to this page) -- most of this file's pre-existing
+ * coverage is about content that only renders once expanded (Add Investment
+ * buttons, recorded payments, nested Sub-partner cards, the worked-example
+ * hint). Mirrors `withdraw-money/page.test.tsx`'s identical loop helper
+ * (incl. its "expanding a Partner can reveal fresh collapsed Sub-partner
+ * headers" rationale), with two page-specific wrinkles: (1) the requirement
+ * row's own "Should Pay"/"Hide" toggle also carries `aria-expanded`, so it's
+ * filtered out by its exact text -- clicking it here would collapse the whole
+ * panel instead; (2) the Should Pay fetch resolves on its own async chain
+ * after `renderAndExpand` returns, so this first waits for a collapsed person
+ * header to exist at all.
+ */
+async function expandAllPersonCards() {
+  function collapsedPersonToggles() {
+    return screen
+      .queryAllByRole("button", { expanded: false })
+      .filter((button) => !["Should Pay", "Hide"].includes((button.textContent ?? "").trim()));
+  }
+  await waitFor(() => {
+    expect(collapsedPersonToggles().length).toBeGreaterThan(0);
+  });
+  let toggles = collapsedPersonToggles();
+  while (toggles.length > 0) {
+    toggles.forEach((button) => fireEvent.click(button));
+    toggles = collapsedPersonToggles();
+  }
+}
+
 describe("AddMoneyPage -- Should Pay expand (regression, spec-3-2 Review Triage rows 1-2)", () => {
   beforeEach(() => {
     listInvestmentRequirements.mockReset().mockResolvedValue({ requirements: [REQUIREMENT] });
@@ -138,6 +169,7 @@ describe("AddMoneyPage -- Should Pay expand (regression, spec-3-2 Review Triage 
     getShouldPay.mockResolvedValue(SHOULD_PAY_RESPONSE);
 
     await renderAndExpand();
+    await expandAllPersonCards();
 
     // The pooled total (ownShouldPay + Σ subShouldPay = 250000 + 125000 +
     // 125000 = 500000) still appears, once -- the partner card's header amount.
@@ -172,6 +204,9 @@ describe("AddMoneyPage -- Should Pay expand (regression, spec-3-2 Review Triage 
     getShouldPay.mockResolvedValue(SHOULD_PAY_RESPONSE);
 
     await renderAndExpand();
+    // A collapsed Partner hides its nested Sub-partner cards entirely --
+    // expand everything before asserting on the containment structure.
+    await expandAllPersonCards();
 
     await screen.findByText("Sub1");
     const partnerCard = screen.getByText("A").closest(".nb-person-card") as HTMLElement;
@@ -180,6 +215,40 @@ describe("AddMoneyPage -- Should Pay expand (regression, spec-3-2 Review Triage 
     expect(subCard.className).toContain("nb-person-card-sub");
     expect(partnerCard.contains(subCard)).toBe(true);
     expect(subCard.parentElement?.className).toContain("nb-person-nest");
+  });
+
+  // Mirrors withdraw-money/page.test.tsx's identical default-collapsed
+  // assertions (2026-09-29, founder follow-up extending that page's collapse
+  // to this one).
+  it("every Partner card starts collapsed -- Own figure/adjustment chip visible up front, hint/Add Investment/Sub-partner cards revealed by clicking the header", async () => {
+    getShouldPay.mockResolvedValue(SHOULD_PAY_RESPONSE);
+
+    await renderAndExpand();
+
+    // The always-visible `summary` content renders even while collapsed.
+    await waitFor(() => {
+      expect(findParagraphContaining("Own: ₹2,50,000")).toBeInTheDocument();
+    });
+
+    // Collapsed by default -- children (the worked-example hint, Add
+    // Investment) and nested Sub-partner cards don't render at all.
+    expect(screen.queryByRole("button", { name: "Add Investment" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Sub1")).not.toBeInTheDocument();
+
+    const header = screen.getByText("A").closest("[role='button']") as HTMLElement;
+    expect(header).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(header);
+    expect(header).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getAllByRole("button", { name: "Add Investment" }).length).toBeGreaterThan(0);
+    // The nested Sub-partner cards appear -- themselves still collapsed.
+    expect(screen.getByText("Sub1")).toBeInTheDocument();
+    expect(screen.getByText("Sub1").closest("[role='button']")).toHaveAttribute("aria-expanded", "false");
+
+    // Clicking the header again collapses it back.
+    fireEvent.click(header);
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Sub1")).not.toBeInTheDocument();
   });
 
   it("does not get stuck on 'Loading…' forever after collapsing before the fetch resolves, then re-expanding (row 2)", async () => {
@@ -255,6 +324,7 @@ describe("AddMoneyPage -- Record Payment idempotency key reuse across a retry (r
       });
 
     const user = await renderAndExpand();
+    await expandAllPersonCards();
 
     // A "Record Payment" button exists per Partner/Sub-partner row -- the
     // Partner's own row is the first one.
@@ -311,6 +381,7 @@ describe("AddMoneyPage -- Record Payment idempotency key reuse across a retry (r
     });
 
     const user = await renderAndExpand();
+    await expandAllPersonCards();
 
     await user.click(screen.getAllByRole("button", { name: "Add Investment" })[0] as HTMLElement);
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "100000" } });
@@ -387,6 +458,7 @@ describe("AddMoneyPage -- Cancel UI (regression, spec-3-8 Review Triage rows 2/5
     });
 
     await renderAndExpand();
+    await expandAllPersonCards();
 
     await waitFor(() => {
       expect(screen.getByText("Cancelled")).toBeInTheDocument();
@@ -401,6 +473,7 @@ describe("AddMoneyPage -- Cancel UI (regression, spec-3-8 Review Triage rows 2/5
     });
 
     await renderAndExpand();
+    await expandAllPersonCards();
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
@@ -423,6 +496,7 @@ describe("AddMoneyPage -- Cancel UI (regression, spec-3-8 Review Triage rows 2/5
     });
 
     const user = await renderAndExpand();
+    await expandAllPersonCards();
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
     });
@@ -448,6 +522,7 @@ describe("AddMoneyPage -- Cancel UI (regression, spec-3-8 Review Triage rows 2/5
     });
 
     const user = await renderAndExpand();
+    await expandAllPersonCards();
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
     });
@@ -530,6 +605,7 @@ describe("AddMoneyPage -- 'Moved from Project A' indicator (Story 4.8, FR28)", (
     ]);
 
     await renderAndExpand();
+    await expandAllPersonCards();
 
     // `findByText` (not `getByText`) -- the money-movements/Projects fetch
     // resolves via a separate async chain from the transactions/Should Pay
@@ -550,6 +626,7 @@ describe("AddMoneyPage -- 'Moved from Project A' indicator (Story 4.8, FR28)", (
     listProjects.mockResolvedValue([]);
 
     await renderAndExpand();
+    await expandAllPersonCards();
 
     await waitFor(() => {
       expect(screen.getByText("₹50,000")).toBeInTheDocument();
@@ -590,6 +667,7 @@ describe("AddMoneyPage -- 'Moved from Project A' indicator (Story 4.8, FR28)", (
     listProjects.mockResolvedValue([]);
 
     await renderAndExpand();
+    await expandAllPersonCards();
 
     const movedChip = await screen.findByText(elementTextNormalizedIncludes("Moved from another Project"));
     expect(movedChip).toBeInTheDocument();
@@ -615,6 +693,7 @@ describe("AddMoneyPage -- 'Moved from Project A' indicator (Story 4.8, FR28)", (
     listProjects.mockRejectedValue(new Error("Could not load Projects."));
 
     await renderAndExpand();
+    await expandAllPersonCards();
 
     await waitFor(() => {
       expect(screen.getByText("₹1,50,000")).toBeInTheDocument();

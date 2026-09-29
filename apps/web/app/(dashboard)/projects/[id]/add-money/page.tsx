@@ -208,6 +208,35 @@ export default function AddMoneyPage() {
     Record<string, AdjustmentsState>
   >({});
 
+  /**
+   * Collapse state for each Partner/Sub-partner `PersonCard` in the Should
+   * Pay panel (2026-09-29, founder follow-up extending Withdraw Money's
+   * identical collapse to this screen -- its per-person cards carry the same
+   * explanation text, action button, and transaction history, so it runs
+   * just as long). A `Set` of EXPANDED ids, starting empty, so every row
+   * opens COLLAPSED by default -- clicking the header reveals it (mirrors
+   * `withdraw-money/page.tsx` verbatim, incl. its "track expanded, not
+   * collapsed, so no upfront id knowledge is needed" rationale). Keyed by
+   * `partnerId`/`subPartnerId` -- disjoint UUID spaces, one `Set` covers
+   * both. Only one requirement panel is ever open at a time
+   * (`expandedRequirementId` above), and `toggleShouldPay` resets this on
+   * every panel toggle, so expansion never leaks between requirements
+   * (the same person renders under every requirement's panel).
+   */
+  const [expandedPersonIds, setExpandedPersonIds] = useState<Set<string>>(new Set());
+
+  function toggleExpandedPerson(id: string) {
+    setExpandedPersonIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
   const [recordPaymentTarget, setRecordPaymentTarget] = useState<RecordPaymentTarget | null>(null);
   const [recordAmount, setRecordAmount] = useState("");
   const [recordDate, setRecordDate] = useState("");
@@ -405,6 +434,9 @@ export default function AddMoneyPage() {
   }
 
   function toggleShouldPay(requirementId: string) {
+    // Every panel open/close starts the person cards over at all-collapsed --
+    // see `expandedPersonIds`'s doc comment (no leaking between requirements).
+    setExpandedPersonIds(new Set());
     if (expandedRequirementId === requirementId) {
       setExpandedRequirementId(null);
       expandedRequirementIdRef.current = null;
@@ -913,28 +945,37 @@ export default function AddMoneyPage() {
                                                   </span>
                                                 }
                                                 action={<Amount value={sub.shouldPay} size="sm" />}
+                                                collapsed={!expandedPersonIds.has(sub.subPartnerId)}
+                                                onToggleCollapse={() => toggleExpandedPerson(sub.subPartnerId)}
+                                                summary={
+                                                  // Kept in `summary` (always visible, even collapsed) --
+                                                  // mirrors Withdraw Money's identical adjustment-chip +
+                                                  // recommended-figure treatment.
+                                                  <>
+                                                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                                                      <AdjustmentChip
+                                                        adjustment={findSubPartnerAdjustment(
+                                                          adjustmentsState,
+                                                          partner.partnerId,
+                                                          sub.subPartnerId,
+                                                        )}
+                                                      />
+                                                      <ShouldPayProgress
+                                                        progress={subPartnerProgress(
+                                                          adjustmentsState,
+                                                          partner.partnerId,
+                                                          sub.subPartnerId,
+                                                        )}
+                                                      />
+                                                    </div>
+                                                    {sub.recommendedAmount !== undefined ? (
+                                                      <p className="mt-1 text-[12.6px] font-semibold text-ink-soft">
+                                                        Recommended: <Amount value={sub.recommendedAmount} size="sm" />
+                                                      </p>
+                                                    ) : null}
+                                                  </>
+                                                }
                                               >
-                                                <div className="mt-1 flex flex-wrap items-center gap-2">
-                                                  <AdjustmentChip
-                                                    adjustment={findSubPartnerAdjustment(
-                                                      adjustmentsState,
-                                                      partner.partnerId,
-                                                      sub.subPartnerId,
-                                                    )}
-                                                  />
-                                                  <ShouldPayProgress
-                                                    progress={subPartnerProgress(
-                                                      adjustmentsState,
-                                                      partner.partnerId,
-                                                      sub.subPartnerId,
-                                                    )}
-                                                  />
-                                                </div>
-                                                {sub.recommendedAmount !== undefined ? (
-                                                  <p className="mt-1 text-[12.6px] font-semibold text-ink-soft">
-                                                    Recommended: <Amount value={sub.recommendedAmount} size="sm" />
-                                                  </p>
-                                                ) : null}
                                                 <div className="mt-1.5">
                                                   <Button
                                                     variant="ghost"
@@ -971,39 +1012,47 @@ export default function AddMoneyPage() {
                                             ))
                                           : null
                                       }
+                                      collapsed={!expandedPersonIds.has(partner.partnerId)}
+                                      onToggleCollapse={() => toggleExpandedPerson(partner.partnerId)}
+                                      summary={
+                                        <>
+                                          <div className="mt-1 flex flex-wrap items-center gap-2">
+                                            <AdjustmentChip
+                                              adjustment={findPartnerAdjustment(
+                                                adjustmentsState,
+                                                partner.partnerId,
+                                              )}
+                                            />
+                                            <ShouldPayProgress
+                                              progress={partnerProgress(adjustmentsState, partner.partnerId)}
+                                            />
+                                          </div>
+                                          {partner.subPartners.length > 0 ? (
+                                            // A Partner with Sub-partners has delegated part of their
+                                            // Should Pay away -- the card's header amount is the
+                                            // pooled *total* (`ownShouldPay + Σ subShouldPay`), so their
+                                            // actual retained ("Own") obligation must be called out as
+                                            // its own distinct figure (AC2), never conflated with that
+                                            // total. Mirrors the Shares page's `retainedMessage` precedent.
+                                            // Kept in `summary` (always visible, even collapsed) -- it's
+                                            // the one figure the pooled header total alone can hide.
+                                            <p className="mt-1 text-[12.6px] font-semibold text-ink-soft">
+                                              Own: <Amount value={partner.ownShouldPay} size="sm" />
+                                            </p>
+                                          ) : null}
+                                          {partner.recommendedAmount !== undefined ? (
+                                            // Story 3.5: carry-forward from the previous round's Pending/
+                                            // Extra Paid -- shown alongside the plain Should Pay above
+                                            // (never in place of it). `mergeRecommendedAmounts` (packages/core)
+                                            // already leaves this `undefined` when it numerically equals the
+                                            // plain Should Pay, so no client-side comparison is needed here.
+                                            <p className="mt-1 text-[12.6px] font-semibold text-ink-soft">
+                                              Recommended: <Amount value={partner.recommendedAmount} size="sm" />
+                                            </p>
+                                          ) : null}
+                                        </>
+                                      }
                                     >
-                                      <div className="mt-1 flex flex-wrap items-center gap-2">
-                                        <AdjustmentChip
-                                          adjustment={findPartnerAdjustment(
-                                            adjustmentsState,
-                                            partner.partnerId,
-                                          )}
-                                        />
-                                        <ShouldPayProgress
-                                          progress={partnerProgress(adjustmentsState, partner.partnerId)}
-                                        />
-                                      </div>
-                                      {partner.subPartners.length > 0 ? (
-                                        // A Partner with Sub-partners has delegated part of their
-                                        // Should Pay away -- the card's header amount is the
-                                        // pooled *total* (`ownShouldPay + Σ subShouldPay`), so their
-                                        // actual retained ("Own") obligation must be called out as
-                                        // its own distinct figure (AC2), never conflated with that
-                                        // total. Mirrors the Shares page's `retainedMessage` precedent.
-                                        <p className="mt-1 text-[12.6px] font-semibold text-ink-soft">
-                                          Own: <Amount value={partner.ownShouldPay} size="sm" />
-                                        </p>
-                                      ) : null}
-                                      {partner.recommendedAmount !== undefined ? (
-                                        // Story 3.5: carry-forward from the previous round's Pending/
-                                        // Extra Paid -- shown alongside the plain Should Pay above
-                                        // (never in place of it). `mergeRecommendedAmounts` (packages/core)
-                                        // already leaves this `undefined` when it numerically equals the
-                                        // plain Should Pay, so no client-side comparison is needed here.
-                                        <p className="mt-1 text-[12.6px] font-semibold text-ink-soft">
-                                          Recommended: <Amount value={partner.recommendedAmount} size="sm" />
-                                        </p>
-                                      ) : null}
                                       <p className="mt-1 text-[11.6px] text-ink-faint">
                                         Share {formatSharePercent(partner.sharePercent)}% means if the
                                         project needs <Amount value={requirement.amount} size="sm" />,{" "}
