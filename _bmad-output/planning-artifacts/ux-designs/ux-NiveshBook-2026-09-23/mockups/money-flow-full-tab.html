@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NiveshBook — Money Flow "Full Flow" tab (proposal mockup)</title>
+<style>
+  /* Tokens verbatim from DESIGN.md (sourced from imports/founder-mockup.html) */
+  :root{
+    --ink:#1E293B; --ink-soft:#64748B; --ink-faint:#94A3B8;
+    --ground:#F3F5F9; --surface:#FBFCFD; --surface-alt:#F7F9FC; --border:#E7EBF1;
+    --accent:#2F6FED; --accent-strong:#1E54C7; --accent-soft:#E7EFFE;
+    --success:#17A566; --success-soft:#E3F8EC;
+    --danger:#E5484D; --danger-soft:#FCEAEA;
+    --info:#0EA5A5; --info-soft:#E1F7F5;
+    --violet:#8B5CF6; --violet-soft:#F1EAFE;
+    --amber:#E8A317; --amber-soft:#FCF1DC;
+    --r-card:14px; --r-el:9px; --r-chip:9999px;
+    --shadow:0 1px 2px rgba(30,41,59,.04), 0 8px 20px rgba(30,41,59,.05);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    font-size:14.5px;line-height:1.5;color:var(--ink);background:var(--ground);
+    padding:28px 36px;max-width:1200px;margin:0 auto;
+  }
+  .num{font-variant-numeric:tabular-nums}
+
+  /* ---------- Page header (mirrors packages/ui PageHeader) ---------- */
+  .page-header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:24px}
+  .page-header h1{font-size:22px;font-weight:650}
+  .page-header p{font-size:13.4px;color:var(--ink-soft);margin-top:2px}
+
+  /* Tab bar = the per-Project screen's exact view-mode Button pattern (violet tone) */
+  .tabs{display:flex;gap:10px}
+  .tab-btn{
+    font:inherit;font-size:13.4px;font-weight:650;border-radius:var(--r-el);
+    padding:11px 18px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+    background:var(--surface);color:var(--ink-soft);border:1px solid var(--border);
+  }
+  .tab-btn.active{background:var(--violet);color:#fff;border-color:var(--violet)}
+  .tab-btn svg{width:14px;height:14px}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);box-shadow:var(--shadow);padding:20px}
+
+  /* ---------- Legend ---------- */
+  .legend{display:flex;gap:18px;flex-wrap:wrap;align-items:center;font-size:12.6px;color:var(--ink-soft);margin-bottom:16px}
+  .legend .swatch{display:inline-block;width:18px;height:0;border-top:2.5px solid;border-radius:2px;vertical-align:middle;margin-right:6px}
+  .legend .swatch.dashed{border-top-style:dashed}
+
+  /* ---------- Flow canvas ---------- */
+  .canvas{position:relative;overflow-x:auto}
+  .canvas-inner{position:relative;min-width:980px;padding:4px}
+  #edge-svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+
+  .project-block{margin-bottom:44px}
+  .project-block:last-child{margin-bottom:0}
+  .cols{display:grid;grid-template-columns:220px 250px 250px 220px;gap:0 56px;align-items:center}
+  .col{display:flex;flex-direction:column;gap:14px;justify-content:center}
+
+  /* Node cards — {components.flow-tree-card}: white card, 3px left border colored per node kind */
+  .node{
+    background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--ink-faint);
+    border-radius:var(--r-card);box-shadow:var(--shadow);padding:12px 14px;position:relative;
+  }
+  .node .kicker{font-size:11.6px;font-weight:600;color:var(--ink-faint);letter-spacing:.02em;text-transform:uppercase}
+  .node .name{font-size:14.5px;font-weight:650;margin-top:1px}
+  .node .figures{font-size:12.6px;color:var(--ink-soft);margin-top:4px}
+  .node .figures b{color:var(--ink);font-weight:650}
+  .node.project{border-left-color:var(--accent)}
+  .node.partner{border-left-color:var(--info)}
+  .node.sub{border-left-color:var(--ink-faint)}
+  .node.external{border:1.5px dashed var(--border);border-left:3px solid var(--violet);box-shadow:none;background:var(--surface-alt)}
+
+  .chip{display:inline-block;border-radius:var(--r-chip);font-size:11.6px;font-weight:650;padding:2.5px 10px;margin-top:6px}
+  .chip.info{background:var(--info-soft);color:var(--info)}
+  .chip.violet{background:var(--violet-soft);color:var(--violet)}
+  .chip.success{background:var(--success-soft);color:var(--success)}
+  .chip.danger{background:var(--danger-soft);color:var(--danger)}
+
+  .block-title{font-size:12.6px;font-weight:650;color:var(--ink-soft);margin:0 0 12px}
+
+  /* ---------- Simple "Projects" tab (existing view, unchanged) ---------- */
+  #tab-projects .simple-row{display:flex;gap:120px;align-items:center;justify-content:center;padding:40px 0;position:relative}
+  .simple-node{width:190px;text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-el);box-shadow:var(--shadow);padding:12px}
+  .simple-node .name{font-size:13.4px;font-weight:700}
+  .simple-node .bal{font-size:11.6px;color:var(--ink-soft);margin-top:4px}
+
+  /* ---------- Reviewer notes (amber callouts, same layer as ux-simplify-proposal) ---------- */
+  .notes{margin-top:24px}
+  .note{display:flex;gap:10px;align-items:flex-start;background:var(--amber-soft);border:1px solid #F2DDB0;border-radius:var(--r-el);padding:10px 14px;font-size:12.6px;color:var(--ink);margin-bottom:8px}
+  .note .n{flex:none;width:20px;height:20px;border-radius:50%;background:var(--amber);color:#fff;font-size:11.6px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:1px}
+  .note-anchor{position:absolute;top:-9px;right:-9px;width:20px;height:20px;border-radius:50%;background:var(--amber);color:#fff;font-size:11.6px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow)}
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <div>
+    <h1>All Projects — Money Flow</h1>
+    <p>Every Project you can see, with any real money that's moved between them. Select a Project for its own full Money Flow.</p>
+  </div>
+  <div class="tabs" role="tablist">
+    <button class="tab-btn" id="btn-projects" role="tab" aria-selected="false" onclick="showTab('projects')">Projects</button>
+    <button class="tab-btn active" id="btn-full" role="tab" aria-selected="true" onclick="showTab('full')">Full Flow</button>
+  </div>
+</div>
+
+<!-- ======================= TAB 1: existing Projects view (unchanged) ======================= -->
+<div class="card" id="tab-projects" hidden>
+  <div class="simple-row">
+    <div class="simple-node"><div class="name">Project A</div><div class="bal num">₹1,00,000 available</div></div>
+    <svg width="120" height="24" style="position:absolute;left:50%;transform:translateX(-50%)" aria-hidden="true">
+      <defs><marker id="ah-info-s" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#0EA5A5"/></marker></defs>
+      <line x1="0" y1="12" x2="112" y2="12" stroke="#0EA5A5" stroke-width="2" marker-end="url(#ah-info-s)"/>
+      <text x="56" y="8" text-anchor="middle" font-size="10.5" fill="#0EA5A5" class="num">₹1,50,000</text>
+    </svg>
+    <div class="simple-node"><div class="name">Project B</div><div class="bal num">₹60,000 available</div></div>
+  </div>
+  <p style="font-size:12.6px;color:var(--ink-faint);text-align:center">The existing Projects canvas — untouched. The new tab sits beside it, it replaces nothing.</p>
+</div>
+
+<!-- ======================= TAB 2: NEW Full Flow tab ======================= -->
+<div class="card" id="tab-full">
+  <div class="legend">
+    <span><span class="swatch" style="border-color:#CBD5E1"></span>ownership (share)</span>
+    <span><span class="swatch" style="border-color:#0EA5A5"></span>moved to another Project</span>
+    <span><span class="swatch" style="border-color:#8B5CF6"></span>to a person / Available Balance</span>
+    <span style="color:var(--ink-faint)">Amounts are all-time totals for each person on that Project.</span>
+  </div>
+
+  <div class="canvas">
+    <div class="canvas-inner" id="canvas-inner">
+      <svg id="edge-svg" aria-hidden="true">
+        <defs>
+          <marker id="ah-grey" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#CBD5E1"/></marker>
+          <marker id="ah-info" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#0EA5A5"/></marker>
+          <marker id="ah-violet" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#8B5CF6"/></marker>
+        </defs>
+      </svg>
+
+      <!-- ---------- Project A ---------- -->
+      <div class="project-block">
+        <p class="block-title">PROJECT A · funded ₹10,00,000</p>
+        <div class="cols">
+          <div class="col">
+            <div class="node project" id="pA">
+              <div class="kicker">Project</div>
+              <div class="name">Project A</div>
+              <div class="figures num">Funded <b>₹10,00,000</b></div>
+              <div class="figures num">Available <b>₹1,00,000</b></div>
+            </div>
+          </div>
+          <div class="col">
+            <div class="node partner" id="pA-sandip">
+              <div class="kicker">Partner · 20% own, after sub-split</div>
+              <div class="name">Sandip Z</div>
+              <div class="figures num">In <b>₹5,00,000</b> · Out <b>₹2,50,000</b></div>
+              <span class="chip danger num">Withdrew ₹2,50,000</span>
+              <span class="note-anchor">2</span>
+            </div>
+            <div class="node partner" id="pA-yogesh">
+              <div class="kicker">Partner · 30%</div>
+              <div class="name">Yogesh Shilimkar</div>
+              <div class="figures num">In <b>₹3,00,000</b> · Out <b>₹0</b></div>
+            </div>
+            <div class="node partner" id="pA-abc">
+              <div class="kicker">Partner · 20%</div>
+              <div class="name">ABC Group</div>
+              <div class="figures num">In <b>₹2,00,000</b> · Out <b>₹0</b></div>
+            </div>
+          </div>
+          <div class="col">
+            <div class="node sub" id="pA-mahesh">
+              <div class="kicker">Sub-partner · 10% of Project</div>
+              <div class="name">Mahesh Z</div>
+              <div class="figures num">In <b>₹1,00,000</b> · Out <b>₹0</b></div>
+            </div>
+            <div class="node sub" id="pA-hari">
+              <div class="kicker">Sub-partner · 10% of Project</div>
+              <div class="name">Harischandra A</div>
+              <div class="figures num">In <b>₹1,00,000</b> · Out <b>₹0</b></div>
+            </div>
+            <div class="node sub" id="pA-chandra">
+              <div class="kicker">Sub-partner · 10% of Project</div>
+              <div class="name">Chandrakant Z</div>
+              <div class="figures num">In <b>₹1,00,000</b> · Out <b>₹50,000</b></div>
+              <span class="chip violet num">Keep for Later ₹50,000</span>
+            </div>
+          </div>
+          <div class="col">
+            <div class="node external" id="ext-person">
+              <div class="kicker">Person</div>
+              <div class="name">Person X</div>
+              <div class="figures num">Given <b>₹50,000</b></div>
+              <span class="chip violet">Given to person</span>
+            </div>
+            <div class="node external" id="ext-balance">
+              <div class="kicker">Available Balance</div>
+              <div class="name">Kept aside</div>
+              <div class="figures num">Kept <b>₹1,00,000</b></div>
+              <span class="chip violet">Keep for Later</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ---------- Project B ---------- -->
+      <div class="project-block">
+        <p class="block-title">PROJECT B · funded ₹6,00,000</p>
+        <div class="cols">
+          <div class="col">
+            <div class="node project" id="pB">
+              <div class="kicker">Project</div>
+              <div class="name">Project B</div>
+              <div class="figures num">Funded <b>₹6,00,000</b></div>
+              <div class="figures num">Available <b>₹60,000</b></div>
+              <span class="chip info num">₹1,50,000 in from Project A</span>
+              <span class="note-anchor">3</span>
+            </div>
+          </div>
+          <div class="col">
+            <div class="node partner" id="pB-yogesh">
+              <div class="kicker">Partner · 40%</div>
+              <div class="name">Yogesh Shilimkar</div>
+              <div class="figures num">In <b>₹2,40,000</b> · Out <b>₹0</b></div>
+            </div>
+            <div class="node partner" id="pB-kavita">
+              <div class="kicker">Partner · 35%</div>
+              <div class="name">Kavita Joshi</div>
+              <div class="figures num">In <b>₹2,10,000</b> · Out <b>₹40,000</b></div>
+            </div>
+            <div class="node partner" id="pB-abc">
+              <div class="kicker">Partner · 25%</div>
+              <div class="name">ABC Group</div>
+              <div class="figures num">In <b>₹1,50,000</b> · Out <b>₹0</b></div>
+            </div>
+          </div>
+          <div class="col"></div>
+          <div class="col"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="notes">
+    <div class="note"><span class="n">1</span><span>The tab bar reuses the per-Project screen's exact view-mode Button pattern (violet tone, primary-when-active) — no new tab component invented. The existing Projects canvas is untouched behind its own tab.</span></div>
+    <div class="note"><span class="n">2</span><span><b>No disconnection:</b> Sandip Z's ₹2,50,000 withdrawal splits into three teal/violet arrows — ₹1,50,000 to <b>Project B's own card lower in this same canvas</b>, ₹50,000 to Person X, ₹50,000 to Available Balance. The reinvested rupees stay one continuous drawn line from source share to destination Project.</span></div>
+    <div class="note"><span class="n">3</span><span>The destination Project's card states the link in words too ("₹1,50,000 in from Project A"), so the connection survives even if the arrows are hard to trace at a glance — chips never rely on color alone.</span></div>
+    <div class="note"><span class="n">4</span><span>Reference screenshots were dark-themed; per the 2026-09-24 precedent (Trail Quick View), the <b>layout</b> is adopted, the <b>palette</b> stays NiveshBook's light tokens. Card figures come from data the API already returns (share %, all-time ₹ in/out, movement edges) — nothing invented.</span></div>
+  </div>
+</div>
+
+<script>
+function showTab(which){
+  document.getElementById('tab-projects').hidden = which !== 'projects';
+  document.getElementById('tab-full').hidden = which !== 'full';
+  document.getElementById('btn-projects').classList.toggle('active', which==='projects');
+  document.getElementById('btn-projects').setAttribute('aria-selected', which==='projects');
+  document.getElementById('btn-full').classList.toggle('active', which==='full');
+  document.getElementById('btn-full').setAttribute('aria-selected', which==='full');
+  if(which==='full') requestAnimationFrame(drawEdges);
+}
+
+/* Per-edge connectors, one explicit from->to line each (the 2026-09-27 Trail
+   Quick View lesson: never a shared column-level arrow). Ownership edges grey,
+   cross-Project movement teal, person/balance violet. */
+const EDGES = [
+  {from:'pA', to:'pA-sandip',  kind:'grey'},
+  {from:'pA', to:'pA-yogesh',  kind:'grey'},
+  {from:'pA', to:'pA-abc',     kind:'grey'},
+  {from:'pA-sandip', to:'pA-mahesh',  kind:'grey'},
+  {from:'pA-sandip', to:'pA-hari',    kind:'grey'},
+  {from:'pA-sandip', to:'pA-chandra', kind:'grey'},
+  {from:'pA-sandip', to:'ext-person',  kind:'violet', label:'₹50,000'},
+  {from:'pA-sandip', to:'ext-balance', kind:'violet', label:'₹50,000'},
+  {from:'pA-chandra', to:'ext-balance', kind:'violet', label:'₹50,000'},
+  {from:'pA-sandip', to:'pB', kind:'info', label:'₹1,50,000 moved'},
+  {from:'pB', to:'pB-yogesh', kind:'grey'},
+  {from:'pB', to:'pB-kavita', kind:'grey'},
+  {from:'pB', to:'pB-abc',    kind:'grey'},
+];
+const COLORS = {grey:'#CBD5E1', info:'#0EA5A5', violet:'#8B5CF6'};
+
+function drawEdges(){
+  const svg = document.getElementById('edge-svg');
+  const inner = document.getElementById('canvas-inner');
+  const base = inner.getBoundingClientRect();
+  svg.querySelectorAll('path,text').forEach(el=>el.remove());
+  for(const e of EDGES){
+    const a = document.getElementById(e.from), b = document.getElementById(e.to);
+    if(!a || !b) continue;
+    const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    let x1,y1,x2,y2,labelX,labelY;
+    const below = rb.top > ra.bottom;
+    if(below){                                   // target below (cross-Project): leave bottom, enter top
+      x1 = ra.left + ra.width/2 - base.left; y1 = ra.bottom - base.top;
+      x2 = rb.left + rb.width/2 - base.left; y2 = rb.top - base.top;
+      labelX = x2; labelY = y2 - 34;             // open space just above the destination card
+    } else if(rb.left >= ra.right - 4){          // target to the right
+      x1 = ra.right - base.left; y1 = ra.top + ra.height/2 - base.top;
+      x2 = rb.left - base.left;  y2 = rb.top + rb.height/2 - base.top;
+      labelX = x1 + 0.62*(x2-x1); labelY = y1 + 0.62*(y2-y1) - 8;  // gutter before the card, never under it
+    } else {
+      x1 = ra.left - base.left; y1 = ra.top + ra.height/2 - base.top;
+      x2 = rb.right - base.left; y2 = rb.top + rb.height/2 - base.top;
+      labelX = (x1+x2)/2; labelY = (y1+y2)/2 - 8;
+    }
+    const dx = Math.max(30, Math.abs(x2-x1)/2);
+    const d = below
+      ? `M ${x1} ${y1} C ${x1} ${y1+110}, ${x2} ${y2-110}, ${x2} ${y2}`
+      : `M ${x1} ${y1} C ${x1+dx} ${y1}, ${x2-dx} ${y2}, ${x2} ${y2}`;
+    const p = document.createElementNS('http://www.w3.org/2000/svg','path');
+    p.setAttribute('d', d);
+    p.setAttribute('fill','none');
+    p.setAttribute('stroke', COLORS[e.kind]);
+    p.setAttribute('stroke-width', e.kind==='grey' ? '1.8' : '2.2');
+    p.setAttribute('marker-end', `url(#ah-${e.kind})`);
+    svg.appendChild(p);
+    if(e.label){
+      const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+      t.setAttribute('x', labelX); t.setAttribute('y', labelY);
+      t.setAttribute('text-anchor','middle');
+      t.setAttribute('font-size','11');
+      t.setAttribute('font-weight','650');
+      t.setAttribute('fill', COLORS[e.kind]);
+      t.setAttribute('class','num');
+      t.setAttribute('paint-order','stroke');
+      t.setAttribute('stroke','#FBFCFD');
+      t.setAttribute('stroke-width','4');
+      t.textContent = e.label;
+      svg.appendChild(t);
+    }
+  }
+}
+window.addEventListener('resize', drawEdges);
+requestAnimationFrame(drawEdges);
+</script>
+</body>
+</html>

@@ -4,6 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import AllProjectsMoneyFlowPage from "./page";
 import type { ProjectFlowCanvasProps } from "./ProjectFlowCanvas";
+import type { FullFlowCanvasProps } from "./FullFlowCanvas";
 
 /**
  * Mocks `ProjectFlowCanvas` entirely -- mirrors `structure/[projectId]/
@@ -27,6 +28,22 @@ vi.mock("./ProjectFlowCanvas", () => ({
             select-{project.id}
           </button>
         ))}
+      </div>
+    );
+  },
+}));
+
+// Same rationale as the `ProjectFlowCanvas` mock above -- `FullFlowCanvas`
+// mounts `@xyflow/react` too. `full-flow-layout.test.ts` covers the real
+// node/edge transform; this page's own tab/lazy-fetch logic is what's
+// tested here.
+let lastFullFlowProps: FullFlowCanvasProps | null = null;
+vi.mock("./FullFlowCanvas", () => ({
+  FullFlowCanvas: (props: FullFlowCanvasProps) => {
+    lastFullFlowProps = props;
+    return (
+      <div data-testid="full-flow-canvas">
+        <p>full-flow-projects:{props.projects.map((project) => project.projectId).join(",")}</p>
       </div>
     );
   },
@@ -267,6 +284,106 @@ describe("AllProjectsMoneyFlowPage (item 3: All-Projects Money Flow)", () => {
       await waitFor(() => expect(screen.getByTestId("project-flow-canvas")).toBeInTheDocument());
 
       expect(screen.queryByLabelText("Search Projects")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Full Flow tab (2026-09-29 founder request -- EXPERIENCE.md 'Money Flow tabs'/'Full Flow tree')", () => {
+    const TREE = {
+      scope: { type: "project" },
+      partners: [
+        {
+          type: "partner",
+          partnerId: "a",
+          name: "Partner A",
+          sharePercent: "50.0000",
+          actualAmount: "500000.00",
+          totalIn: "500000.00",
+          totalOut: "0.00",
+          subPartners: [],
+        },
+      ],
+      soloSubPartner: null,
+    };
+
+    function mockTwoProjectsLoaded() {
+      listMyProjects.mockResolvedValue([
+        { id: "p1", name: "Sunrise Towers" },
+        { id: "p2", name: "Lakeview" },
+      ]);
+      listAvailableBalances.mockResolvedValue({ partners: [] });
+      listMoneyMovements.mockResolvedValue({ moneyMovements: [] });
+    }
+
+    it("defaults to the Projects tab, fetching NOTHING for Full Flow until that tab is first activated; then one ownership-structure call per Project, passed through with each Project's own balance", async () => {
+      mockTwoProjectsLoaded();
+      getOwnershipStructure.mockImplementation((projectId: string) =>
+        Promise.resolve({ projectId, projectName: projectId === "p1" ? "Sunrise Towers" : "Lakeview", tree: TREE, moneyFlowEdges: [] }),
+      );
+
+      render(<AllProjectsMoneyFlowPage />);
+      await waitFor(() => expect(screen.getByTestId("project-flow-canvas")).toBeInTheDocument());
+      // Owner path: movements list succeeded, so nothing has needed the
+      // ownership-structure endpoint yet -- the Full Flow tab hasn't either.
+      expect(getOwnershipStructure).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole("button", { name: "Full Flow" }));
+
+      await waitFor(() => expect(screen.getByTestId("full-flow-canvas")).toBeInTheDocument());
+      expect(screen.queryByTestId("project-flow-canvas")).not.toBeInTheDocument();
+      expect(getOwnershipStructure).toHaveBeenCalledTimes(2);
+      expect(lastFullFlowProps?.projects).toEqual([
+        expect.objectContaining({ projectId: "p1", projectName: "Sunrise Towers", availableBalance: "0.00", tree: TREE }),
+        expect.objectContaining({ projectId: "p2", projectName: "Lakeview", availableBalance: "0.00", tree: TREE }),
+      ]);
+
+      // Switching away and back never refetches -- the data is session-cached.
+      fireEvent.click(screen.getByRole("button", { name: "Projects" }));
+      await waitFor(() => expect(screen.getByTestId("project-flow-canvas")).toBeInTheDocument());
+      fireEvent.click(screen.getByRole("button", { name: "Full Flow" }));
+      await waitFor(() => expect(screen.getByTestId("full-flow-canvas")).toBeInTheDocument());
+      expect(getOwnershipStructure).toHaveBeenCalledTimes(2);
+    });
+
+    it("a single Project's ownership-structure fetch failing degrades to a bare Project card (empty tree), never a whole-tab error", async () => {
+      mockTwoProjectsLoaded();
+      getOwnershipStructure.mockImplementation((projectId: string) =>
+        projectId === "p1"
+          ? Promise.resolve({ projectId, projectName: "Sunrise Towers", tree: TREE, moneyFlowEdges: [] })
+          : Promise.reject(new Error("Forbidden")),
+      );
+
+      render(<AllProjectsMoneyFlowPage />);
+      await waitFor(() => expect(screen.getByTestId("project-flow-canvas")).toBeInTheDocument());
+      fireEvent.click(screen.getByRole("button", { name: "Full Flow" }));
+
+      await waitFor(() => expect(screen.getByTestId("full-flow-canvas")).toBeInTheDocument());
+      expect(lastFullFlowProps?.projects).toEqual([
+        expect.objectContaining({ projectId: "p1", tree: TREE }),
+        expect.objectContaining({
+          projectId: "p2",
+          tree: { scope: { type: "project" }, partners: [], soloSubPartner: null },
+          moneyFlowEdges: [],
+        }),
+      ]);
+    });
+
+    it("the Project name search narrows the Full Flow tab's blocks the same way it narrows the Projects tab", async () => {
+      mockTwoProjectsLoaded();
+      getOwnershipStructure.mockImplementation((projectId: string) =>
+        Promise.resolve({ projectId, projectName: projectId === "p1" ? "Sunrise Towers" : "Lakeview", tree: TREE, moneyFlowEdges: [] }),
+      );
+
+      render(<AllProjectsMoneyFlowPage />);
+      await waitFor(() => expect(screen.getByTestId("project-flow-canvas")).toBeInTheDocument());
+      fireEvent.click(screen.getByRole("button", { name: "Full Flow" }));
+      await waitFor(() => expect(screen.getByTestId("full-flow-canvas")).toBeInTheDocument());
+
+      fireEvent.change(screen.getByLabelText("Search Projects"), { target: { value: "lake" } });
+      await waitFor(() => expect(lastFullFlowProps?.projects.map((p) => p.projectId)).toEqual(["p2"]));
+
+      fireEvent.change(screen.getByLabelText("Search Projects"), { target: { value: "nonexistent" } });
+      await waitFor(() => expect(screen.getByText("No Projects match your search")).toBeInTheDocument());
+      expect(screen.queryByTestId("full-flow-canvas")).not.toBeInTheDocument();
     });
   });
 });

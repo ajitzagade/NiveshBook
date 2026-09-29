@@ -2,7 +2,7 @@
 name: NiveshBook
 description: Plain-English system of record for partnership investment money. Reconciled against a founder-provided screen-mockup artifact (imports/founder-mockup.html, 11 screens) -- tokens below are sourced from that mockup's own CSS custom properties, not invented. Expanded in mockups/all-screens-demo.html to all 14 screens (adds Users, Permissions, Audit History, plus a Trail Quick View), same tokens, for stakeholder demo purposes. shadcn/ui supplies interactive primitives (Dialog, Popover, Sheet, Combobox) the static mockup doesn't demonstrate; those inherit shadcn defaults except where noted. Tailwind CSS + Next.js 16 + React 19.
 status: draft
-updated: 2026-09-23
+updated: 2026-09-29
 colors:
   # Sourced verbatim from imports/founder-mockup.html :root. Light mode only --
   # the mockup has no dark-mode variant; dark values are `[ASSUMPTION]` extrapolations, not confirmed.
@@ -116,6 +116,22 @@ components:
     dot-size: '14px'
     connector: '2px solid {colors.border}'
     # dot color = the transaction/movement type at that node, not a fixed color
+  flow-tree-card:
+    # Full Flow tab on All-Projects Money Flow (2026-09-29). Layout adopted from
+    # founder reference screenshots (imports/ref-*-2026-09-29.png, dark-themed);
+    # palette stays NiveshBook light tokens, same precedent as trail-branch.
+    background: '{colors.surface}'
+    border: '1px solid {colors.border}'
+    left-border: '3px solid — accent (Project) / info (Partner) / ink-faint (Sub-partner) / violet (external destination, dashed card)'
+    radius: '{rounded.card}'
+    shadow: '{components.stat-card.shadow}'
+    kicker: '11.6px, weight 600, ink-faint, uppercase (role + share %)'
+    figures: '12.6px ink-soft, amounts in ink weight 650, tabular-nums'
+  flow-edge:
+    ownership: '1.8px solid #CBD5E1, arrowhead, no label'
+    cross-project: '2.2px solid {colors.info}, arrowhead + ₹-amount label'
+    person-or-balance: '2.2px solid {colors.violet}, arrowhead + ₹-amount label'
+    label: '11px weight 650, edge color, surface-colored halo stroke so it stays legible over lines'
   trail-branch:
     # Horizontal alternate to trail-node, added for the "Trail Quick View" toggle
     # -- same trail data, laid out as branching boxes + connector lines instead
@@ -223,6 +239,7 @@ Two radii cover the whole surface: `{rounded.card}` (14px) for cards, stat tiles
 - **Adjust person card** — name + one or two label/value lines + a resolution chip (`success` "Reduce by ₹X" / `danger` "Add ₹X" / `violet` "Keep for Later ₹X"), grouped in an Investment column and a Withdrawal column side by side, never merged (PRD: adjustments are independent, never netted).
 - **Trail (vertical)** — a left-bordered vertical timeline, each node a small colored dot (`{colors}` per the node's transaction type, not a fixed color) + a what/meta/amount row. Paired with a **trace banner** above it (muted `surface-alt` bar showing "Trace ID: X" + an `info`-chip link) when viewing a specific money trail. This is the default/primary trail pattern.
 - **Trail Quick View (horizontal branching)** — an alternate, expanded rendering of the same trail data as boxes connected by lines, arranged left-to-right in generations (origin → withdrawal → its direct destinations → any of those destinations' own further splits), so a viewer sees the branching shape at a glance instead of reading a flat chronological list. Each box uses `{components.trail-branch}` — white card, `{rounded.card}`, a 3px left border colored per `{colors}` for that node's transaction type (same color mapping as the vertical trail's dots). Toggled via the existing "Trail Quick View" control next to Money History's trail (`DESIGN.md.Do's and Don'ts`: still one hero visualization per screen — this replaces the vertical trail in place when active, it doesn't add a second one alongside it).
+- **Flow tree card + flow edges** (added 2026-09-29, Full Flow tab on All-Projects Money Flow) — `{components.flow-tree-card}`: a white card with a 3px left border colored by node kind (`accent` Project / `info` Partner / `ink-faint` Sub-partner; an external destination — person, Available Balance — is a dashed `surface-alt` card with a `violet` left border, mirroring the per-Project canvas's external-node treatment). Kicker line (role + share %) over name over ₹ In · ₹ Out figures, all tabular-nums. Connected by `{components.flow-edge}` per-edge curved SVG connectors with arrowheads: grey ownership lines, `info` teal for money moved to another Project, `violet` for person/Available Balance — money edges always carry their ₹ label. Layout adopted from founder reference screenshots (`imports/ref-ownership-trees-2026-09-29.png`, `imports/ref-withdrawal-tree-2026-09-29.png`); those are dark-themed — the palette here stays NiveshBook's light tokens, same layout-only precedent as Trail Quick View. Mockup: `mockups/money-flow-full-tab.html`.
 - **Report tile** — colored icon badge (30px, radius `el`) + name + one-line description, in the 3-up report grid.
 - **Button** — `primary` (accent fill, white text) and `ghost` (white fill, border, `ink-soft` text) only; both `{rounded.el}`, `11px 18px` padding (corrected 2026-09-24 from `9px 15px` — see `{components.button-primary}`), weight 650. Every button carries a leading `lucide-react` icon (2026-09-24, see Brand & Style's "Icons" note and `{components.button-primary.icon}`) — never text-only, never a `+`/`←` literal character.
 - **Nav badge** — 22px square, `{rounded.el}`, colored per the mapping in frontmatter — 5 of 9 items get a semantic color, the rest (Home, Adjust Next Time, Money History, Reports) are neutral slate `#475569`. Real build uses `lucide-react` icons at **14px** (corrected 2026-09-24 from an unintentional 12px) inside the fixed 22px badge, `12px` gap to the label, `44-46px` nav-item row height (`{components.nav-item}`) — covers all 9 semantically: Home, LayoutGrid, Percent, Plus, Minus, Wallet, RotateCcw, History, BarChart3. Label is `ink`/semibold when enabled, `accent-strong` on `accent-soft` when the current route matches it (corrected 2026-09-24 — shipped too light, and selection never actually rendered because `active` was never wired to the route).

@@ -1,20 +1,42 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Network, Search } from "lucide-react";
-import { Card, EmptyState, Input, PageHeader } from "@niveshbook/ui";
+import { Button, Card, EmptyState, Input, PageHeader } from "@niveshbook/ui";
 import { listMyProjects } from "@/lib/projects";
 import { listAvailableBalances } from "@/lib/available-balances";
 import { listMoneyMovements } from "@/lib/money-movements";
 import { getOwnershipStructure } from "@/lib/ownership-structure";
 import { ProjectFlowCanvas } from "./ProjectFlowCanvas";
 import type { ProjectFlowMovementInput, ProjectFlowNodeInput } from "./project-flow-layout";
+import { FullFlowCanvas } from "./FullFlowCanvas";
+import type { FullFlowProjectInput } from "./full-flow-layout";
 
 type LoadState =
   | { status: "loading" }
   | { status: "error"; message: string }
   | { status: "loaded"; projects: ProjectFlowNodeInput[]; movements: ProjectFlowMovementInput[] };
+
+/**
+ * The Full Flow tab's own lazily-fetched data (2026-09-29 founder request;
+ * UX spec: EXPERIENCE.md "Money Flow tabs" / "Full Flow tree") -- `idle`
+ * until the tab is first activated, so the default Projects tab costs
+ * nothing extra and existing behavior is byte-for-byte unchanged. One
+ * `getOwnershipStructure` call per visible Project (the same self-access-
+ * scoped endpoint this page's movements fallback already uses, so a
+ * Partner/Sub-partner session sees exactly their own slice per Project,
+ * never a sibling's -- no new authorization surface). A single Project's
+ * fetch failing degrades to a bare Project card (empty tree), never a
+ * whole-tab error.
+ */
+type FullFlowState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "loaded"; inputs: FullFlowProjectInput[] };
+
+const EMPTY_TREE: FullFlowProjectInput["tree"] = { scope: { type: "project" }, partners: [], soloSubPartner: null };
 
 /**
  * All-Projects Money Flow (item 3's redesign: "View Structure" -> "View
@@ -82,6 +104,24 @@ export default function AllProjectsMoneyFlowPage() {
   // "find the Project I mean" problem the sidebar's own Project switcher
   // already solves the same way.
   const [search, setSearch] = useState("");
+  // "projects" (the existing canvas) is the default -- the new Full Flow
+  // tab renders the per-Partner tree view; switching is pure client state,
+  // never a route change (EXPERIENCE.md, Money Flow tabs).
+  const [tab, setTab] = useState<"projects" | "full_flow">("projects");
+  const [fullFlow, setFullFlow] = useState<FullFlowState>({ status: "idle" });
+  // See the Full Flow fetch effect below for why these are refs, not deps.
+  const fullFlowStartedRef = useRef(false);
+  const unmountedRef = useRef(false);
+  useEffect(() => {
+    // Reset on (re)mount, not just initialization -- React StrictMode's dev
+    // double-invocation runs this cleanup once on the simulated unmount,
+    // and without the reset the ref would stay `true` for the component's
+    // whole real life, silently discarding the Full Flow fetch's result.
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -169,11 +209,91 @@ export default function AllProjectsMoneyFlowPage() {
     return state.projects.filter((project) => project.name.toLowerCase().includes(trimmed));
   }, [state, search]);
 
+  // Full Flow data, fetched once, on first activation of that tab only --
+  // see `FullFlowState`'s own doc comment. Per-Project trees come from the
+  // same already-role-scoped `getOwnershipStructure` endpoint the movements
+  // fallback above uses; a single Project's failure degrades to a bare
+  // Project card, never a whole-tab error.
+  // Started-ref rather than a `fullFlow.status` dependency: with the status
+  // in this effect's own deps, its `setFullFlow({status:"loading"})` would
+  // re-run the effect and the cleanup would cancel the very fetch it just
+  // started. The fetch is deliberately NOT cancelled on a tab switch either
+  // (it's tab-agnostic session data -- finishing it while the Projects tab
+  // is showing just means Full Flow is ready on return); only a real
+  // unmount stops the state write.
+  useEffect(() => {
+    if (tab !== "full_flow" || state.status !== "loaded" || fullFlowStartedRef.current) {
+      return;
+    }
+    fullFlowStartedRef.current = true;
+    void (async () => {
+      setFullFlow({ status: "loading" });
+      try {
+        const inputs: FullFlowProjectInput[] = await Promise.all(
+          state.projects.map(async (project) => {
+            try {
+              const { tree, moneyFlowEdges } = await getOwnershipStructure(project.id);
+              return {
+                projectId: project.id,
+                projectName: project.name,
+                availableBalance: project.availableBalance,
+                tree,
+                moneyFlowEdges,
+              };
+            } catch {
+              return {
+                projectId: project.id,
+                projectName: project.name,
+                availableBalance: project.availableBalance,
+                tree: EMPTY_TREE,
+                moneyFlowEdges: [],
+              };
+            }
+          }),
+        );
+        if (!unmountedRef.current) {
+          setFullFlow({ status: "loaded", inputs });
+        }
+      } catch (error) {
+        if (!unmountedRef.current) {
+          setFullFlow({
+            status: "error",
+            message: error instanceof Error ? error.message : "Something went wrong.",
+          });
+        }
+      }
+    })();
+  }, [tab, state]);
+
+  const filteredFullFlowInputs = useMemo(() => {
+    if (fullFlow.status !== "loaded") return [];
+    const trimmed = search.trim().toLowerCase();
+    if (!trimmed) return fullFlow.inputs;
+    // Same name filter as the Projects tab. A cross-Project edge whose
+    // destination is filtered out of view simply falls back to a dashed
+    // external reference card (full-flow-layout.ts resolves destinations
+    // against this same filtered set), so the link is never silently lost.
+    return fullFlow.inputs.filter((input) => input.projectName.toLowerCase().includes(trimmed));
+  }, [fullFlow, search]);
+
   return (
     <div>
       <PageHeader
         title="All Projects — Money Flow"
         description="Every Project you can see, with any real money that's moved between them. Select a Project for its own full Money Flow."
+        action={
+          // The per-Project screen's exact view-mode Button pattern (violet
+          // tone, primary-when-active) doing tab duty -- EXPERIENCE.md's
+          // "Money Flow tabs": no new tab component invented.
+          <div className="flex flex-wrap items-center gap-2.5">
+            <Button variant={tab === "projects" ? "primary" : "ghost"} tone="violet" onClick={() => setTab("projects")}>
+              Projects
+            </Button>
+            <Button variant={tab === "full_flow" ? "primary" : "ghost"} tone="violet" onClick={() => setTab("full_flow")}>
+              Full Flow
+            </Button>
+          </div>
+        }
       />
 
       <Card>
@@ -206,18 +326,54 @@ export default function AllProjectsMoneyFlowPage() {
                 />
               </div>
             ) : null}
-            {filteredProjects.length === 0 ? (
+            {tab === "projects" ? (
+              filteredProjects.length === 0 ? (
+                <EmptyState
+                  icon={<Search size={22} />}
+                  title="No Projects match your search"
+                  description="Try a different name, or clear the search to see every Project again."
+                />
+              ) : (
+                <ProjectFlowCanvas
+                  projects={filteredProjects}
+                  movements={state.movements}
+                  onSelectProject={(projectId) => router.push(`/structure/${projectId}`)}
+                />
+              )
+            ) : fullFlow.status === "loading" || fullFlow.status === "idle" ? (
+              <p className="text-[13.4px] text-ink-soft">Loading Full Flow…</p>
+            ) : fullFlow.status === "error" ? (
+              <p role="alert" className="text-[13.4px] text-danger">
+                {fullFlow.message}
+              </p>
+            ) : filteredFullFlowInputs.length === 0 ? (
               <EmptyState
                 icon={<Search size={22} />}
                 title="No Projects match your search"
                 description="Try a different name, or clear the search to see every Project again."
               />
             ) : (
-              <ProjectFlowCanvas
-                projects={filteredProjects}
-                movements={state.movements}
-                onSelectProject={(projectId) => router.push(`/structure/${projectId}`)}
-              />
+              <>
+                {/* Legend -- always visible above the canvas (EXPERIENCE.md, Full Flow tree). */}
+                <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-ink-soft">
+                  <span className="flex items-center gap-1.5">
+                    <span aria-hidden className="inline-block h-0 w-4 border-t-2 border-ink-faint opacity-60" /> ownership
+                    (share)
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span aria-hidden className="inline-block h-0 w-4 border-t-2 border-info" /> moved to another Project
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span aria-hidden className="inline-block h-0 w-4 border-t-2 border-violet" /> to a person / Available
+                    Balance
+                  </span>
+                  <span className="text-ink-faint">Amounts are all-time totals for each person on that Project.</span>
+                </div>
+                <FullFlowCanvas
+                  projects={filteredFullFlowInputs}
+                  onSelectProject={(projectId) => router.push(`/structure/${projectId}`)}
+                />
+              </>
             )}
           </>
         )}
