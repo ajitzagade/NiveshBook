@@ -6,7 +6,7 @@ export interface ActionTileProps {
   icon: ReactNode;
   label: string;
   tone: Tone;
-  /** Renders as a plain `<a>` when set (mirrors `NavItem`'s framework-agnostic href convention) -- static, non-interactive tile when omitted (e.g. Home's "Available Balance" tile, which has no destination page). */
+  /** Renders as a plain `<a>` when set (mirrors `NavItem`'s framework-agnostic href convention) -- static, non-interactive tile when omitted. */
   href?: string;
   className?: string;
 }

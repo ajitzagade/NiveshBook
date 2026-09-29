@@ -596,7 +596,7 @@ export default async function DashboardHomePage() {
         <ActionTile icon={<ArrowDownCircle size={18} />} label="Add Money" tone="success" href="/projects" />
         <ActionTile icon={<ArrowUpCircle size={18} />} label="Withdraw Money" tone="accent" href="/projects" />
         <ActionTile icon={<FolderPlus size={18} />} label="New Project" tone="neutral" href="/projects/new" />
-        <ActionTile icon={<Wallet size={18} />} label="Available Balance" tone="amber" />
+        <ActionTile icon={<Wallet size={18} />} label="Available Balance" tone="amber" href="/projects" />
       </div>
 
       <div className="mb-5 grid grid-cols-5 gap-3 max-[900px]:grid-cols-3 max-[560px]:grid-cols-2 max-[380px]:grid-cols-1">
