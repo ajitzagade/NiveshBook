@@ -11,6 +11,17 @@ function childrenOf(element: ReactElement): ReactNode[] {
   return Array.isArray(children) ? children : [children];
 }
 
+/**
+ * The header row always has leading chevron/avatar slots (2026-09-29) --
+ * each renders as a positional `null` in the children array when absent
+ * (`onToggleCollapse`/`avatarInitials` not passed), same as any other
+ * conditionally-`null` JSX child. Filtering them out keeps lookups keyed
+ * on "the next real element" rather than a brittle, reorder-sensitive index.
+ */
+function visibleChildrenOf(element: ReactElement): ReactNode[] {
+  return childrenOf(element).filter((child) => child !== null && child !== undefined && child !== false);
+}
+
 /** The `.nb-person-nest` wrapper element among the card's children, if any. */
 function nestOf(element: ReactElement): ReactElement | undefined {
   return childrenOf(element).find(
@@ -86,7 +97,7 @@ describe("PersonCard accessibility (review fix, 2026-09-26)", () => {
   it("a partner card carries an sr-only 'Partner' label as a SIBLING of the (unmodified) visible name span", () => {
     const el = PersonCard({ role: "partner", name: "Asha" }) as ReactElement;
     const header = childrenOf(el)[0] as ReactElement;
-    const headerChildren = childrenOf(header);
+    const headerChildren = visibleChildrenOf(header);
     const nameSpan = headerChildren[0] as ReactElement;
     const srLabel = headerChildren.find(
       (child): child is ReactElement =>
@@ -124,18 +135,20 @@ describe("PersonCard className (review fix, 2026-09-26)", () => {
   });
 });
 
-describe("PersonCard collapse affordance (2026-09-29)", () => {
-  it("without onToggleCollapse, name stays a plain non-interactive span (every pre-existing caller is unaffected)", () => {
+describe("PersonCard collapse affordance (2026-09-29, extended the same day to make the whole header clickable)", () => {
+  it("without onToggleCollapse, the header stays a plain non-interactive div and name a plain span (every pre-existing caller is unaffected)", () => {
     const el = PersonCard({ role: "partner", name: "A", children: "body", nested: "subs" }) as ReactElement;
     const header = childrenOf(el)[0] as ReactElement;
-    const nameNode = childrenOf(header)[0] as ReactElement;
+    expect((header.props as { role?: string }).role).toBeUndefined();
+    expect((header.props as { onClick?: unknown }).onClick).toBeUndefined();
+    const nameNode = visibleChildrenOf(header)[0] as ReactElement;
     expect(nameNode.type).toBe("span");
     // children/nested render unconditionally when there's no collapse control at all.
     expect(childrenOf(el)).toContain("body");
     expect(nestOf(el)).toBeDefined();
   });
 
-  it("with onToggleCollapse and collapsed=true, name becomes a button showing a collapsed chevron, and children/nested are hidden", () => {
+  it("with onToggleCollapse and collapsed=true, the whole header becomes a clickable/keyboard-operable control showing a collapsed chevron, and children/nested are hidden", () => {
     const onToggleCollapse = () => {};
     const el = PersonCard({
       role: "partner",
@@ -146,16 +159,18 @@ describe("PersonCard collapse affordance (2026-09-29)", () => {
       nested: "subs",
     }) as ReactElement;
     const header = childrenOf(el)[0] as ReactElement;
-    const button = childrenOf(header)[0] as ReactElement;
-    expect(button.type).toBe("button");
-    expect((button.props as { "aria-expanded": boolean })["aria-expanded"]).toBe(false);
-    expect((button.props as { onClick: unknown }).onClick).toBe(onToggleCollapse);
+    expect((header.props as { role?: string }).role).toBe("button");
+    expect((header.props as { tabIndex?: number }).tabIndex).toBe(0);
+    expect((header.props as { "aria-expanded": boolean })["aria-expanded"]).toBe(false);
+    expect((header.props as { onClick: unknown }).onClick).toBe(onToggleCollapse);
+    const chevron = visibleChildrenOf(header)[0] as ReactElement;
+    expect((chevron.type as { render?: { name?: string } }).render?.name).toBe("ChevronRight");
 
     expect(childrenOf(el)).not.toContain("body");
     expect(nestOf(el)).toBeUndefined();
   });
 
-  it("with onToggleCollapse and collapsed=false, children/nested render, aria-expanded is true", () => {
+  it("with onToggleCollapse and collapsed=false, children/nested render, aria-expanded is true, chevron points down", () => {
     const el = PersonCard({
       role: "partner",
       name: "A",
@@ -165,14 +180,15 @@ describe("PersonCard collapse affordance (2026-09-29)", () => {
       nested: "subs",
     }) as ReactElement;
     const header = childrenOf(el)[0] as ReactElement;
-    const button = childrenOf(header)[0] as ReactElement;
-    expect((button.props as { "aria-expanded": boolean })["aria-expanded"]).toBe(true);
+    expect((header.props as { "aria-expanded": boolean })["aria-expanded"]).toBe(true);
+    const chevron = visibleChildrenOf(header)[0] as ReactElement;
+    expect((chevron.type as { render?: { name?: string } }).render?.name).toBe("ChevronDown");
 
     expect(childrenOf(el)).toContain("body");
     expect(nestOf(el)).toBeDefined();
   });
 
-  it("the name span's own text is untouched inside the button -- just the plain name, nothing appended", () => {
+  it("the name span's own text is untouched -- just the plain name, nothing appended", () => {
     const el = PersonCard({
       role: "partner",
       name: "Asha",
@@ -180,10 +196,30 @@ describe("PersonCard collapse affordance (2026-09-29)", () => {
       onToggleCollapse: () => {},
     }) as ReactElement;
     const header = childrenOf(el)[0] as ReactElement;
-    const button = childrenOf(header)[0] as ReactElement;
-    const buttonChildren = childrenOf(button) as ReactElement[];
-    const nameSpan = buttonChildren[buttonChildren.length - 1];
+    // With onToggleCollapse but no avatarInitials: [chevron, name span, sr-only label].
+    const nameSpan = visibleChildrenOf(header)[1] as ReactElement;
     expect(childrenOf(nameSpan)).toEqual(["Asha"]);
+  });
+
+  it("avatarInitials renders a role-tinted initials circle before the name", () => {
+    const partnerEl = PersonCard({ role: "partner", name: "Asha", avatarInitials: "AK" }) as ReactElement;
+    const partnerHeader = childrenOf(partnerEl)[0] as ReactElement;
+    const partnerAvatar = visibleChildrenOf(partnerHeader)[0] as ReactElement;
+    expect(childrenOf(partnerAvatar)).toEqual(["AK"]);
+    expect(classNameOf(partnerAvatar)).toContain("bg-info");
+
+    const subEl = PersonCard({ role: "sub_partner", name: "Bala", avatarInitials: "B" }) as ReactElement;
+    const subHeader = childrenOf(subEl)[0] as ReactElement;
+    const subAvatar = visibleChildrenOf(subHeader)[0] as ReactElement;
+    expect(classNameOf(subAvatar)).toContain("bg-violet");
+  });
+
+  it("omits the avatar circle entirely when avatarInitials is omitted", () => {
+    const el = PersonCard({ role: "partner", name: "Asha" }) as ReactElement;
+    const header = childrenOf(el)[0] as ReactElement;
+    // Only the name span itself -- no avatar circle rendered.
+    const nameNode = visibleChildrenOf(header)[0] as ReactElement;
+    expect(childrenOf(nameNode)).toEqual(["Asha"]);
   });
 
   it("summary renders regardless of collapsed state", () => {

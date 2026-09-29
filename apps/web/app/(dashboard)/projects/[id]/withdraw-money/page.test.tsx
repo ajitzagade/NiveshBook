@@ -131,7 +131,7 @@ const EMPTY_ADJUSTMENTS_RESPONSE: WithdrawalAdjustmentsResponse = { partners: []
 
 const PARTNER_WITH_SUBS: PartnerCanTakeWithEffective = {
   partnerId: "a",
-  name: "A",
+  name: "Partner A",
   sharePercent: "50" as Percent,
   canTake: "250000" as Money,
   effectiveCanTake: "250000" as Money,
@@ -156,7 +156,7 @@ const PARTNER_WITH_SUBS: PartnerCanTakeWithEffective = {
 
 const PARTNER_NO_SUBS: PartnerCanTakeWithEffective = {
   partnerId: "b",
-  name: "B",
+  name: "Partner B",
   sharePercent: "50" as Percent,
   canTake: "250000" as Money,
   effectiveCanTake: "250000" as Money,
@@ -325,8 +325,8 @@ describe("WithdrawMoneyPage (Story 4.1)", () => {
 
     render(<WithdrawMoneyPage />);
 
-    await screen.findByText("A");
-    expect(screen.getByText("B")).toBeInTheDocument();
+    await screen.findByText("Partner A");
+    expect(screen.getByText("Partner B")).toBeInTheDocument();
     // Sub-partner cards don't exist in the DOM until their parent Partner
     // is expanded (collapsed by default, 2026-09-29 feedback).
     expandAllPersonCards();
@@ -338,7 +338,7 @@ describe("WithdrawMoneyPage (Story 4.1)", () => {
     // each Sub-partner is now a violet-tinted card nested INSIDE its parent
     // Partner's teal-tinted card, behind the `.nb-person-nest` colored rail.
     // Containment + role tint, not an indent, carry the hierarchy.
-    const partnerCard = screen.getByText("A").closest(".nb-person-card") as HTMLElement;
+    const partnerCard = screen.getByText("Partner A").closest(".nb-person-card") as HTMLElement;
     const subCard = screen.getByText("Sub1").closest(".nb-person-card") as HTMLElement;
     expect(partnerCard.className).toContain("nb-person-card-partner");
     expect(subCard.className).toContain("nb-person-card-sub");
@@ -354,7 +354,7 @@ describe("WithdrawMoneyPage (Story 4.1)", () => {
 
     render(<WithdrawMoneyPage />);
 
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     expandAllPersonCards();
     const hint = findParagraphContaining("A's normal Can Take is");
     expect(hint).toHaveTextContent("Share 50% means if");
@@ -387,10 +387,12 @@ describe("WithdrawMoneyPage (Story 4.1)", () => {
     getCanTake.mockResolvedValue(CAN_TAKE_RESPONSE);
 
     render(<WithdrawMoneyPage />);
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
 
-    const partnerCard = screen.getByText("A").closest(".nb-person-card") as HTMLElement;
-    const nameButton = within(partnerCard).getByRole("button", { name: "A" });
+    const partnerCard = screen.getByText("Partner A").closest(".nb-person-card") as HTMLElement;
+    // The header's accessible name also includes the avatar circle's own
+    // initials text (2026-09-29) -- match by substring, not exact string.
+    const nameButton = within(partnerCard).getByRole("button", { name: /Partner A/ });
     expect(nameButton).toHaveAttribute("aria-expanded", "false");
     // Collapsed by default -- children (buttons, explanation) and nested
     // (Sub1/Sub2's own cards) aren't in the DOM at all yet.
@@ -418,7 +420,7 @@ function makePartnerAdjustment(
 ): PartnerWithdrawalAdjustment {
   return {
     partnerId: "a",
-    name: "A",
+    name: "Partner A",
     sharePercent: "50" as Percent,
     canTake: "250000" as Money,
     taken: "0" as Money,
@@ -452,7 +454,7 @@ describe("WithdrawMoneyPage -- Withdrawal Adjustment chip (Story 4.3)", () => {
       partners: [
         makePartnerAdjustment({
           partnerId: "b",
-          name: "B",
+          name: "Partner B",
           adjustmentType: "keep_for_later",
           adjustmentAmount: "90000" as Money,
         }),
@@ -461,7 +463,7 @@ describe("WithdrawMoneyPage -- Withdrawal Adjustment chip (Story 4.3)", () => {
 
     render(<WithdrawMoneyPage />);
 
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     const chip = (await screen.findByText("Keep for Later")).closest("span") as HTMLElement;
     // Scoped to the chip itself (not the page as a whole) -- Story 4.4's
     // separate Recommended Available Withdrawal line legitimately renders
@@ -477,7 +479,7 @@ describe("WithdrawMoneyPage -- Withdrawal Adjustment chip (Story 4.3)", () => {
       partners: [
         makePartnerAdjustment({
           partnerId: "b",
-          name: "B",
+          name: "Partner B",
           adjustmentType: "extra_taken",
           adjustmentAmount: "150000" as Money,
         }),
@@ -486,7 +488,7 @@ describe("WithdrawMoneyPage -- Withdrawal Adjustment chip (Story 4.3)", () => {
 
     render(<WithdrawMoneyPage />);
 
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     expect(await screen.findByText("Extra Taken")).toBeInTheDocument();
     expect(screen.getByText("₹1,50,000")).toBeInTheDocument();
   });
@@ -497,7 +499,7 @@ describe("WithdrawMoneyPage -- Withdrawal Adjustment chip (Story 4.3)", () => {
       partners: [
         makePartnerAdjustment({
           partnerId: "b",
-          name: "B",
+          name: "Partner B",
           adjustmentType: "none",
           adjustmentAmount: "0" as Money,
         }),
@@ -506,7 +508,7 @@ describe("WithdrawMoneyPage -- Withdrawal Adjustment chip (Story 4.3)", () => {
 
     render(<WithdrawMoneyPage />);
 
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     expect(await screen.findByText("No Adjustment")).toBeInTheDocument();
   });
 
@@ -516,7 +518,7 @@ describe("WithdrawMoneyPage -- Withdrawal Adjustment chip (Story 4.3)", () => {
 
     render(<WithdrawMoneyPage />);
 
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     expect(screen.queryByText("Keep for Later")).not.toBeInTheDocument();
     expect(screen.queryByText("Extra Taken")).not.toBeInTheDocument();
     expect(screen.queryByText("No Adjustment")).not.toBeInTheDocument();
@@ -528,7 +530,7 @@ describe("WithdrawMoneyPage -- Withdrawal Adjustment chip (Story 4.3)", () => {
       partners: [
         makePartnerAdjustment({
           partnerId: "a",
-          name: "A",
+          name: "Partner A",
           subPartners: [
             {
               subPartnerId: "sub1",
@@ -555,7 +557,7 @@ describe("WithdrawMoneyPage -- Withdrawal Adjustment chip (Story 4.3)", () => {
 
     render(<WithdrawMoneyPage />);
 
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     // Sub-partner cards don't exist in the DOM until their parent Partner
     // is expanded (collapsed by default, 2026-09-29 feedback).
     expandAllPersonCards();
@@ -584,7 +586,7 @@ describe("WithdrawMoneyPage -- Withdrawal Adjustment chip (Story 4.3)", () => {
       partners: [
         makePartnerAdjustment({
           partnerId: "b",
-          name: "B",
+          name: "Partner B",
           canTake: "0" as Money,
           taken: "0" as Money,
           adjustmentType: "none",
@@ -595,7 +597,7 @@ describe("WithdrawMoneyPage -- Withdrawal Adjustment chip (Story 4.3)", () => {
 
     render(<WithdrawMoneyPage />);
 
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     const chip = (await screen.findByText("No Adjustment")).closest("span") as HTMLElement;
     // Scoped to the chip itself -- Story 4.4's separate Recommended Available
     // Withdrawal line legitimately renders "₹0" elsewhere on this row for
@@ -631,7 +633,7 @@ describe("WithdrawMoneyPage -- Recommended Available Withdrawal (Story 4.4)", ()
       partners: [
         makePartnerAdjustment({
           partnerId: "b",
-          name: "B",
+          name: "Partner B",
           adjustmentType: "keep_for_later",
           adjustmentAmount: "90000" as Money,
         }),
@@ -640,7 +642,7 @@ describe("WithdrawMoneyPage -- Recommended Available Withdrawal (Story 4.4)", ()
 
     render(<WithdrawMoneyPage />);
 
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     expect(await findParagraphContaining("Recommended Available Withdrawal:")).toHaveTextContent(
       "₹90,000",
     );
@@ -652,7 +654,7 @@ describe("WithdrawMoneyPage -- Recommended Available Withdrawal (Story 4.4)", ()
       partners: [
         makePartnerAdjustment({
           partnerId: "b",
-          name: "B",
+          name: "Partner B",
           adjustmentType: "extra_taken",
           adjustmentAmount: "150000" as Money,
         }),
@@ -661,7 +663,7 @@ describe("WithdrawMoneyPage -- Recommended Available Withdrawal (Story 4.4)", ()
 
     render(<WithdrawMoneyPage />);
 
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     expect(await findParagraphContaining("Recommended Available Withdrawal:")).toHaveTextContent("₹0");
   });
 
@@ -671,7 +673,7 @@ describe("WithdrawMoneyPage -- Recommended Available Withdrawal (Story 4.4)", ()
       partners: [
         makePartnerAdjustment({
           partnerId: "b",
-          name: "B",
+          name: "Partner B",
           adjustmentType: "none",
           adjustmentAmount: "0" as Money,
         }),
@@ -680,7 +682,7 @@ describe("WithdrawMoneyPage -- Recommended Available Withdrawal (Story 4.4)", ()
 
     render(<WithdrawMoneyPage />);
 
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     await screen.findByText("No Adjustment");
     expect(screen.queryByText(/Recommended Available Withdrawal/)).not.toBeInTheDocument();
   });
@@ -691,7 +693,7 @@ describe("WithdrawMoneyPage -- Recommended Available Withdrawal (Story 4.4)", ()
 
     render(<WithdrawMoneyPage />);
 
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     expect(screen.queryByText(/Recommended Available Withdrawal/)).not.toBeInTheDocument();
   });
 
@@ -701,7 +703,7 @@ describe("WithdrawMoneyPage -- Recommended Available Withdrawal (Story 4.4)", ()
       partners: [
         makePartnerAdjustment({
           partnerId: "a",
-          name: "A",
+          name: "Partner A",
           subPartners: [
             {
               subPartnerId: "sub1",
@@ -728,7 +730,7 @@ describe("WithdrawMoneyPage -- Recommended Available Withdrawal (Story 4.4)", ()
 
     render(<WithdrawMoneyPage />);
 
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     // Sub-partner cards don't exist in the DOM until their parent Partner
     // is expanded (collapsed by default, 2026-09-29 feedback).
     expandAllPersonCards();
@@ -759,7 +761,7 @@ async function renderAndReady() {
   const user = userEvent.setup();
   getCanTake.mockResolvedValue(CAN_TAKE_RESPONSE);
   render(<WithdrawMoneyPage />);
-  await screen.findByText("A");
+  await screen.findByText("Partner A");
   expandAllPersonCards();
   return user;
 }
@@ -810,7 +812,7 @@ describe("WithdrawMoneyPage -- recorded-withdrawals list persists across reload 
 
     render(<WithdrawMoneyPage />);
 
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     await waitFor(() => {
       expect(listWithdrawalTransactions).toHaveBeenCalledWith("project-1");
     });
@@ -840,7 +842,7 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     });
 
     render(<WithdrawMoneyPage />);
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     expandAllPersonCards();
     await screen.findByText("2026-10-05");
 
@@ -856,7 +858,7 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     });
 
     render(<WithdrawMoneyPage />);
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     expandAllPersonCards();
     await screen.findByText("2026-10-05");
 
@@ -880,7 +882,7 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     });
 
     render(<WithdrawMoneyPage />);
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     expandAllPersonCards();
     await screen.findAllByText("2026-10-05");
 
@@ -899,7 +901,7 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     const user = userEvent.setup();
 
     render(<WithdrawMoneyPage />);
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     expandAllPersonCards();
     await screen.findByText("2026-10-05");
     listWithdrawalTransactions.mockResolvedValueOnce({
@@ -940,7 +942,7 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     const user = userEvent.setup();
 
     render(<WithdrawMoneyPage />);
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     expandAllPersonCards();
     await screen.findByText("2026-10-05");
 
@@ -973,7 +975,7 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     const user = userEvent.setup();
 
     render(<WithdrawMoneyPage />);
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     expandAllPersonCards();
     await screen.findByText("2026-10-05");
     listWithdrawalTransactions.mockResolvedValueOnce({
@@ -1017,7 +1019,7 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     const user = userEvent.setup();
 
     render(<WithdrawMoneyPage />);
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     expandAllPersonCards();
     await screen.findByText("2026-10-05");
 
@@ -1039,7 +1041,7 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     const user = userEvent.setup();
 
     render(<WithdrawMoneyPage />);
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     expandAllPersonCards();
 
     // Record the withdrawal -- `submitWithdrawal` refreshes the
@@ -1113,7 +1115,7 @@ describe("WithdrawMoneyPage -- Record Withdrawal dialog (Story 4.2)", () => {
       partners: [
         makePartnerAdjustment({
           partnerId: "a",
-          name: "A",
+          name: "Partner A",
           adjustmentType: "keep_for_later",
           adjustmentAmount: "150000" as Money,
         }),
@@ -1258,10 +1260,10 @@ describe("WithdrawMoneyPage -- Authorize Extra Withdrawal confirmation dialog (S
     recordWithdrawalTransaction.mockResolvedValue(makeWithdrawalTransaction({ shareId: "b", amount: "300000" }));
     const user = userEvent.setup();
     render(<WithdrawMoneyPage />);
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     expandAllPersonCards();
 
-    const bCard = screen.getByText("B").closest(".nb-person-card") as HTMLElement;
+    const bCard = screen.getByText("Partner B").closest(".nb-person-card") as HTMLElement;
     await user.click(within(bCard).getByRole("button", { name: "Withdraw Money" }));
     // 300000 exceeds B's plain canTake (250000) but fits within their boosted effectiveCanTake (300000).
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "300000" } });
@@ -1286,10 +1288,10 @@ describe("WithdrawMoneyPage -- Authorize Extra Withdrawal confirmation dialog (S
     });
     const user = userEvent.setup();
     render(<WithdrawMoneyPage />);
-    await screen.findByText("A");
+    await screen.findByText("Partner A");
     expandAllPersonCards();
 
-    const bCard = screen.getByText("B").closest(".nb-person-card") as HTMLElement;
+    const bCard = screen.getByText("Partner B").closest(".nb-person-card") as HTMLElement;
     await user.click(within(bCard).getByRole("button", { name: "Withdraw Money" }));
     // 200000 is within B's plain canTake (250000) but exceeds their reduced effectiveCanTake (150000).
     fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "200000" } });
@@ -1922,10 +1924,10 @@ describe("WithdrawMoneyPage -- Distribute a Withdrawal (Withdrawal Flow redesign
     await user.click(screen.getByRole("button", { name: "Distribute a Withdrawal" }));
     await user.type(screen.getByLabelText("Total Withdrawal Amount"), "500000");
 
-    expect(screen.getByLabelText("Actual withdrawal (A)")).toHaveValue("125000.00");
+    expect(screen.getByLabelText("Actual withdrawal (Partner A)")).toHaveValue("125000.00");
     expect(screen.getByLabelText("Actual withdrawal (Sub1)")).toHaveValue("62500.00");
     expect(screen.getByLabelText("Actual withdrawal (Sub2)")).toHaveValue("62500.00");
-    expect(screen.getByLabelText("Actual withdrawal (B)")).toHaveValue("250000.00");
+    expect(screen.getByLabelText("Actual withdrawal (Partner B)")).toHaveValue("250000.00");
   });
 
   it("manually adjusting one row leaves the others at their own suggested amount, and shows the difference", async () => {
@@ -1934,12 +1936,12 @@ describe("WithdrawMoneyPage -- Distribute a Withdrawal (Withdrawal Flow redesign
     await user.click(screen.getByRole("button", { name: "Distribute a Withdrawal" }));
     await user.type(screen.getByLabelText("Total Withdrawal Amount"), "500000");
 
-    const aInput = screen.getByLabelText("Actual withdrawal (A)");
+    const aInput = screen.getByLabelText("Actual withdrawal (Partner A)");
     await user.clear(aInput);
     await user.type(aInput, "150000");
 
     expect(aInput).toHaveValue("150000");
-    expect(screen.getByLabelText("Actual withdrawal (B)")).toHaveValue("250000.00"); // untouched, still suggested
+    expect(screen.getByLabelText("Actual withdrawal (Partner B)")).toHaveValue("250000.00"); // untouched, still suggested
     expect(screen.getByText("+25000.00")).toBeInTheDocument(); // A's difference: 150000 - 125000
   });
 
@@ -1948,7 +1950,7 @@ describe("WithdrawMoneyPage -- Distribute a Withdrawal (Withdrawal Flow redesign
 
     await user.click(screen.getByRole("button", { name: "Distribute a Withdrawal" }));
     await user.type(screen.getByLabelText("Total Withdrawal Amount"), "500000");
-    const aInput = screen.getByLabelText("Actual withdrawal (A)");
+    const aInput = screen.getByLabelText("Actual withdrawal (Partner A)");
     await user.clear(aInput);
     await user.type(aInput, "150000"); // now sums to 525000, not 500000
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
@@ -1973,12 +1975,12 @@ describe("WithdrawMoneyPage -- Distribute a Withdrawal (Withdrawal Flow redesign
     // Only Partner A participates this round -- every other row's own
     // suggested share (proportional to the smaller 125000 total, so none of
     // them default to zero on their own) is manually zeroed out.
-    for (const name of ["Sub1", "Sub2", "B"]) {
+    for (const name of ["Sub1", "Sub2", "Partner B"]) {
       const input = screen.getByLabelText(`Actual withdrawal (${name})`);
       await user.clear(input);
       await user.type(input, "0");
     }
-    const aInput = screen.getByLabelText("Actual withdrawal (A)");
+    const aInput = screen.getByLabelText("Actual withdrawal (Partner A)");
     await user.clear(aInput);
     await user.type(aInput, "125000");
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
@@ -2032,10 +2034,10 @@ describe("WithdrawMoneyPage -- Distribute a Withdrawal (Withdrawal Flow redesign
     // Sub1/Sub2 stay at their own suggested 62500 each (untouched); moving
     // 135000 from B to A keeps the four rows' sum at exactly 500000 while
     // pushing A (260000) past its own 250000 `effectiveCanTake` ceiling.
-    const aInput = screen.getByLabelText("Actual withdrawal (A)");
+    const aInput = screen.getByLabelText("Actual withdrawal (Partner A)");
     await user.clear(aInput);
     await user.type(aInput, "260000"); // A's own effectiveCanTake ceiling is 250000
-    const bInput = screen.getByLabelText("Actual withdrawal (B)");
+    const bInput = screen.getByLabelText("Actual withdrawal (Partner B)");
     await user.clear(bInput);
     await user.type(bInput, "115000");
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
@@ -2084,9 +2086,10 @@ describe("Withdraw Money page -- flexible pro-rata withdrawal reallocation", () 
         PARTNER_WITH_SUBS,
       ],
     });
+    listWithdrawalTransactions.mockResolvedValue(EMPTY_WITHDRAWALS_RESPONSE);
     render(<WithdrawMoneyPage />);
 
-    await screen.findByText("B");
+    await screen.findByText("Partner B");
 
     expect(screen.getByText(/Bonus/)).toBeInTheDocument();
     expect(screen.getByText("₹50,000")).toBeInTheDocument();
@@ -2124,12 +2127,13 @@ describe("Withdraw Money page -- flexible pro-rata withdrawal reallocation", () 
       availableToWithdraw: "500000" as Money,
       partners: [{ ...PARTNER_NO_SUBS, effectiveCanTake: "300000" as Money }, PARTNER_WITH_SUBS],
     });
+    listWithdrawalTransactions.mockResolvedValue(EMPTY_WITHDRAWALS_RESPONSE);
     render(<WithdrawMoneyPage />);
 
-    await screen.findByText("B");
+    await screen.findByText("Partner B");
 
     expect(screen.getByText(/Bonus/)).toBeInTheDocument();
-    expect(screen.getByText(/declined by A/)).toBeInTheDocument();
+    expect(screen.getByText(/declined by Partner A/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Skip this round" })).not.toBeInTheDocument();
     expect(screen.queryByText("Active Reallocations")).not.toBeInTheDocument();
   });
@@ -2143,9 +2147,10 @@ describe("Withdraw Money page -- flexible pro-rata withdrawal reallocation", () 
         PARTNER_WITH_SUBS,
       ],
     });
+    listWithdrawalTransactions.mockResolvedValue(EMPTY_WITHDRAWALS_RESPONSE);
     render(<WithdrawMoneyPage />);
 
-    await screen.findByText("B");
+    await screen.findByText("Partner B");
 
     expect(screen.getByText(/Declined/)).toBeInTheDocument();
     expect(screen.getByText("₹60,000")).toBeInTheDocument();
@@ -2179,7 +2184,7 @@ describe("Withdraw Money page -- flexible pro-rata withdrawal reallocation", () 
     const skipButtons = screen.getAllByRole("button", { name: "Skip this round" });
     await user.click(skipButtons[skipButtons.length - 1] as HTMLElement);
 
-    await screen.findByText("Skip this round — B");
+    await screen.findByText("Skip this round — Partner B");
     // Pre-filled with B's own effectiveCanTake (250000, unchanged from canTake here).
     expect(screen.getByLabelText("Amount to decline")).toHaveValue("250000");
 
@@ -2213,7 +2218,7 @@ describe("Withdraw Money page -- flexible pro-rata withdrawal reallocation", () 
 
     const skipButtons = screen.getAllByRole("button", { name: "Skip this round" });
     await user.click(skipButtons[skipButtons.length - 1] as HTMLElement);
-    await screen.findByText("Skip this round — B");
+    await screen.findByText("Skip this round — Partner B");
 
     await waitFor(
       () => {
@@ -2235,7 +2240,7 @@ describe("Withdraw Money page -- flexible pro-rata withdrawal reallocation", () 
 
     const skipButtons = screen.getAllByRole("button", { name: "Skip this round" });
     await user.click(skipButtons[skipButtons.length - 1] as HTMLElement);
-    await screen.findByText("Skip this round — B");
+    await screen.findByText("Skip this round — Partner B");
 
     fireEvent.change(screen.getByLabelText("Amount to decline"), { target: { value: "60000" } });
 
@@ -2254,7 +2259,7 @@ describe("Withdraw Money page -- flexible pro-rata withdrawal reallocation", () 
 
     const skipButtons = screen.getAllByRole("button", { name: "Skip this round" });
     await user.click(skipButtons[skipButtons.length - 1] as HTMLElement);
-    await screen.findByText("Skip this round — B");
+    await screen.findByText("Skip this round — Partner B");
 
     expect(
       await screen.findByText("Couldn't preview the split: Could not compute the split.", {}, { timeout: 1000 }),

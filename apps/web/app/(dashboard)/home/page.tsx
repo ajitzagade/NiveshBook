@@ -45,6 +45,7 @@ import {
   StatCard,
 } from "@niveshbook/ui";
 import { requireSession } from "@/lib/session-guard";
+import { initialsOf } from "@/lib/initials";
 import { LogoutButton } from "../../LogoutButton";
 
 /**
@@ -72,19 +73,12 @@ export function formatSharePercent(raw: string): string {
 }
 
 /**
- * Up to 2 uppercase initials from a Partner/Sub-partner's own recorded name
- * (e.g. "Asha Kulkarni" -> "AK", "Bala" -> "B") -- the Home page's
- * `ProjectPreviewCard` avatar. Exported for `page.test.tsx`'s own direct
- * unit coverage, mirroring `formatSharePercent`'s identical precedent.
+ * Re-exported for `page.test.tsx`'s own direct unit coverage (mirroring
+ * `formatSharePercent`'s identical precedent) -- the real implementation
+ * moved to `@/lib/initials` once `PersonCard`'s own avatar slot
+ * (2026-09-29) needed the same helper from a different route group.
  */
-export function initialsOf(name: string): string {
-  return name
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((word) => word.charAt(0).toUpperCase())
-    .join("");
-}
+export { initialsOf };
 
 // This page's own data depends on every Project's live money state --
 // never statically cached (mirrors every other `(dashboard)` page's

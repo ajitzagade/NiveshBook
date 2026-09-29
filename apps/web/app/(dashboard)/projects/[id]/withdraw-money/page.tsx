@@ -54,6 +54,7 @@ import {
   type StatusChipVariant,
 } from "@niveshbook/ui";
 import { getCanTake, type PartnerCanTakeWithEffective } from "@/lib/can-take";
+import { initialsOf } from "@/lib/initials";
 import { getWithdrawalAdjustments } from "@/lib/withdrawal-adjustments";
 import { listProjects } from "@/lib/projects";
 import {
@@ -1732,14 +1733,15 @@ export default function WithdrawMoneyPage() {
                   key={partner.partnerId}
                   role="partner"
                   name={partner.name}
+                  avatarInitials={initialsOf(partner.name)}
                   value={
-                    <span className="font-mono text-[13.4px] tabular-nums text-ink-soft">
+                    <span className="font-mono text-[14px] font-bold tabular-nums text-ink">
                       {formatSharePercent(partner.sharePercent)}%
                     </span>
                   }
                   action={
                     <div className="flex flex-col items-end gap-1">
-                      <Amount value={partner.canTake} />
+                      <Amount value={partner.canTake} size="lg" />
                       <ReallocationBadge
                         canTake={partner.canTake}
                         effectiveCanTake={partner.effectiveCanTake}
@@ -1758,14 +1760,15 @@ export default function WithdrawMoneyPage() {
                               key={sub.subPartnerId}
                               role="sub_partner"
                               name={sub.name}
+                              avatarInitials={initialsOf(sub.name)}
                               value={
-                                <span className="font-mono text-[12.6px] tabular-nums text-ink-soft">
+                                <span className="font-mono text-[13px] font-bold tabular-nums text-ink">
                                   {formatSharePercent(sub.sharePercent)}%
                                 </span>
                               }
                               action={
                                 <div className="flex flex-col items-end gap-1">
-                                  <Amount value={sub.canTake} size="sm" />
+                                  <Amount value={sub.canTake} />
                                   <ReallocationBadge
                                     canTake={sub.canTake}
                                     effectiveCanTake={sub.effectiveCanTake}

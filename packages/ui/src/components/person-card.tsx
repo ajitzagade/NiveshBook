@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { cn } from "../lib/cn";
 
 export type PersonCardRole = "partner" | "sub_partner";
@@ -22,6 +22,13 @@ export interface PersonCardProps {
   role: PersonCardRole;
   /** Header slots: name gets the flexible track; value/action trail it. */
   name: ReactNode;
+  /**
+   * Up to 2 uppercase initials (e.g. `initialsOf(name)` from `@/lib/initials`)
+   * rendered as a small avatar circle before `name` (2026-09-29, founder
+   * feedback -- easier to place a person at a glance). Omit for no avatar --
+   * every existing caller is unaffected.
+   */
+  avatarInitials?: string;
   value?: ReactNode;
   action?: ReactNode;
   /**
@@ -45,18 +52,26 @@ export interface PersonCardProps {
   summary?: ReactNode;
   /**
    * Opt-in collapse affordance (2026-09-29, founder feedback on the
-   * Withdraw Money screen's long per-Partner/Sub-partner cards): when
-   * `onToggleCollapse` is supplied, `name` becomes a clickable button with
-   * a chevron, and `children`/`nested` render only while `collapsed` is
-   * falsy. Fully controlled, mirroring this package's `Dialog` -- every
-   * call site owns its own collapse state (e.g. a `Set<string>` of
-   * expanded ids) rather than `PersonCard` holding internal state, which
-   * keeps this a plain, hook-free function component (this package
-   * deliberately ships with no jsdom devDependency, so its own tests call
-   * components directly rather than rendering+firing events -- see
-   * `combobox.tsx`'s doc comment). Omit `onToggleCollapse` for the
-   * original, always-expanded, non-interactive `name` -- every existing
-   * caller is unaffected.
+   * Withdraw Money screen's long per-Partner/Sub-partner cards -- extended
+   * the same day to make the WHOLE header clickable, not just the name,
+   * after founder follow-up that a name-only target was hard to notice):
+   * when `onToggleCollapse` is supplied, the entire header row (chevron,
+   * avatar, name, `value`, `action`) becomes one clickable/keyboard-
+   * operable control (mirrors `RowCard`'s identical whole-row-click
+   * pattern, incl. its "a nested action's own onClick must call
+   * `event.stopPropagation()` if it shouldn't also toggle collapse"
+   * convention -- not needed by any current caller, since only Withdraw
+   * Money opts into `onToggleCollapse` today, and its own `value`/`action`
+   * carry no nested buttons). `children`/`nested` render only while
+   * `collapsed` is falsy. Fully controlled, mirroring this package's
+   * `Dialog` -- every call site owns its own collapse state (e.g. a
+   * `Set<string>` of expanded ids) rather than `PersonCard` holding
+   * internal state, which keeps this a plain, hook-free function
+   * component (this package deliberately ships with no jsdom
+   * devDependency, so its own tests call components directly rather than
+   * rendering+firing events -- see `combobox.tsx`'s doc comment). Omit
+   * `onToggleCollapse` for the original, always-expanded, non-interactive
+   * header -- every existing caller is unaffected.
    */
   collapsed?: boolean;
   onToggleCollapse?: () => void;
@@ -74,6 +89,7 @@ export interface PersonCardProps {
 export function PersonCard({
   role,
   name,
+  avatarInitials,
   value,
   action,
   summary,
@@ -92,6 +108,17 @@ export function PersonCard({
   // shouldn't still spill its Sub-partners' full cards below it.
   const showBody = !onToggleCollapse || !collapsed;
 
+  // Mirrors `RowCard`'s identical "a plain div onClick is invisible to
+  // keyboard/assistive tech" fix -- role="button" + tabIndex + Enter/Space
+  // activation makes the whole header a real, reachable control.
+  function handleHeaderKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (!onToggleCollapse) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onToggleCollapse();
+    }
+  }
+
   return (
     <div
       className={cn(
@@ -100,7 +127,34 @@ export function PersonCard({
         className,
       )}
     >
-      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+      <div
+        className={cn(
+          "flex flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-el",
+          onToggleCollapse && "-m-1.5 cursor-pointer p-1.5 transition-colors hover:bg-surface-alt",
+        )}
+        onClick={onToggleCollapse}
+        role={onToggleCollapse ? "button" : undefined}
+        tabIndex={onToggleCollapse ? 0 : undefined}
+        onKeyDown={onToggleCollapse ? handleHeaderKeyDown : undefined}
+        aria-expanded={onToggleCollapse ? !collapsed : undefined}
+      >
+        {onToggleCollapse ? (
+          collapsed ? (
+            <ChevronRight size={16} className="shrink-0 text-ink-faint" />
+          ) : (
+            <ChevronDown size={16} className="shrink-0 text-ink-faint" />
+          )
+        ) : null}
+        {avatarInitials ? (
+          <span
+            className={cn(
+              "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11.5px] font-bold text-white",
+              role === "partner" ? "bg-info" : "bg-violet",
+            )}
+          >
+            {avatarInitials}
+          </span>
+        ) : null}
         {/*
           The sr-only role label is a SIBLING of the name span, not nested
           inside it: nesting it merges into the name span's own accessible/
@@ -112,23 +166,7 @@ export function PersonCard({
           default direct-text-node-only matcher, so this only surfaced
           against a real browser).
         */}
-        {onToggleCollapse ? (
-          <button
-            type="button"
-            onClick={onToggleCollapse}
-            aria-expanded={!collapsed}
-            className="flex min-w-0 flex-1 items-center gap-1 text-left"
-          >
-            {collapsed ? (
-              <ChevronRight size={14} className="shrink-0 text-ink-faint" />
-            ) : (
-              <ChevronDown size={14} className="shrink-0 text-ink-faint" />
-            )}
-            <span className="min-w-0 flex-1 truncate text-[13.4px] font-semibold">{name}</span>
-          </button>
-        ) : (
-          <span className="min-w-0 flex-1 text-[13.4px] font-semibold">{name}</span>
-        )}
+        <span className="min-w-0 flex-1 truncate text-[15px] font-bold text-ink">{name}</span>
         <span className="sr-only">{ROLE_LABEL[role]}</span>
         {value}
         {action}
