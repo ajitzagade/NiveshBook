@@ -56,3 +56,42 @@ test("editing a Partner's Share % updates the row and the running total", async 
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("Total is 75%. 25% is still remaining.")).toBeVisible();
 });
+
+test("adding a Sub-partner refreshes the still-expanded parent panel without a reload", async ({ page }) => {
+  const projectName = uniqueName("E2E Sub-partner Refresh Project");
+  await createProject(page, projectName);
+
+  await page.getByRole("button", { name: "Add Partner" }).first().click();
+  await page.locator("#partner-name").fill("E2E Parent Partner");
+  await page.locator("#partner-share-percent").fill("100");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Total Share: 100%")).toBeVisible();
+
+  const card = page
+    .getByText("E2E Parent Partner", { exact: true })
+    .locator("xpath=ancestor::div[contains(@class,'nb-person-card')][1]")
+    .first();
+  await card.getByRole("button", { name: /^Sub-partners(\s*\(\d+\))?$/ }).click();
+  await expect(card.getByText("No Sub-partners yet for E2E Parent Partner.")).toBeVisible();
+
+  await card.getByRole("button", { name: "Add Sub-partner" }).click();
+  await page.locator("#partner-name").fill("E2E Sub One");
+  await page.locator("#partner-share-percent").fill("40");
+  await page.getByRole("button", { name: "Save" }).click();
+
+  // Still expanded (never collapsed/reloaded) -- must show the just-added
+  // row and updated allocation immediately, not the pre-add empty state.
+  await expect(card.getByText("No Sub-partners yet for E2E Parent Partner.")).not.toBeVisible();
+  await expect(card.getByText("E2E Sub One", { exact: true })).toBeVisible();
+  await expect(card.getByText("Allocated: 40% (60% remaining)")).toBeVisible();
+
+  // A second add on the same still-expanded panel must also refresh
+  // correctly, not just the first.
+  await card.getByRole("button", { name: "Add Sub-partner" }).click();
+  await page.locator("#partner-name").fill("E2E Sub Two");
+  await page.locator("#partner-share-percent").fill("60");
+  await page.getByRole("button", { name: "Save" }).click();
+
+  await expect(card.getByText("E2E Sub Two", { exact: true })).toBeVisible();
+  await expect(card.getByText("Allocated: 100% ✓")).toBeVisible();
+});

@@ -104,6 +104,95 @@ describe("SharesPage hierarchy rendering (spec-partner-hierarchy-cards, 2026-09-
     expect(partnerCard.contains(subCard)).toBe(true);
     expect(subCard.parentElement?.className).toContain("nb-person-nest");
   });
+
+  it("shows the just-added Sub-partner in the still-expanded panel, not the pre-add empty state (uat-rareearth finding)", async () => {
+    listSubPartnerShares.mockReset();
+    listSubPartnerShares.mockResolvedValueOnce({ shares: [], total: "0" });
+    const user = userEvent.setup();
+    render(<SharesPage />);
+
+    await screen.findByText("Partner A");
+    await user.click(screen.getByRole("button", { name: /Sub-partners/ }));
+    await screen.findByText("No Sub-partners yet for Partner A.");
+
+    listSubPartnerShares.mockResolvedValueOnce({ shares: [SUB_PARTNER], total: "30" });
+    addSubPartnerShare.mockResolvedValueOnce(SUB_PARTNER);
+
+    await user.click(screen.getByRole("button", { name: "Add Sub-partner" }));
+    await user.type(screen.getByLabelText("Name"), "Sub One");
+    await user.type(screen.getByLabelText("Share %"), "30");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByText("Sub One");
+    expect(screen.queryByText("No Sub-partners yet for Partner A.")).not.toBeInTheDocument();
+  });
+
+  it("a slow eager-prefetch resolving AFTER an add does not clobber the just-added row", async () => {
+    listSubPartnerShares.mockReset();
+    let resolveEagerPrefetch!: (value: { shares: SubPartnerShare[]; total: string }) => void;
+    const eagerPrefetch = new Promise<{ shares: SubPartnerShare[]; total: string }>((resolve) => {
+      resolveEagerPrefetch = resolve;
+    });
+    // 1st call: the mount-time eager-prefetch effect -- held open deliberately.
+    listSubPartnerShares.mockImplementationOnce(() => eagerPrefetch);
+    const user = userEvent.setup();
+    render(<SharesPage />);
+    await screen.findByText("Partner A");
+
+    // 2nd call: toggleExpanded's own refreshSubShares, since the eager
+    // prefetch above hasn't resolved yet (subSharesByPartner[partnerId] is
+    // still undefined at click time).
+    listSubPartnerShares.mockResolvedValueOnce({ shares: [], total: "0" });
+    await user.click(screen.getByRole("button", { name: /Sub-partners/ }));
+    await screen.findByText("No Sub-partners yet for Partner A.");
+
+    // 3rd call: the post-add refresh.
+    listSubPartnerShares.mockResolvedValueOnce({ shares: [SUB_PARTNER], total: "30" });
+    addSubPartnerShare.mockResolvedValueOnce(SUB_PARTNER);
+    await user.click(screen.getByRole("button", { name: "Add Sub-partner" }));
+    await user.type(screen.getByLabelText("Name"), "Sub One");
+    await user.type(screen.getByLabelText("Share %"), "30");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Sub One");
+
+    // Now let the stale 1st call finally resolve with its pre-add snapshot.
+    resolveEagerPrefetch({ shares: [], total: "0" });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(screen.queryByText("Sub One")).toBeInTheDocument();
+    expect(screen.queryByText("No Sub-partners yet for Partner A.")).not.toBeInTheDocument();
+  });
+
+  it("a SECOND Add Sub-partner on the same still-expanded panel also refreshes correctly", async () => {
+    listSubPartnerShares.mockReset();
+    listSubPartnerShares.mockResolvedValueOnce({ shares: [], total: "0" });
+    const user = userEvent.setup();
+    render(<SharesPage />);
+    await screen.findByText("Partner A");
+    await user.click(screen.getByRole("button", { name: /Sub-partners/ }));
+    await screen.findByText("No Sub-partners yet for Partner A.");
+
+    const subOne: SubPartnerShare = { ...SUB_PARTNER, subPartnerId: "sub-1", name: "Sub One", sharePercent: "30" as Percent };
+    const subTwo: SubPartnerShare = { ...SUB_PARTNER, subPartnerId: "sub-2", name: "Sub Two", sharePercent: "20" as Percent };
+
+    listSubPartnerShares.mockResolvedValueOnce({ shares: [subOne], total: "30" });
+    addSubPartnerShare.mockResolvedValueOnce(subOne);
+    await user.click(screen.getByRole("button", { name: "Add Sub-partner" }));
+    await user.type(screen.getByLabelText("Name"), "Sub One");
+    await user.type(screen.getByLabelText("Share %"), "30");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Sub One");
+
+    listSubPartnerShares.mockResolvedValueOnce({ shares: [subOne, subTwo], total: "50" });
+    addSubPartnerShare.mockResolvedValueOnce(subTwo);
+    await user.click(screen.getByRole("button", { name: "Add Sub-partner" }));
+    await user.type(screen.getByLabelText("Name"), "Sub Two");
+    await user.type(screen.getByLabelText("Share %"), "20");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByText("Sub Two");
+    expect(screen.queryByText("Sub One")).toBeInTheDocument();
+  });
 });
 
 function makeUser(overrides: Partial<{ id: string; email: string; role: string; active: boolean }> = {}) {

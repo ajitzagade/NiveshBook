@@ -318,11 +318,18 @@ describe("createWithdrawalTransactionPort.recordTransaction (live Postgres)", ()
  */
 describe("createWithdrawalTransactionPort.sumActiveAmountByProjectId (live Postgres)", () => {
   const seededProjectIds: string[] = [];
+  const seededUserIds: string[] = [];
 
   afterEach(async () => {
     const db = getDb();
+    if (seededUserIds.length > 0) {
+      await db.delete(auditLog).where(inArray(auditLog.actorUserId, seededUserIds.splice(0)));
+    }
     for (const id of seededProjectIds.splice(0)) {
       await db.delete(projects).where(eq(projects.id, id));
+    }
+    for (const id of seededUserIds.splice(0)) {
+      await db.delete(users).where(eq(users.id, id));
     }
   });
 
@@ -334,10 +341,25 @@ describe("createWithdrawalTransactionPort.sumActiveAmountByProjectId (live Postg
     return projectId;
   }
 
-  async function seedWithdrawal(projectId: string, amount: string): Promise<void> {
+  /** A real `users` row -- `audit_log.actorUserId` is a NOT NULL FK to it, needed by `cancelTransaction`. */
+  async function seedActor(): Promise<string> {
     const db = getDb();
+    const userId = uuidv7();
+    await db.insert(users).values({
+      id: userId,
+      email: `sum-withdrawn-test-${userId}@niveshbook.test`,
+      passwordHash: "irrelevant-hash",
+      role: "owner_admin",
+    });
+    seededUserIds.push(userId);
+    return userId;
+  }
+
+  async function seedWithdrawal(projectId: string, amount: string): Promise<string> {
+    const db = getDb();
+    const id = uuidv7();
     await db.insert(withdrawalTransactions).values({
-      id: uuidv7(),
+      id,
       projectId,
       partyType: "partner",
       shareId: uuidv7(),
@@ -350,6 +372,7 @@ describe("createWithdrawalTransactionPort.sumActiveAmountByProjectId (live Postg
       notes: null,
       idempotencyKey: uuidv7(),
     });
+    return id;
   }
 
   it("sums multiple withdrawal rows for the same project", async () => {
@@ -385,6 +408,45 @@ describe("createWithdrawalTransactionPort.sumActiveAmountByProjectId (live Postg
     const total = await port.sumActiveAmountByProjectId(projectA);
 
     expect(total).toBe("100000.00");
+  });
+
+  /**
+   * Regression lock for this method's own doc comment (`ports.ts`,
+   * `sumActiveAmountByProjectId`): "Deliberately still sums EVERY row
+   * unconditionally, cancelled or not ... extending this method to exclude
+   * cancelled withdrawals is out of this story's own Code Map/Boundaries --
+   * left as a deliberate, explicit non-goal rather than silently changed."
+   * This test predates Story 4.11's `cancelTransaction` (no cancel path
+   * existed when it was written); now that it does, this proves the
+   * documented behavior still holds against the real cancel path, not just
+   * a raw row insert -- including the reversal row `cancelTransaction`
+   * itself inserts (same amount, also summed), so cancelling one 250,000
+   * withdrawal yields 500,000, not 0 or 250,000. If this ever starts
+   * failing, it means `sumActiveAmountByProjectId`'s behavior changed --
+   * update this test deliberately alongside that change, including its
+   * Can Take / Withdrawal Adjustment downstream callers, not by accident.
+   */
+  it("still counts a cancelled withdrawal (and its reversal row) toward the total -- documented non-goal, not a bug", async () => {
+    const port = createWithdrawalTransactionPort();
+    const projectId = await seedProject();
+    const actorUserId = await seedActor();
+    const transactionId = await seedWithdrawal(projectId, "250000");
+
+    const beforeCancel = await port.sumActiveAmountByProjectId(projectId);
+    expect(beforeCancel).toBe("250000.00");
+
+    const result = await port.cancelTransaction({
+      transactionId,
+      idempotencyKey: uuidv7(),
+      actorUserId,
+      reason: "regression test cancel",
+    });
+    expect(result.cancelled).toBe(true);
+    expect(result.originalTransaction.status).toBe("cancelled");
+    expect(result.reversalTransaction.status).toBe("cancelled");
+
+    const afterCancel = await port.sumActiveAmountByProjectId(projectId);
+    expect(afterCancel).toBe("500000.00");
   });
 });
 

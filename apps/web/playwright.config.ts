@@ -13,6 +13,11 @@ const BASE_URL = `http://localhost:${PORT}`;
  */
 export default defineConfig({
   testDir: "./e2e",
+  // uat-rareearth* specs are an ad-hoc exploratory UAT exercise with their
+  // own dedicated config (uat-rareearth.playwright.config.ts) that targets
+  // an already-running :3000 server and a 25-minute single-test timeout --
+  // unsuitable for this suite's auto-launched :3300 webServer or for CI.
+  testIgnore: ["**/uat-rareearth*"],
   fullyParallel: true,
   reporter: [["html", { open: "never" }]],
   globalSetup: "./e2e/global-setup.ts",
