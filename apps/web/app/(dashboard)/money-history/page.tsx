@@ -21,6 +21,8 @@ import {
   DialogDescription,
   EmptyState,
   Field,
+  formatDate,
+  formatDateTime,
   Input,
   Label,
   PageHeader,
@@ -598,7 +600,7 @@ export default function MoneyHistoryPage() {
                         onClick={isTraceable ? () => handleTraceEntry(entry) : undefined}
                         title={isTraceable ? "View this entry's money trail" : undefined}
                       >
-                      <Td className="!text-left text-ink-soft">{entry.date}</Td>
+                      <Td className="!text-left text-ink-soft">{formatDate(entry.date)}</Td>
                       <Td className="!text-left">
                         <span className="inline-flex items-center gap-1.5">
                           {ENTRY_TYPE_LABELS[entry.type]}
@@ -771,7 +773,7 @@ function AuditHistoryEntryList({ entries }: { entries: AuditLogEntry[] }) {
       {entries.map((entry) => (
         <li key={entry.id} className="border-l-2 border-border pl-2.5 text-[12.6px]">
           <p className="font-semibold text-ink">{AUDIT_ACTION_LABEL[entry.action] ?? entry.action}</p>
-          <p className="text-ink-soft">{new Date(entry.createdAt).toLocaleString()}</p>
+          <p className="text-ink-soft">{formatDateTime(entry.createdAt)}</p>
           {entry.reason ? <p className="text-ink-soft">Reason: {entry.reason}</p> : null}
         </li>
       ))}

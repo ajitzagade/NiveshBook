@@ -710,7 +710,7 @@ describe("MoneyHistoryPage -- below-860px RowCard stack", () => {
 
     const cards = await screen.findByTestId("money-history-row-cards");
     expect(within(cards).getByText("Money Added")).toBeInTheDocument();
-    expect(within(cards).getByText("2026-09-01")).toBeInTheDocument();
+    expect(within(cards).getByText("01-09-2026")).toBeInTheDocument();
     expect(within(cards).getByText("Project A")).toBeInTheDocument();
     expect(within(cards).getByText("Partner One")).toBeInTheDocument();
     expect(within(cards).getByText("NEFT")).toBeInTheDocument();

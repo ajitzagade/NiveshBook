@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { FolderKanban, Plus, Pencil, Percent, Minus, Network } from "lucide-react";
 import type { ProjectListItem } from "@niveshbook/types";
-import { Button, Card, EmptyState, PageHeader, StatusChip } from "@niveshbook/ui";
+import { Button, Card, EmptyState, formatDate, PageHeader, StatusChip } from "@niveshbook/ui";
 import { listProjects } from "@/lib/projects";
 
 type ListState =
@@ -34,14 +34,6 @@ function formatSharePercent(raw: string): string {
     return raw;
   }
   return raw.replace(/0+$/, "").replace(/\.$/, "");
-}
-
-function formatCreatedDate(isoTimestamp: string): string {
-  return new Date(isoTimestamp).toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
 }
 
 /**
@@ -128,7 +120,7 @@ function ProjectCard({ project }: { project: ProjectListItem }) {
       </div>
 
       <div className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
-        <span className="text-[12px] text-ink-faint">Created {formatCreatedDate(project.createdAt)}</span>
+        <span className="text-[12px] text-ink-faint">Created {formatDate(project.createdAt)}</span>
         <div className="flex flex-wrap gap-1.5">
           <ProjectActionButtons project={project} />
         </div>

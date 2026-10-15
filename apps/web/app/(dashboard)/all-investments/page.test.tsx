@@ -180,7 +180,7 @@ describe("AllInvestmentsPage -- below-860px RowCard stack", () => {
     render(<AllInvestmentsPage />);
 
     const cards = await screen.findByTestId("all-investments-row-cards");
-    expect(within(cards).getByText("2026-09-01")).toBeInTheDocument();
+    expect(within(cards).getByText("01-09-2026")).toBeInTheDocument();
     expect(within(cards).getByText("Pending")).toBeInTheDocument();
     expect(within(cards).getByText("₹6,00,000")).toBeInTheDocument();
     expect(within(cards).getByText("₹4,00,000")).toBeInTheDocument();

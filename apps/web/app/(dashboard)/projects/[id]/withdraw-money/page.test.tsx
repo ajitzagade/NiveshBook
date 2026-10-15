@@ -817,7 +817,7 @@ describe("WithdrawMoneyPage -- recorded-withdrawals list persists across reload 
       expect(listWithdrawalTransactions).toHaveBeenCalledWith("project-1");
     });
     expandAllPersonCards();
-    expect(await screen.findByText("2026-10-05")).toBeInTheDocument();
+    expect(await screen.findByText("05-10-2026")).toBeInTheDocument();
     expect(screen.getByText("Cash")).toBeInTheDocument();
   });
 });
@@ -844,7 +844,7 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     render(<WithdrawMoneyPage />);
     await screen.findByText("Partner A");
     expandAllPersonCards();
-    await screen.findByText("2026-10-05");
+    await screen.findByText("05-10-2026");
 
     expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
@@ -860,7 +860,7 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     render(<WithdrawMoneyPage />);
     await screen.findByText("Partner A");
     expandAllPersonCards();
-    await screen.findByText("2026-10-05");
+    await screen.findByText("05-10-2026");
 
     expect(screen.getByText("Cancelled")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
@@ -884,7 +884,7 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     render(<WithdrawMoneyPage />);
     await screen.findByText("Partner A");
     expandAllPersonCards();
-    await screen.findAllByText("2026-10-05");
+    await screen.findAllByText("05-10-2026");
 
     expect(screen.getByText("Cancelled")).toBeInTheDocument();
     expect(screen.getByText("Cancelled (reversal)")).toBeInTheDocument();
@@ -903,7 +903,7 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     render(<WithdrawMoneyPage />);
     await screen.findByText("Partner A");
     expandAllPersonCards();
-    await screen.findByText("2026-10-05");
+    await screen.findByText("05-10-2026");
     listWithdrawalTransactions.mockResolvedValueOnce({
       transactions: [makeWithdrawalTransaction({ id: "wtx-1", amount: "150000" })],
     });
@@ -944,7 +944,7 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     render(<WithdrawMoneyPage />);
     await screen.findByText("Partner A");
     expandAllPersonCards();
-    await screen.findByText("2026-10-05");
+    await screen.findByText("05-10-2026");
 
     await user.click(screen.getByRole("button", { name: "Edit" }));
     await user.click(await screen.findByRole("button", { name: "Save" }));
@@ -977,7 +977,7 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     render(<WithdrawMoneyPage />);
     await screen.findByText("Partner A");
     expandAllPersonCards();
-    await screen.findByText("2026-10-05");
+    await screen.findByText("05-10-2026");
     listWithdrawalTransactions.mockResolvedValueOnce({
       transactions: [
         makeWithdrawalTransaction({ id: "wtx-1", amount: "100000", status: "cancelled" }),
@@ -1021,7 +1021,7 @@ describe("WithdrawMoneyPage -- Edit/Cancel a withdrawal (Story 4.11)", () => {
     render(<WithdrawMoneyPage />);
     await screen.findByText("Partner A");
     expandAllPersonCards();
-    await screen.findByText("2026-10-05");
+    await screen.findByText("05-10-2026");
 
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     await user.click(await screen.findByRole("button", { name: "Confirm Cancel" }));
@@ -1151,7 +1151,7 @@ describe("WithdrawMoneyPage -- Record Withdrawal dialog (Story 4.2)", () => {
     await waitFor(() => {
       expect(listWithdrawalTransactions).toHaveBeenCalledTimes(2);
     });
-    expect(await screen.findByText("2026-10-05")).toBeInTheDocument();
+    expect(await screen.findByText("05-10-2026")).toBeInTheDocument();
     expect(screen.getByText("₹1,00,000")).toBeInTheDocument();
 
     // Story 4.3: `handleRecordWithdrawalSubmit` also calls `refreshAdjustments()`

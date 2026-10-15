@@ -103,7 +103,7 @@ async function renderAndExpand() {
   const user = userEvent.setup();
   render(<AddMoneyPage />);
 
-  await screen.findByText("2026-10-01");
+  await screen.findByText("01-10-2026");
   await user.click(screen.getByRole("button", { name: "Should Pay" }));
   return user;
 }

@@ -7,6 +7,7 @@ import type {
   WithdrawalDestinationAllocation,
   WithdrawalTransaction,
 } from "@niveshbook/types";
+import { formatDate } from "@niveshbook/ui";
 
 /**
  * "What Happened" plain-language label per `MoneyHistoryEntryType`
@@ -76,7 +77,7 @@ export function describeTrailNode(node: MoneyTrailNode): TrailNodeDisplay {
       return {
         dotColor: isReinvestment ? "var(--color-amber)" : "var(--color-success)",
         what: ENTRY_TYPE_LABELS.money_added,
-        meta: `${PARTY_TYPE_LABELS[row.partyType]} · ${row.transactionDate}${statusSuffix}`,
+        meta: `${PARTY_TYPE_LABELS[row.partyType]} · ${formatDate(row.transactionDate)}${statusSuffix}`,
       };
     }
     case "withdrawal_transaction": {
@@ -85,7 +86,7 @@ export function describeTrailNode(node: MoneyTrailNode): TrailNodeDisplay {
       return {
         dotColor: "var(--color-danger)",
         what: ENTRY_TYPE_LABELS.money_withdrawn,
-        meta: `${PARTY_TYPE_LABELS[row.partyType]} · ${row.transactionDate}${statusSuffix}`,
+        meta: `${PARTY_TYPE_LABELS[row.partyType]} · ${formatDate(row.transactionDate)}${statusSuffix}`,
       };
     }
     case "withdrawal_destination_allocation": {
@@ -108,7 +109,7 @@ export function describeTrailNode(node: MoneyTrailNode): TrailNodeDisplay {
     }
     case "money_movement": {
       const row = node.data as MoneyMovement;
-      return { dotColor: "var(--color-info)", what: "Money Movement", meta: `Auto-linked · ${row.createdAt.slice(0, 10)}` };
+      return { dotColor: "var(--color-info)", what: "Money Movement", meta: `Auto-linked · ${formatDate(row.createdAt)}` };
     }
     case "available_balance_spend": {
       const row = node.data as AvailableBalanceSpend;

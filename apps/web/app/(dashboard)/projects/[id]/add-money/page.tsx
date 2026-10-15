@@ -54,6 +54,8 @@ import {
   Td,
   toast,
   formatAmount,
+  amountInWords,
+  formatDate,
   type StatusChipVariant,
 } from "@niveshbook/ui";
 import { listInvestmentRequirements, addInvestmentRequirement } from "@/lib/investment-requirements";
@@ -158,6 +160,17 @@ function formatSharePercent(raw: string): string {
   return raw.replace(/0+$/, "").replace(/\.$/, "");
 }
 
+/**
+ * Live ₹-preview + amount-in-words helper text for an amount `Input`'s
+ * `Helper` -- falls back to `emptyText` (the field's original static
+ * guidance) while empty, mirroring the self-service Add Money page's
+ * `amountHelperText` (`apps/web/app/(dashboard)/add-money/[projectId]/page.tsx`).
+ */
+function amountHelperText(amount: string, emptyText: string): string {
+  if (!amount.trim()) return emptyText;
+  const words = amountInWords(amount);
+  return words ? `${formatAmount(amount)} (${words})` : formatAmount(amount);
+}
 
 /**
  * Add Money page (Story 3.1): one page per Project, listing every funding
@@ -761,7 +774,9 @@ export default function AddMoneyPage() {
     setSubmitting(true);
     try {
       await addInvestmentRequirement(projectId, { amount, requirementDate });
-      toast.success(`Funding requirement of ${formatAmount(amount)} created for ${requirementDate}`);
+      toast.success(
+        `Funding requirement of ${formatAmount(amount)} created for ${formatDate(requirementDate)}`,
+      );
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
       setSubmitting(false);
@@ -856,7 +871,7 @@ export default function AddMoneyPage() {
                 return (
                   <Fragment key={requirement.id}>
                     <TableRow>
-                      <Td className="!text-left text-ink-soft">{requirement.requirementDate}</Td>
+                      <Td className="!text-left text-ink-soft">{formatDate(requirement.requirementDate)}</Td>
                       <Td>
                         <Amount value={requirement.amount} />
                       </Td>
@@ -888,7 +903,7 @@ export default function AddMoneyPage() {
                                   Date
                                 </div>
                                 <div className="text-[13.4px] font-semibold text-ink">
-                                  {requirement.requirementDate}
+                                  {formatDate(requirement.requirementDate)}
                                 </div>
                               </div>
                             </div>
@@ -1143,7 +1158,12 @@ export default function AddMoneyPage() {
                 required
                 autoFocus
               />
-              <Helper>e.g. 1000000 for ₹10,00,000 -- up to 2 decimal places are supported.</Helper>
+              <Helper>
+                {amountHelperText(
+                  amount,
+                  "e.g. 1000000 for ₹10,00,000 -- up to 2 decimal places are supported.",
+                )}
+              </Helper>
             </Field>
             <Field>
               <Label htmlFor="requirement-date">Date</Label>
@@ -1191,7 +1211,7 @@ export default function AddMoneyPage() {
           <DialogTitle>Confirm Funding Requirement</DialogTitle>
           <DialogDescription>
             Create a funding requirement of <strong>{formatAmount(amount)}</strong> for{" "}
-            <strong>{requirementDate}</strong>? Each funding round is its own new record -- a past
+            <strong>{formatDate(requirementDate)}</strong>? Each funding round is its own new record -- a past
             requirement is never edited.
           </DialogDescription>
 
@@ -1249,7 +1269,9 @@ export default function AddMoneyPage() {
                 required
                 autoFocus
               />
-              <Helper>0 is accepted -- no minimum payment enforced.</Helper>
+              <Helper>
+                {amountHelperText(recordAmount, "0 is accepted -- no minimum payment enforced.")}
+              </Helper>
             </Field>
             <Field>
               <Label htmlFor="tx-date">Date</Label>
@@ -1333,7 +1355,7 @@ export default function AddMoneyPage() {
           <DialogDescription>
             Record <strong>{formatAmount(recordAmount)}</strong> for{" "}
             <strong>{recordPaymentTarget?.personName}</strong>, paid on{" "}
-            <strong>{recordDate}</strong> via <strong>{PAYMENT_MODE_LABELS[recordPaymentMode]}</strong>
+            <strong>{formatDate(recordDate)}</strong> via <strong>{PAYMENT_MODE_LABELS[recordPaymentMode]}</strong>
             {recordReferenceNumber.trim() ? (
               <>
                 {" "}
@@ -1395,7 +1417,9 @@ export default function AddMoneyPage() {
                 required
                 autoFocus
               />
-              <Helper>0 is accepted -- no minimum payment enforced.</Helper>
+              <Helper>
+                {amountHelperText(editAmount, "0 is accepted -- no minimum payment enforced.")}
+              </Helper>
             </Field>
             <Field>
               <Label htmlFor="edit-tx-date">Date</Label>
@@ -1478,7 +1502,7 @@ export default function AddMoneyPage() {
           <DialogTitle>Confirm Changes</DialogTitle>
           <DialogDescription>
             Update this payment to <strong>{formatAmount(editAmount)}</strong> on{" "}
-            <strong>{editDate}</strong> via <strong>{PAYMENT_MODE_LABELS[editPaymentMode]}</strong>
+            <strong>{formatDate(editDate)}</strong> via <strong>{PAYMENT_MODE_LABELS[editPaymentMode]}</strong>
             {editReferenceNumber.trim() ? (
               <>
                 {" "}
@@ -1529,7 +1553,7 @@ export default function AddMoneyPage() {
               <>
                 Cancel the{" "}
                 <strong>{formatAmount(cancelPaymentTarget.transaction.amount)}</strong> payment from{" "}
-                <strong>{cancelPaymentTarget.transaction.transactionDate}</strong> (
+                <strong>{formatDate(cancelPaymentTarget.transaction.transactionDate)}</strong> (
                 {PAYMENT_MODE_LABELS[cancelPaymentTarget.transaction.paymentMode]})?{" "}
               </>
             ) : null}
@@ -1732,7 +1756,7 @@ function RecordedPayments({
         const movement = movementsByTransactionId[transaction.id];
         return (
         <div key={transaction.id} className="flex items-center gap-2 text-[11.6px] text-ink-soft">
-          <span>{transaction.transactionDate}</span>
+          <span>{formatDate(transaction.transactionDate)}</span>
           <Amount value={transaction.amount} size="sm" />
           <span>{PAYMENT_MODE_LABELS[transaction.paymentMode]}</span>
           {movement ? (

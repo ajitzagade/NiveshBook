@@ -6,6 +6,7 @@ import { ArrowLeftRight, Save, X } from "lucide-react";
 import type { PaymentMode } from "@niveshbook/types";
 import {
   Amount,
+  amountInWords,
   Button,
   Card,
   Dialog,
@@ -13,6 +14,8 @@ import {
   DialogTitle,
   DialogDescription,
   Field,
+  formatAmount,
+  formatDate,
   Helper,
   Input,
   Label,
@@ -47,6 +50,13 @@ type LoadState =
 
 function todayDate(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/** Live helper text under the Amount field -- mirrors `add-money/[projectId]/page.tsx`'s identical helper. */
+function amountHelperText(amount: string): string {
+  if (!amount.trim()) return "e.g. 1000000 for ₹10,00,000.";
+  const words = amountInWords(amount);
+  return words ? `${formatAmount(amount)} (${words})` : formatAmount(amount);
 }
 
 /**
@@ -90,6 +100,7 @@ export default function WithdrawMoneyPage() {
   const [idempotencyKey, setIdempotencyKey] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   async function loadWithdrawalStatus(currentPartyType: PartyType, currentShareId: string, cancelledRef: {
     cancelled: boolean;
@@ -146,15 +157,45 @@ export default function WithdrawMoneyPage() {
     setReferenceNumber("");
     setNotes("");
     setFormError(null);
+    setConfirmOpen(false);
     setIdempotencyKey(crypto.randomUUID());
   }
 
   function closeDialog() {
     setDialogOpen(false);
+    setConfirmOpen(false);
   }
 
-  async function handleSubmit(event: FormEvent) {
+  /**
+   * Form's own `onSubmit` -- opens the confirm step rather than saving
+   * directly (mirrors `add-money/[projectId]/page.tsx`'s identical pattern,
+   * itself mirroring the Owner Add Money page's established two-step shape).
+   *
+   * Also does a friendly, non-authoritative pre-check against this caller's
+   * own `effectiveCanTake` (already loaded on this page) so the common
+   * "typed one zero too many" case gets an immediate, specific message
+   * instead of a round trip to the server's 403 (which, for a Partner/Sub-
+   * partner, is a deliberately generic "no permission" string -- see this
+   * page's own doc comment on the Authorize Extra Withdrawal gate). The
+   * server's own check remains the authoritative one either way (AD-1) --
+   * this only ever short-circuits toward a friendlier message, never grants
+   * anything the server wouldn't.
+   */
+  function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    if (!partyType || !shareId || state.status !== "loaded") return;
+    setFormError(null);
+    const effectiveCanTake = state.withdrawal.status.effectiveCanTake;
+    if (Number(amount) > Number(effectiveCanTake)) {
+      setFormError(
+        `You've reached your Can Take limit for this Project -- up to ${formatAmount(effectiveCanTake)} is available.`,
+      );
+      return;
+    }
+    setConfirmOpen(true);
+  }
+
+  async function handleConfirmSave() {
     if (!partyType || !shareId) return;
     setSubmitting(true);
     setFormError(null);
@@ -172,7 +213,7 @@ export default function WithdrawMoneyPage() {
         },
         idempotencyKey,
       );
-      toast.success("Withdrawal recorded.");
+      toast.success(`${formatAmount(amount)} withdrawn.`);
       closeDialog();
       await loadWithdrawalStatus(partyType, shareId, { cancelled: false });
     } catch (error) {
@@ -216,7 +257,7 @@ export default function WithdrawMoneyPage() {
         <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
           <StatCard label="Can Take" value={withdrawal.status.canTake} tone="danger" />
           <StatCard label="Already Taken" value={withdrawal.status.taken} tone="default" />
-          <StatCard label="Effective Can Take" value={withdrawal.status.effectiveCanTake} tone="success" />
+          <StatCard label="Can Take now" value={withdrawal.status.effectiveCanTake} tone="success" />
         </div>
         <Button icon={<ArrowLeftRight size={14} />} onClick={openDialog}>
           Withdraw Money
@@ -247,6 +288,7 @@ export default function WithdrawMoneyPage() {
                 required
                 autoFocus
               />
+              <Helper>{amountHelperText(amount)}</Helper>
             </Field>
             <Field>
               <Label htmlFor="my-wtx-date">Date</Label>
@@ -295,14 +337,50 @@ export default function WithdrawMoneyPage() {
               </p>
             ) : null}
             <div className="flex gap-2.5">
-              <Button type="submit" disabled={submitting} icon={<Save size={14} />}>
-                {submitting ? "Saving…" : "Save"}
+              <Button type="submit" icon={<Save size={14} />}>
+                Review &amp; Withdraw
               </Button>
-              <Button type="button" variant="ghost" onClick={closeDialog} disabled={submitting} icon={<X size={14} />}>
+              <Button type="button" variant="ghost" onClick={closeDialog} icon={<X size={14} />}>
                 Cancel
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={confirmOpen}
+        onOpenChange={(open) => {
+          if (!open) setConfirmOpen(false);
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>Confirm Withdrawal</DialogTitle>
+          <DialogDescription>
+            Withdraw <strong>{formatAmount(amount)}</strong>, paid on <strong>{formatDate(transactionDate)}</strong> via{" "}
+            <strong>{PAYMENT_MODE_LABELS[paymentMode]}</strong>?
+          </DialogDescription>
+
+          {formError ? (
+            <p role="alert" className="mt-4 text-[13.4px] text-danger">
+              {formError}
+            </p>
+          ) : null}
+
+          <div className="mt-4 flex gap-2.5">
+            <Button type="button" onClick={handleConfirmSave} disabled={submitting} icon={<Save size={14} />}>
+              {submitting ? "Saving…" : "Confirm"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setConfirmOpen(false)}
+              disabled={submitting}
+              icon={<X size={14} />}
+            >
+              Back
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

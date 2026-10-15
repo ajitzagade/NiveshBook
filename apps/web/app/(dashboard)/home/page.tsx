@@ -281,9 +281,27 @@ async function PartnerDashboard({ actorUserId }: { actorUserId: string }) {
       </div>
 
       <div className="mb-5 grid grid-cols-3 gap-3 max-[760px]:grid-cols-2 max-[480px]:grid-cols-1">
-        <HighlightStat icon={<Clock size={14} />} label="Pending" value={summary.totalPending} tone="amber" />
-        <HighlightStat icon={<ArrowDownCircle size={14} />} label="Extra Paid" value={summary.totalExtraPaid} tone="success" />
-        <HighlightStat icon={<ArrowUpCircle size={14} />} label="Keep for Later" value={summary.totalKeepForLater} tone="accent" />
+        <HighlightStat
+          icon={<Clock size={14} />}
+          label="Pending"
+          value={summary.totalPending}
+          tone="amber"
+          description="Money you still owe for an investment round"
+        />
+        <HighlightStat
+          icon={<ArrowDownCircle size={14} />}
+          label="Extra Paid"
+          value={summary.totalExtraPaid}
+          tone="success"
+          description="Money you paid beyond what was needed -- counted for next time"
+        />
+        <HighlightStat
+          icon={<ArrowUpCircle size={14} />}
+          label="Keep for Later"
+          value={summary.totalKeepForLater}
+          tone="accent"
+          description="Your withdrawn money kept in the app instead of taken as cash"
+        />
       </div>
 
       <section className="mb-5">
@@ -436,9 +454,27 @@ async function SubPartnerDashboard({ actorUserId }: { actorUserId: string }) {
       </div>
 
       <div className="mb-5 grid grid-cols-3 gap-3 max-[760px]:grid-cols-2 max-[480px]:grid-cols-1">
-        <HighlightStat icon={<Clock size={14} />} label="Pending" value={summary.totalPending} tone="amber" />
-        <HighlightStat icon={<ArrowDownCircle size={14} />} label="Extra Paid" value={summary.totalExtraPaid} tone="success" />
-        <HighlightStat icon={<ArrowUpCircle size={14} />} label="Keep for Later" value={summary.totalKeepForLater} tone="accent" />
+        <HighlightStat
+          icon={<Clock size={14} />}
+          label="Pending"
+          value={summary.totalPending}
+          tone="amber"
+          description="Money you still owe for an investment round"
+        />
+        <HighlightStat
+          icon={<ArrowDownCircle size={14} />}
+          label="Extra Paid"
+          value={summary.totalExtraPaid}
+          tone="success"
+          description="Money you paid beyond what was needed -- counted for next time"
+        />
+        <HighlightStat
+          icon={<ArrowUpCircle size={14} />}
+          label="Keep for Later"
+          value={summary.totalKeepForLater}
+          tone="accent"
+          description="Your withdrawn money kept in the app instead of taken as cash"
+        />
       </div>
 
       <section>

@@ -1,5 +1,7 @@
 export * from "./lib/cn";
 export * from "./lib/format-amount";
+export * from "./lib/amount-in-words";
+export * from "./lib/format-date";
 
 export * from "./components/button";
 export * from "./components/card";

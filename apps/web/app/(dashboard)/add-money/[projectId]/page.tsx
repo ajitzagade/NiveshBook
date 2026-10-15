@@ -6,6 +6,7 @@ import { Wallet, Save, X, ChevronDown, ChevronUp } from "lucide-react";
 import type { InvestmentRequirement, PaymentMode } from "@niveshbook/types";
 import {
   Amount,
+  amountInWords,
   Button,
   Card,
   Dialog,
@@ -14,6 +15,8 @@ import {
   DialogDescription,
   EmptyState,
   Field,
+  formatAmount,
+  formatDate,
   Helper,
   Input,
   Label,
@@ -54,6 +57,13 @@ type StatusState =
 
 function todayDate(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/** Live helper text under the Amount field -- a formatted ₹ (plus words, when available) once something's typed, falling back to a worked example when the field is empty (NFR13). */
+function amountHelperText(amount: string): string {
+  if (!amount.trim()) return "e.g. 1000000 for ₹10,00,000. 0 is accepted -- no minimum payment enforced.";
+  const words = amountInWords(amount);
+  return words ? `${formatAmount(amount)} (${words})` : formatAmount(amount);
 }
 
 /**
@@ -98,6 +108,7 @@ export default function AddMoneyPage() {
   const [idempotencyKey, setIdempotencyKey] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -183,15 +194,24 @@ export default function AddMoneyPage() {
     setReferenceNumber("");
     setNotes("");
     setFormError(null);
+    setConfirmOpen(false);
     setIdempotencyKey(crypto.randomUUID());
   }
 
   function closeDialog() {
     setDialogRequirement(null);
+    setConfirmOpen(false);
   }
 
-  async function handleSubmit(event: FormEvent) {
+  /** Form's own `onSubmit` -- opens the confirm step rather than saving directly (mirrors the Owner Add Money page's established two-step pattern). */
+  function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    if (!dialogRequirement || !partyType || !shareId) return;
+    setFormError(null);
+    setConfirmOpen(true);
+  }
+
+  async function handleConfirmSave() {
     if (!dialogRequirement || !partyType || !shareId) return;
     setSubmitting(true);
     setFormError(null);
@@ -210,7 +230,7 @@ export default function AddMoneyPage() {
         },
         idempotencyKey,
       );
-      toast.success("Investment recorded.");
+      toast.success(`${formatAmount(amount)} recorded for your investment.`);
       const requirement = dialogRequirement;
       closeDialog();
       await loadStatus(requirement);
@@ -275,7 +295,7 @@ export default function AddMoneyPage() {
                     <div className="text-[13.8px] font-bold text-ink">Requirement of {""}
                       <Amount value={requirement.amount} size="sm" />
                     </div>
-                    <div className="text-[12.6px] text-ink-soft">{requirement.requirementDate}</div>
+                    <div className="text-[12.6px] text-ink-soft">{formatDate(requirement.requirementDate)}</div>
                   </div>
                   {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                 </button>
@@ -335,7 +355,7 @@ export default function AddMoneyPage() {
                 required
                 autoFocus
               />
-              <Helper>0 is accepted -- no minimum payment enforced.</Helper>
+              <Helper>{amountHelperText(amount)}</Helper>
             </Field>
             <Field>
               <Label htmlFor="my-tx-date">Date</Label>
@@ -378,20 +398,51 @@ export default function AddMoneyPage() {
               <Label htmlFor="my-tx-notes">Notes</Label>
               <Input id="my-tx-notes" name="notes" value={notes} onChange={(event) => setNotes(event.target.value)} />
             </Field>
-            {formError ? (
-              <p role="alert" className="mb-4 text-[13.4px] text-danger">
-                {formError}
-              </p>
-            ) : null}
             <div className="flex gap-2.5">
-              <Button type="submit" disabled={submitting} icon={<Save size={14} />}>
-                {submitting ? "Saving…" : "Save"}
+              <Button type="submit" icon={<Save size={14} />}>
+                Review &amp; Save
               </Button>
-              <Button type="button" variant="ghost" onClick={closeDialog} disabled={submitting} icon={<X size={14} />}>
+              <Button type="button" variant="ghost" onClick={closeDialog} icon={<X size={14} />}>
                 Cancel
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={confirmOpen}
+        onOpenChange={(open) => {
+          if (!open) setConfirmOpen(false);
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>Confirm Investment</DialogTitle>
+          <DialogDescription>
+            Record <strong>{formatAmount(amount)}</strong> against this funding requirement, paid on{" "}
+            <strong>{formatDate(transactionDate)}</strong> via <strong>{PAYMENT_MODE_LABELS[paymentMode]}</strong>?
+          </DialogDescription>
+
+          {formError ? (
+            <p role="alert" className="mt-4 text-[13.4px] text-danger">
+              {formError}
+            </p>
+          ) : null}
+
+          <div className="mt-4 flex gap-2.5">
+            <Button type="button" onClick={handleConfirmSave} disabled={submitting} icon={<Save size={14} />}>
+              {submitting ? "Saving…" : "Confirm"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setConfirmOpen(false)}
+              disabled={submitting}
+              icon={<X size={14} />}
+            >
+              Back
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

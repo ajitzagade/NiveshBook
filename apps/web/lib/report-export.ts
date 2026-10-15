@@ -6,7 +6,7 @@ import type {
   ProjectMoneyReportRow,
   SubPartnerReportRow,
 } from "@niveshbook/core";
-import { formatAmount } from "@niveshbook/ui";
+import { formatAmount, formatDate } from "@niveshbook/ui";
 import { getReportDefinition, type ReportSlug } from "./report-catalog";
 import { ENTRY_TYPE_LABELS } from "./money-trail-view";
 import type { ReportRow } from "./reports";
@@ -140,7 +140,7 @@ function buildExportTable(slug: ReportSlug, rows: readonly ReportRow[]): ExportT
       return {
         headers: ["Date", "What Happened", "Project", "Person", "Amount", "Payment Mode", "From", "To", "Notes"],
         body: typed.map((entry) => [
-          entry.date,
+          formatDate(entry.date),
           entryWhatHappened(entry),
           entry.projectName,
           entry.personName ?? "—",

@@ -21,6 +21,7 @@ import {
   DropdownMenuTrigger,
   EmptyState,
   Field,
+  formatDate,
   Input,
   Label,
   PageHeader,
@@ -106,7 +107,7 @@ function EntryRowsTable({ rows }: { rows: MoneyHistoryEntry[] }) {
           <TableBody>
             {rows.map((entry) => (
               <TableRow key={entry.id}>
-                <Td className="!text-left text-ink-soft">{entry.date}</Td>
+                <Td className="!text-left text-ink-soft">{formatDate(entry.date)}</Td>
                 <Td className="!text-left">
                   <span className="inline-flex items-center gap-1.5">
                     {ENTRY_TYPE_LABELS[entry.type]}

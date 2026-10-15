@@ -10,6 +10,8 @@ export interface HighlightStatProps {
   label: string;
   value: string | number;
   tone: HighlightStatTone;
+  /** Optional one-line plain-language explainer, rendered below the amount (NFR12). */
+  description?: string;
   className?: string;
 }
 
@@ -20,7 +22,7 @@ export interface HighlightStatProps {
  * tone (not just the value), so it reads at a glance as a callout, not just
  * another number in a grid.
  */
-export function HighlightStat({ icon, label, value, tone, className }: HighlightStatProps) {
+export function HighlightStat({ icon, label, value, tone, description, className }: HighlightStatProps) {
   return (
     <div
       className={cn(
@@ -42,6 +44,7 @@ export function HighlightStat({ icon, label, value, tone, className }: Highlight
         <span className="text-[11.6px] font-semibold text-ink-soft">{label}</span>
       </div>
       <Amount value={value} size="lg" />
+      {description ? <p className="mt-1 text-[11.6px] text-ink-soft">{description}</p> : null}
     </div>
   );
 }

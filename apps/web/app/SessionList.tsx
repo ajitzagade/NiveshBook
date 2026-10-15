@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Card, StatusChip } from "@niveshbook/ui";
+import { Button, Card, formatDateTime, StatusChip } from "@niveshbook/ui";
 
 export interface SessionListItem {
   id: string;
@@ -19,10 +19,6 @@ interface SessionListProps {
 }
 
 const GENERIC_ERROR_MESSAGE = "Something went wrong. Please try again.";
-
-function formatDate(isoTimestamp: string): string {
-  return new Date(isoTimestamp).toLocaleString();
-}
 
 async function readErrorMessage(response: Response): Promise<string> {
   try {
@@ -92,10 +88,10 @@ export function SessionList({ sessions: initialSessions, currentSessionId }: Ses
                     ) : null}
                   </div>
                   <div className="mt-0.5 text-[11.8px] text-ink-faint">
-                    Created: {formatDate(s.createdAt)}
+                    Created: {formatDateTime(s.createdAt)}
                   </div>
                   <div className="text-[11.8px] text-ink-faint">
-                    Expires: {formatDate(s.expiresAt)}
+                    Expires: {formatDateTime(s.expiresAt)}
                   </div>
                 </div>
                 <Button

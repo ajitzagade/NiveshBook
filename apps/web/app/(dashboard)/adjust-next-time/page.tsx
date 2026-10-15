@@ -18,6 +18,7 @@ import {
   Label,
   PageHeader,
   StatusChip,
+  amountInWords,
   formatAmount,
   toast,
   type StatusChipVariant,
@@ -38,6 +39,14 @@ type AdjustNextTimeState =
       withdrawalAdjustments: AdjustNextTimeWithdrawalEntry[];
       canNet: boolean;
     };
+
+/** Live helper text under the Netting dialog's Amount field -- mirrors `add-money/[projectId]/page.tsx`'s identical helper. */
+function amountHelperText(amount: string): string {
+  const base = "The amount agreed to be netted between these two adjustments.";
+  if (!amount.trim()) return base;
+  const words = amountInWords(amount);
+  return words ? `${base} ${formatAmount(amount)} (${words})` : `${base} ${formatAmount(amount)}`;
+}
 
 /** Reused VERBATIM from `add-money/page.tsx`'s `AdjustmentChip` (Story 3.4) -- never reworded (this story's Boundaries). */
 const INVESTMENT_ADJUSTMENT_LABEL: Record<AdjustNextTimeInvestmentEntry["adjustmentType"], string> = {
@@ -295,7 +304,7 @@ export default function AdjustNextTimePage() {
                   resolution={
                     <>
                       <InvestmentAdjustmentChip entry={entry} />
-                      <span className="flex items-center gap-2.5">
+                      <span className="flex flex-wrap items-center gap-2.5">
                         {investmentResolutionText(entry) ? (
                           <span className="text-ink-soft">{investmentResolutionText(entry)}</span>
                         ) : null}
@@ -383,7 +392,7 @@ export default function AdjustNextTimePage() {
                 required
                 autoFocus
               />
-              <Helper>The amount agreed to be netted between these two adjustments.</Helper>
+              <Helper>{amountHelperText(amount)}</Helper>
             </Field>
 
             <Field>

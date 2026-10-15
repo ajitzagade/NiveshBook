@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { MoneyHistoryEntry } from "@niveshbook/types";
-import { Amount, StatusChip, type RowCardField } from "@niveshbook/ui";
+import { Amount, formatDate, StatusChip, type RowCardField } from "@niveshbook/ui";
 import { ENTRY_TYPE_LABELS } from "@/lib/money-trail-view";
 
 /**
@@ -53,7 +53,7 @@ export function mapMoneyHistoryEntryToRowCard(entry: MoneyHistoryEntry): EntryRo
         </StatusChip>
       ) : null,
     fields: [
-      { label: "Date", value: entry.date },
+      { label: "Date", value: formatDate(entry.date) },
       { label: "Project", value: entry.projectName },
       { label: "Person", value: entry.personName ?? "—" },
       { label: "Amount", value: <Amount value={entry.amount} size="sm" /> },

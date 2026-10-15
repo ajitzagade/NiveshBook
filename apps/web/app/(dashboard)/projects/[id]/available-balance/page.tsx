@@ -25,6 +25,7 @@ import {
   Th,
   Td,
   toast,
+  amountInWords,
   formatAmount,
 } from "@niveshbook/ui";
 import {
@@ -371,6 +372,13 @@ export default function AvailableBalancePage() {
                 {target ? (
                   <>
                     Up to <Amount value={target.balance} size="sm" /> -- the current balance.
+                  </>
+                ) : null}
+                {amount.trim() ? (
+                  <>
+                    {" "}
+                    {formatAmount(amount)}
+                    {amountInWords(amount) ? ` (${amountInWords(amount)})` : ""}
                   </>
                 ) : null}
               </Helper>

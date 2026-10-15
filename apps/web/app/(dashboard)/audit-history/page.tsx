@@ -9,6 +9,7 @@ import {
 import {
   Card,
   EmptyState,
+  formatDateTime,
   PageHeader,
   RowCard,
   StatusChip,
@@ -124,7 +125,7 @@ export default async function AuditHistoryPage() {
                 <TableBody>
                   {rows.map((row) => (
                     <TableRow key={row.id}>
-                      <Td className="!text-left text-ink-soft">{new Date(row.createdAt).toLocaleString()}</Td>
+                      <Td className="!text-left text-ink-soft">{formatDateTime(row.createdAt)}</Td>
                       <Td className="!text-left">{ENTITY_LABEL[row.entityType]}</Td>
                       <Td className="!text-left">{ACTION_LABEL[row.action] ?? row.action}</Td>
                       <Td className="!text-left">{row.actorName}</Td>
@@ -166,7 +167,7 @@ export default async function AuditHistoryPage() {
                     )
                   }
                   fields={[
-                    { label: "Date", value: new Date(row.createdAt).toLocaleString() },
+                    { label: "Date", value: formatDateTime(row.createdAt) },
                     { label: "Action", value: ACTION_LABEL[row.action] ?? row.action },
                     { label: "Actor", value: row.actorName },
                     { label: "Amount", value: extractAmount(row) },

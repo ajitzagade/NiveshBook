@@ -31,6 +31,7 @@ import type {
 } from "@niveshbook/types";
 import {
   Amount,
+  amountInWords,
   Button,
   Card,
   Dialog,
@@ -50,6 +51,7 @@ import {
   StatusChip,
   toast,
   formatAmount,
+  formatDate,
   cn,
   type StatusChipVariant,
 } from "@niveshbook/ui";
@@ -193,6 +195,13 @@ const PAYMENT_MODE_LABELS: Record<PaymentMode, string> = {
 const PAYMENT_MODE_OPTIONS = (Object.entries(PAYMENT_MODE_LABELS) as [PaymentMode, string][]).map(
   ([value, label]) => ({ value, label }),
 );
+
+/** Live helper text under an Amount field -- mirrors `withdraw-money/[projectId]/page.tsx`'s identical `amountHelperText`, parameterized here since this page's several Amount fields each have their own distinct empty-state Helper copy. */
+function amountHelperText(amount: string, emptyText: string): string {
+  if (!amount.trim()) return emptyText;
+  const words = amountInWords(amount);
+  return words ? `${formatAmount(amount)} (${words})` : formatAmount(amount);
+}
 
 /**
  * Postgres's `numeric(7,4)` column always round-trips at its full declared
@@ -1998,7 +2007,12 @@ export default function WithdrawMoneyPage() {
                 required
                 autoFocus
               />
-              <Helper>Pre-filled with the full amount currently available -- editable down for a partial decline.</Helper>
+              <Helper>
+                {amountHelperText(
+                  declineAmount,
+                  "Pre-filled with the full amount currently available -- editable down for a partial decline.",
+                )}
+              </Helper>
             </Field>
 
             <DeclineSplitPreview preview={declinePreview} resolveName={findShareName} />
@@ -2116,8 +2130,10 @@ export default function WithdrawMoneyPage() {
                 withdrawal").
               */}
               <Helper>
-                e.g. 1000000 for ₹10,00,000 -- up to 2 decimal places are supported. 0 is accepted -- no
-                forced withdrawal.
+                {amountHelperText(
+                  recordAmount,
+                  "e.g. 1000000 for ₹10,00,000 -- up to 2 decimal places are supported. 0 is accepted -- no forced withdrawal.",
+                )}
               </Helper>
             </Field>
             <Field>
@@ -2355,7 +2371,7 @@ export default function WithdrawMoneyPage() {
                 autoFocus
                 disabled={editTarget !== null && allocatedWithdrawalIds.has(editTarget.transaction.id)}
               />
-              <Helper>0 is accepted -- no forced withdrawal.</Helper>
+              <Helper>{amountHelperText(editAmount, "0 is accepted -- no forced withdrawal.")}</Helper>
             </Field>
             <Field>
               <Label htmlFor="edit-wtx-date">Date</Label>
@@ -2438,7 +2454,7 @@ export default function WithdrawMoneyPage() {
           <DialogTitle>Confirm Changes</DialogTitle>
           <DialogDescription>
             Update this withdrawal to <strong>{formatAmount(editAmount)}</strong> on{" "}
-            <strong>{editDate}</strong> via <strong>{PAYMENT_MODE_LABELS[editPaymentMode]}</strong>
+            <strong>{formatDate(editDate)}</strong> via <strong>{PAYMENT_MODE_LABELS[editPaymentMode]}</strong>
             {editReferenceNumber.trim() ? (
               <>
                 {" "}
@@ -2488,7 +2504,7 @@ export default function WithdrawMoneyPage() {
             {cancelTarget ? (
               <>
                 Cancel the <strong>{formatAmount(cancelTarget.transaction.amount)}</strong> withdrawal
-                from <strong>{cancelTarget.transaction.transactionDate}</strong> (
+                from <strong>{formatDate(cancelTarget.transaction.transactionDate)}</strong> (
                 {PAYMENT_MODE_LABELS[cancelTarget.transaction.paymentMode]})?{" "}
               </>
             ) : null}
@@ -2551,10 +2567,21 @@ export default function WithdrawMoneyPage() {
                 required
                 autoFocus
               />
-              {state.status === "loaded" ? (
+              {state.status === "loaded" || distributeTotal.trim() ? (
                 <Helper>
-                  <Amount value={state.availableToWithdraw} size="sm" /> is available to withdraw from this
-                  Project.
+                  {state.status === "loaded" ? (
+                    <>
+                      <Amount value={state.availableToWithdraw} size="sm" /> is available to withdraw from this
+                      Project.
+                    </>
+                  ) : null}
+                  {distributeTotal.trim() ? (
+                    <>
+                      {" "}
+                      {formatAmount(distributeTotal)}
+                      {amountInWords(distributeTotal) ? ` (${amountInWords(distributeTotal)})` : ""}
+                    </>
+                  ) : null}
                 </Helper>
               ) : null}
             </Field>
@@ -2588,14 +2615,22 @@ export default function WithdrawMoneyPage() {
                       ) : null}
                     </span>
                     <Amount value={suggested} size="sm" />
-                    <Input
-                      aria-label={`Actual withdrawal (${row.name})`}
-                      inputMode="decimal"
-                      value={actual}
-                      disabled={status === "success"}
-                      onChange={(event) => handleDistributeActualChange(row.key, event.target.value)}
-                      className="py-1 text-[13px]"
-                    />
+                    <div>
+                      <Input
+                        aria-label={`Actual withdrawal (${row.name})`}
+                        inputMode="decimal"
+                        value={actual}
+                        disabled={status === "success"}
+                        onChange={(event) => handleDistributeActualChange(row.key, event.target.value)}
+                        className="py-1 text-[13px]"
+                      />
+                      {actual.trim() ? (
+                        <span className="block text-[11.6px] text-ink-faint mt-0.5">
+                          {formatAmount(actual)}
+                          {amountInWords(actual) ? ` (${amountInWords(actual)})` : ""}
+                        </span>
+                      ) : null}
+                    </div>
                     <span
                       className={cn(
                         "text-[12px] tabular-nums",
@@ -2847,12 +2882,20 @@ function AllocationLegRow({
         iconColor={DESTINATION_COLOR[leg.destinationType]}
         label={DESTINATION_LABEL[leg.destinationType]}
         input={
-          <Input
-            aria-label={`Amount (${rowLabel})`}
-            inputMode="decimal"
-            value={leg.amount}
-            onChange={(event) => onChange({ amount: event.target.value })}
-          />
+          <div>
+            <Input
+              aria-label={`Amount (${rowLabel})`}
+              inputMode="decimal"
+              value={leg.amount}
+              onChange={(event) => onChange({ amount: event.target.value })}
+            />
+            {leg.amount.trim() ? (
+              <span className="block text-[11.6px] text-ink-faint mt-0.5">
+                {formatAmount(leg.amount)}
+                {amountInWords(leg.amount) ? ` (${amountInWords(leg.amount)})` : ""}
+              </span>
+            ) : null}
+          </div>
         }
       />
 
@@ -2947,7 +2990,7 @@ function RecordedWithdrawals({
     <div className="ml-1 mt-1.5 flex flex-col gap-1">
       {transactions.map((transaction) => (
         <div key={transaction.id} className="flex items-center gap-2 text-[11.6px] text-ink-soft">
-          <span>{transaction.transactionDate}</span>
+          <span>{formatDate(transaction.transactionDate)}</span>
           <Amount value={transaction.amount} size="sm" />
           <span>{PAYMENT_MODE_LABELS[transaction.paymentMode]}</span>
           {transaction.status === "cancelled" ? (

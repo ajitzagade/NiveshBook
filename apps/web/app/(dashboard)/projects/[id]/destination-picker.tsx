@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
-import { Combobox, formatAmount, type ComboboxOption } from "@niveshbook/ui";
+import { Combobox, formatAmount, formatDate, type ComboboxOption } from "@niveshbook/ui";
 import type { InvestmentRequirement, Project } from "@niveshbook/types";
 import { listInvestmentRequirements } from "@/lib/investment-requirements";
 import { listPartnerShares } from "@/lib/partner-shares";
@@ -225,7 +225,7 @@ export function DestinationRequirementAndSharePickers({
           <option value="">Select a funding requirement…</option>
           {data.requirements.map((requirement) => (
             <option key={requirement.id} value={requirement.id}>
-              {requirement.requirementDate} — {formatAmount(requirement.amount)}
+              {formatDate(requirement.requirementDate)} — {formatAmount(requirement.amount)}
             </option>
           ))}
         </select>

@@ -6,6 +6,7 @@ import {
   Amount,
   Card,
   EmptyState,
+  formatDate,
   PageHeader,
   RowCard,
   StatusChip,
@@ -157,7 +158,7 @@ export default function AllInvestmentsPage() {
                     <TableBody>
                       {entry.requirements.map((requirement) => (
                         <TableRow key={requirement.requirementId}>
-                          <Td className="!text-left">{requirement.requirementDate}</Td>
+                          <Td className="!text-left">{formatDate(requirement.requirementDate)}</Td>
                           <Td>
                             <Amount value={requirement.requirementAmount} size="sm" />
                           </Td>
@@ -215,7 +216,7 @@ export default function AllInvestmentsPage() {
                   {entry.requirements.map((requirement) => (
                     <RowCard
                       key={requirement.requirementId}
-                      title={requirement.requirementDate}
+                      title={formatDate(requirement.requirementDate)}
                       badge={
                         requirement.status ? (
                           <StatusChip variant={ADJUSTMENT_VARIANT[requirement.status.adjustmentType]}>

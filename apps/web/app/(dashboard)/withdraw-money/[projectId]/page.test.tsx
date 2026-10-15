@@ -85,7 +85,7 @@ describe("WithdrawMoneyPage (self-service)", () => {
     await waitFor(() => expect(getMyWithdrawalStatus).toHaveBeenCalledWith("project-1", "partner", "partner-xyz"));
     expect(await screen.findByText("My Project -- your own withdrawals.")).toBeInTheDocument();
     expect(screen.getByText("Can Take")).toBeInTheDocument();
-    expect(screen.getByText("Effective Can Take")).toBeInTheDocument();
+    expect(screen.getByText("Can Take now")).toBeInTheDocument();
   });
 
   it("resolves partyType/shareId from subPartnerId when that's what's in the URL", async () => {
@@ -113,7 +113,8 @@ describe("WithdrawMoneyPage (self-service)", () => {
 
     await user.click(screen.getByRole("button", { name: "Withdraw Money" }));
     await user.type(screen.getByLabelText("Amount"), "30000");
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(screen.getByRole("button", { name: "Review & Withdraw" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm" }));
 
     await waitFor(() => expect(recordWithdrawalTransaction).toHaveBeenCalledTimes(1));
     const [projectId, input] = recordWithdrawalTransaction.mock.calls[0];
@@ -121,18 +122,36 @@ describe("WithdrawMoneyPage (self-service)", () => {
     expect(input).toMatchObject({ partyType: "partner", shareId: "partner-xyz", amount: "30000" });
   });
 
-  it("shows the server's error message inline when the submit exceeds Can Take (403)", async () => {
+  it("shows a friendly over-limit message inline -- client-side, before ever calling the server -- when the typed amount exceeds Can Take now", async () => {
     const user = userEvent.setup();
     getOwnershipStructure.mockResolvedValue({ projectId: "project-1", projectName: "My Project" });
     getMyWithdrawalStatus.mockResolvedValue(makeWithdrawalStatus());
-    recordWithdrawalTransaction.mockRejectedValue(new Error("This exceeds your Can Take."));
 
     render(<WithdrawMoneyPage />);
     await screen.findByText("My Project -- your own withdrawals.");
     await user.click(screen.getByRole("button", { name: "Withdraw Money" }));
     await user.type(screen.getByLabelText("Amount"), "999999");
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(screen.getByRole("button", { name: "Review & Withdraw" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("This exceeds your Can Take.");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "You've reached your Can Take limit for this Project -- up to ₹80,000 is available.",
+    );
+    expect(recordWithdrawalTransaction).not.toHaveBeenCalled();
+  });
+
+  it("shows the server's error message inline when a within-limit submit is still rejected", async () => {
+    const user = userEvent.setup();
+    getOwnershipStructure.mockResolvedValue({ projectId: "project-1", projectName: "My Project" });
+    getMyWithdrawalStatus.mockResolvedValue(makeWithdrawalStatus());
+    recordWithdrawalTransaction.mockRejectedValue(new Error("Something went wrong. Please try again."));
+
+    render(<WithdrawMoneyPage />);
+    await screen.findByText("My Project -- your own withdrawals.");
+    await user.click(screen.getByRole("button", { name: "Withdraw Money" }));
+    await user.type(screen.getByLabelText("Amount"), "30000");
+    await user.click(screen.getByRole("button", { name: "Review & Withdraw" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong. Please try again.");
   });
 });

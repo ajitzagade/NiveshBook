@@ -38,7 +38,7 @@ describe("mapMoneyHistoryEntryToRowCard (spec-mobile-responsive-phase2-table-car
       "To",
       "Notes",
     ]);
-    expect(result.fields[0]?.value).toBe("2026-09-01");
+    expect(result.fields[0]?.value).toBe("01-09-2026");
     expect(result.fields[1]?.value).toBe("Project A");
     expect(result.fields[2]?.value).toBe("Asha");
     expect(result.fields[4]?.value).toBe("NEFT");

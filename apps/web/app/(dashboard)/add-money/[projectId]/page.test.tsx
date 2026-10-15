@@ -138,7 +138,8 @@ describe("AddMoneyPage (self-service)", () => {
     await user.click(await screen.findByRole("button", { name: "Add Investment" }));
 
     await user.type(screen.getByLabelText("Amount"), "50000");
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(screen.getByRole("button", { name: "Review & Save" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm" }));
 
     await waitFor(() => expect(recordInvestmentTransaction).toHaveBeenCalledTimes(1));
     const [projectId, requirementId, input] = recordInvestmentTransaction.mock.calls[0];
@@ -162,7 +163,8 @@ describe("AddMoneyPage (self-service)", () => {
     await user.click(screen.getByRole("button", { name: /Requirement of/ }));
     await user.click(await screen.findByRole("button", { name: "Add Investment" }));
     await user.type(screen.getByLabelText("Amount"), "50000");
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(screen.getByRole("button", { name: "Review & Save" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Shares are not fully allocated.");
   });

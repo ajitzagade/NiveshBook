@@ -195,7 +195,7 @@ describe("exportReportToExcel (Story 5.8, FR40)", () => {
       "Notes",
     ]);
     expect(table[1]).toEqual([
-      "2026-09-10",
+      "10-09-2026",
       "Money Added",
       "Project Alpha",
       "Partner A",
@@ -206,7 +206,7 @@ describe("exportReportToExcel (Story 5.8, FR40)", () => {
       "First tranche",
     ]);
     expect(table[2]).toEqual([
-      "2026-09-12",
+      "12-09-2026",
       "Money Withdrawn — Cancelled",
       "Project Alpha",
       "—",
@@ -217,7 +217,7 @@ describe("exportReportToExcel (Story 5.8, FR40)", () => {
       "—",
     ]);
     expect(table[3]).toEqual([
-      "2026-09-13",
+      "13-09-2026",
       "Moved to Project — Cancelled (reversal)",
       "Project Beta",
       "—",
@@ -389,7 +389,7 @@ describe("exportReportToPdf (Story 5.8, FR40)", () => {
       ["Date", "What Happened", "Project", "Person", "Amount", "Payment Mode", "From", "To", "Notes"],
     ]);
     expect(lastAutoTableCall?.options.body).toEqual([
-      ["2026-09-10", "Money Added", "Project A", "Partner A", "₹1,00,000", "NEFT", "—", "—", "First tranche"],
+      ["10-09-2026", "Money Added", "Project A", "Partner A", "₹1,00,000", "NEFT", "—", "—", "First tranche"],
     ]);
   });
 
