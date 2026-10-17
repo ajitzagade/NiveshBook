@@ -10,6 +10,14 @@ overrides:
   # "pin the transitive dependency forward to the patched range" precedent
   # as the existing esbuild@<0.25.0 override for drizzle-kit.
   uuid@<11.1.1: ">=11.1.1"
+  # next@16.3.8's own bundled sharp (GHSA-wq5f-xc86-pv6w, librsvg
+  # vulnerability) and multiple tailwindcss/next>postcss paths' source-map-js
+  # (GHSA-68fv-2mgg-jv7q, event-loop DoS) both surfaced in `pnpm audit` after
+  # the 2026-10-17 next 16.3.6 -> 16.3.8 bump (itself fixing 3 next CVEs) --
+  # same "pin the transitive dependency forward to the patched range"
+  # precedent as the existing esbuild/uuid overrides above.
+  source-map-js@<1.2.2: ">=1.2.2"
+  sharp@<0.35.5: ">=0.35.5"
 allowBuilds:
   argon2: true
   # Story 5.8: core-js is jspdf's optional canvg (SVG-to-canvas) dependency
@@ -21,15 +29,15 @@ allowBuilds:
   sharp: true
   unrs-resolver: true
 minimumReleaseAgeExclude:
-  - '@next/env@16.3.6'
-  - '@next/eslint-plugin-next@16.3.6'
-  - '@next/swc-darwin-arm64@16.3.6'
-  - '@next/swc-darwin-x64@16.3.6'
-  - '@next/swc-linux-arm64-gnu@16.3.6'
-  - '@next/swc-linux-arm64-musl@16.3.6'
-  - '@next/swc-linux-x64-gnu@16.3.6'
-  - '@next/swc-linux-x64-musl@16.3.6'
-  - '@next/swc-win32-arm64-msvc@16.3.6'
-  - '@next/swc-win32-x64-msvc@16.3.6'
-  - eslint-config-next@16.3.6
-  - next@16.3.6
+  - '@next/env@16.3.8'
+  - '@next/eslint-plugin-next@16.3.8'
+  - '@next/swc-darwin-arm64@16.3.8'
+  - '@next/swc-darwin-x64@16.3.8'
+  - '@next/swc-linux-arm64-gnu@16.3.8'
+  - '@next/swc-linux-arm64-musl@16.3.8'
+  - '@next/swc-linux-x64-gnu@16.3.8'
+  - '@next/swc-linux-x64-musl@16.3.8'
+  - '@next/swc-win32-arm64-msvc@16.3.8'
+  - '@next/swc-win32-x64-msvc@16.3.8'
+  - eslint-config-next@16.3.8
+  - next@16.3.8
