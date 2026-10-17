@@ -55,34 +55,40 @@ describe("ReportsPage (Story 5.7, FR38/FR39 tile grid)", () => {
     (redirect as unknown as Mock).mockClear();
   });
 
-  it("owner_admin sees all 10 report tiles, including Money Movement", async () => {
+  it("owner_admin sees all 10 REPORT_DEFINITIONS tiles plus the Project Money Flow Report tile (11 total)", async () => {
     findUserById.mockResolvedValue({ id: "user-1", role: "owner_admin", active: true });
 
     const result = await ReportsPage();
 
     const tiles = findAllComponents(result, ReportTile);
-    expect(tiles).toHaveLength(10);
-    expect(tiles.map((tile) => (tile.props as { name: string }).name)).toContain("Money Movement");
+    expect(tiles).toHaveLength(11);
+    const names = tiles.map((tile) => (tile.props as { name: string }).name);
+    expect(names).toContain("Money Movement");
+    expect(names).toContain("Project Money Flow Report");
   });
 
-  it("partner sees 9 tiles -- Money Movement is absent, not disabled/hidden-but-rendered", async () => {
+  it("partner sees 9 tiles -- Money Movement and Project Money Flow Report are both absent, not disabled/hidden-but-rendered", async () => {
     findUserById.mockResolvedValue({ id: "user-1", role: "partner", active: true });
 
     const result = await ReportsPage();
 
     const tiles = findAllComponents(result, ReportTile);
     expect(tiles).toHaveLength(9);
-    expect(tiles.map((tile) => (tile.props as { name: string }).name)).not.toContain("Money Movement");
+    const names = tiles.map((tile) => (tile.props as { name: string }).name);
+    expect(names).not.toContain("Money Movement");
+    expect(names).not.toContain("Project Money Flow Report");
   });
 
-  it("sub_partner sees 9 tiles -- Money Movement is absent, identical set to partner's own", async () => {
+  it("sub_partner sees 9 tiles -- Money Movement and Project Money Flow Report are both absent, identical set to partner's own", async () => {
     findUserById.mockResolvedValue({ id: "user-1", role: "sub_partner", active: true });
 
     const result = await ReportsPage();
 
     const tiles = findAllComponents(result, ReportTile);
     expect(tiles).toHaveLength(9);
-    expect(tiles.map((tile) => (tile.props as { name: string }).name)).not.toContain("Money Movement");
+    const names = tiles.map((tile) => (tile.props as { name: string }).name);
+    expect(names).not.toContain("Money Movement");
+    expect(names).not.toContain("Project Money Flow Report");
   });
 
   it("the tile grid stacks to a true single column below 480px (spec-mobile-responsive-phase1-nav-foundation, Decision #3)", async () => {

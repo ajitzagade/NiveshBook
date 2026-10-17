@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { FileText } from "lucide-react";
 import { createUserPort } from "@niveshbook/db";
 import { PageHeader, ReportTile } from "@niveshbook/ui";
 import { requireSession } from "@/lib/session-guard";
@@ -70,6 +71,25 @@ export default async function ReportsPage() {
             />
           </Link>
         ))}
+        {/*
+          Project Money Flow Report: deliberately NOT part of
+          `REPORT_DEFINITIONS`/`ReportSlug` -- every other tile here links to
+          the generic `/reports/[type]` flat-table viewer, but this report is
+          a multi-section, multi-project downloadable PDF with no flat-table
+          shape to fit into that system. Owner/Admin-only, checked inline
+          here rather than via a `roles` field, since this is the one tile
+          the grid-building loop above doesn't drive.
+        */}
+        {actor.role === "owner_admin" ? (
+          <Link href="/reports/project-money-flow" className="no-underline">
+            <ReportTile
+              icon={<FileText size={14} />}
+              iconColor="#2F6FED"
+              name="Project Money Flow Report"
+              description="One downloadable PDF per Project -- every transaction, Should Pay/Can Take, ownership shares, and the Money Flow diagram."
+            />
+          </Link>
+        ) : null}
       </div>
     </div>
   );

@@ -66,6 +66,7 @@ export type Action =
   | "reports:payment_mode"
   | "reports:adjustment"
   | "reports:money_history"
+  | "reports:project_money_flow"
   | "ownership_structure:view_project"
   | "ownership_structure:view_partner"
   | "withdrawal_reallocations:create"
@@ -381,6 +382,14 @@ const PERMISSIONS: Record<Action, ReadonlySet<Role>> = {
   "reports:payment_mode": new Set(["owner_admin", "partner", "sub_partner"]),
   "reports:adjustment": new Set(["owner_admin", "partner", "sub_partner"]),
   "reports:money_history": new Set(["owner_admin", "partner", "sub_partner"]),
+  // Project Money Flow Report: a multi-project, multi-section document
+  // combining itemized transactions, Should Pay/Can Take, cross-project
+  // links, and share breakdowns across potentially-many Projects at once --
+  // owner_admin only, mirroring `reports:money_movement`'s identical
+  // all-or-nothing-for-the-role shape (not a self-scoped report; redacting
+  // cross-partner rows/edges/diagram branches for a self-access viewer is
+  // out of scope for v1, a documented future enhancement, not built here).
+  "reports:project_money_flow": new Set(["owner_admin"]),
   // Story 5.10: the Ownership & Money-Flow Structure Diagram's two actions.
   // `ownership_structure:view_project` (the full, unscoped Project tree
   // showing every current Partner Share) is Owner/Admin-only, all-or-nothing

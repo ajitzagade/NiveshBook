@@ -2093,6 +2093,43 @@ describe("authorizeScope — reports:money_movement (Story 5.7, owner_admin-only
   });
 });
 
+describe("authorizeScope — reports:project_money_flow (owner_admin-only, mirrors reports:money_movement)", () => {
+  it("allows owner_admin", async () => {
+    const users = createFakeUserPort([makeUser({ id: "owner-1", role: "owner_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("owner-1", "reports:project_money_flow", deps)).toEqual({ allowed: true });
+  });
+
+  it("denies partner -- this report exposes full cross-partner Should Pay/Can Take/transactions for potentially many Projects in one document, never self-scoped", async () => {
+    const users = createFakeUserPort([makeUser({ id: "partner-1", role: "partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("partner-1", "reports:project_money_flow", deps)).toEqual({ allowed: false });
+  });
+
+  it("denies sub_partner", async () => {
+    const users = createFakeUserPort([makeUser({ id: "sub-1", role: "sub_partner" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("sub-1", "reports:project_money_flow", deps)).toEqual({ allowed: false });
+  });
+
+  it("denies project_admin", async () => {
+    const users = createFakeUserPort([makeUser({ id: "pa-1", role: "project_admin" })]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("pa-1", "reports:project_money_flow", deps)).toEqual({ allowed: false });
+  });
+
+  it("denies a nonexistent actor", async () => {
+    const users = createFakeUserPort([]);
+    const deps: AuthorizeDeps = { users };
+
+    expect(await authorizeScope("ghost", "reports:project_money_flow", deps)).toEqual({ allowed: false });
+  });
+});
+
 /**
  * Story 5.10: the Ownership & Money-Flow Structure Diagram's two new
  * actions. `ownership_structure:view_project` (the unscoped, full-Project

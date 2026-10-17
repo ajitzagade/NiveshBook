@@ -9,6 +9,7 @@ import {
   ReactFlow,
   type NodeChange,
   type NodeProps,
+  type OnInit,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { FolderKanban, HelpCircle, RotateCcw, User, Wallet } from "lucide-react";
@@ -150,10 +151,20 @@ export interface StructureCanvasProps {
   onSelectPartner: (partnerId: string) => void;
   /** Real money-flow edges (founder feedback 2026-09-28) -- only ever rendered in Money Flow view mode; see `buildNodesAndEdges`'s own doc comment. */
   moneyFlowEdges: MoneyFlowEdge[];
+  /**
+   * Optional, forwarded straight to `<ReactFlow onInit>` -- undefined for
+   * every existing caller (this page's own interactive view), so existing
+   * behavior is unchanged. The Project Money Flow Report's off-screen
+   * diagram-capture step is the one caller that needs a readiness signal
+   * (fires once the viewport is initialized, at which point `fitView()` can
+   * be called and awaited) rather than a guessed delay before capturing a
+   * static image of this canvas.
+   */
+  onInit?: OnInit<StructureNode>;
 }
 
 /** Renders one already-scoped `OwnershipStructureTree` as a diagram -- `nodes`/`edges` are recomputed only when `tree`/`viewMode`/`projectName`/`moneyFlowEdges` change (Decision #7: a view-mode switch never re-fetches, and this `useMemo` means it never even re-runs the layout math for a change that only affects `onSelectPartner`'s closure identity). */
-export function StructureCanvas({ tree, viewMode, projectName, onSelectPartner, moneyFlowEdges }: StructureCanvasProps) {
+export function StructureCanvas({ tree, viewMode, projectName, onSelectPartner, moneyFlowEdges, onInit }: StructureCanvasProps) {
   const { nodes, edges } = useMemo(
     () => buildNodesAndEdges(tree, viewMode, projectName, onSelectPartner, moneyFlowEdges),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `onSelectPartner` is recreated by the parent every render but is stable in behavior; including it would defeat this memo's "view-mode switch never recomputes layout for an unrelated reason" purpose.
@@ -249,6 +260,7 @@ export function StructureCanvas({ tree, viewMode, projectName, onSelectPartner, 
         edges={edges}
         nodeTypes={NODE_TYPES}
         onNodesChange={onNodesChange}
+        onInit={onInit}
         // `fitView` alone can still crop on a narrow phone viewport if the
         // computed fit would need to zoom in past 1x to fill it -- capping
         // `minZoom` well below 1 (and `fitViewOptions.minZoom` to match)
