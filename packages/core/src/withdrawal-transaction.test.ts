@@ -11,6 +11,7 @@ import type {
 import { PartnerSharesNotFullyAllocatedError, CanTakeSubPartnerSharesOverAllocatedError } from "./can-take";
 import type {
   CancelWithdrawalTransactionInput,
+  CreateWithdrawalTransactionBatchInput,
   CreateWithdrawalTransactionInput,
   EditWithdrawalTransactionInput,
   WithdrawalTransactionPort,
@@ -22,6 +23,7 @@ import {
   buildWithdrawalSnapshot,
   cancelWithdrawalTransaction,
   editWithdrawalTransaction,
+  EmptyWithdrawalTransactionBatchError,
   InvalidWithdrawalAmountError,
   InvalidWithdrawalDateError,
   InvalidWithdrawalPaymentModeError,
@@ -32,9 +34,11 @@ import {
   listAuditLogForWithdrawalTransaction,
   listWithdrawalTransactions,
   recordWithdrawalTransaction,
+  recordWithdrawalTransactionBatch,
   WITHDRAWAL_PAYMENT_MODES,
   type EditWithdrawalTransactionDeps,
   type EditWithdrawalTransactionRequest,
+  type RecordWithdrawalTransactionBatchInput,
   type RecordWithdrawalTransactionInput,
 } from "./withdrawal-transaction";
 
@@ -84,6 +88,22 @@ function makeInput(
   };
 }
 
+function makeBatchInput(
+  overrides: Partial<RecordWithdrawalTransactionBatchInput> = {},
+): RecordWithdrawalTransactionBatchInput {
+  return {
+    partyType: "partner",
+    shareId: "a",
+    transactionDate: "2026-10-05",
+    rows: [
+      { amount: "150000", paymentMode: "cash", referenceNumber: null, notes: null },
+      { amount: "100000", paymentMode: "neft", referenceNumber: "REF-2", notes: null },
+    ],
+    idempotencyKey: "batch-key-1",
+    ...overrides,
+  };
+}
+
 /**
  * A WithdrawalTransactionPort backed by a mutable in-memory array -- mirrors
  * `investment-transaction.test.ts`'s `createFakeInvestmentTransactionPort`
@@ -109,15 +129,18 @@ function makeInput(
  */
 function createFakeWithdrawalTransactionPort(): WithdrawalTransactionPort & {
   calls: CreateWithdrawalTransactionInput[];
+  batchCalls: CreateWithdrawalTransactionBatchInput[];
   editCalls: EditWithdrawalTransactionInput[];
   cancelCalls: CancelWithdrawalTransactionInput[];
   rows: WithdrawalTransaction[];
   auditEntries: AuditLogEntry[];
 } {
   const calls: CreateWithdrawalTransactionInput[] = [];
+  const batchCalls: CreateWithdrawalTransactionBatchInput[] = [];
   const editCalls: EditWithdrawalTransactionInput[] = [];
   const cancelCalls: CancelWithdrawalTransactionInput[] = [];
   const rows: WithdrawalTransaction[] = [];
+  const batchRowsByIdempotencyKey = new Map<string, WithdrawalTransaction[]>();
   // Story 5.9: tracks real `audit_log`-shaped entries alongside `rows`,
   // mirroring `investment-transaction.test.ts`'s identical fake one ledger
   // over -- proves `findAuditLogByTransactionId`/`listAuditLogForWithdrawalTransaction`
@@ -130,10 +153,51 @@ function createFakeWithdrawalTransactionPort(): WithdrawalTransactionPort & {
   >();
   return {
     calls,
+    batchCalls,
     editCalls,
     cancelCalls,
     rows,
     auditEntries,
+    async recordTransactionBatch(input) {
+      batchCalls.push(input);
+      const existing = batchRowsByIdempotencyKey.get(input.idempotencyKey);
+      if (existing) {
+        return { transactions: existing, created: false };
+      }
+      const transactions = input.rows.map((row) => {
+        const transaction: WithdrawalTransaction = {
+          id: `wtx-${rows.length + 1}`,
+          projectId: input.projectId,
+          partyType: input.partyType,
+          shareId: input.shareId,
+          sharePercentSnapshot: input.sharePercentSnapshot,
+          canTakeSnapshot: input.canTakeSnapshot,
+          amount: row.amount,
+          transactionDate: input.transactionDate,
+          paymentMode: row.paymentMode,
+          referenceNumber: row.referenceNumber,
+          notes: row.notes,
+          status: "active",
+          reversalOfTransactionId: null,
+          createdAt: new Date().toISOString(),
+        };
+        rows.push(transaction);
+        auditEntries.push({
+          id: `audit-${auditEntries.length + 1}`,
+          entityType: "withdrawal_transaction",
+          entityId: transaction.id,
+          action: "create",
+          actorUserId: input.actorUserId,
+          oldValue: null,
+          newValue: transaction,
+          reason: null,
+          createdAt: new Date().toISOString(),
+        });
+        return transaction;
+      });
+      batchRowsByIdempotencyKey.set(input.idempotencyKey, transactions);
+      return { transactions, created: true };
+    },
     async recordTransaction(input) {
       calls.push(input);
       const transaction: WithdrawalTransaction = {
@@ -643,6 +707,252 @@ describe("recordWithdrawalTransaction — validation", () => {
       "bank_transfer",
       "other",
     ]);
+  });
+});
+
+describe("recordWithdrawalTransactionBatch", () => {
+  const partners = [makePartner({ partnerId: "a", name: "A", sharePercent: "100" as Percent })];
+
+  it("rejects an empty rows array with EmptyWithdrawalTransactionBatchError, before ever calling the port", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+
+    await expect(
+      recordWithdrawalTransactionBatch(
+        "project-1",
+        "1000000" as Money,
+        partners,
+        {},
+        makeBatchInput({ rows: [] }),
+        "actor-1",
+        { withdrawalTransactions: port },
+      ),
+    ).rejects.toThrow(EmptyWithdrawalTransactionBatchError);
+    expect(port.batchCalls).toHaveLength(0);
+  });
+
+  it("validates every row -- an invalid amount in the SECOND row rejects the whole batch before the port is ever called", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+
+    await expect(
+      recordWithdrawalTransactionBatch(
+        "project-1",
+        "1000000" as Money,
+        partners,
+        {},
+        makeBatchInput({
+          rows: [
+            { amount: "150000", paymentMode: "cash", referenceNumber: null, notes: null },
+            { amount: "not-a-number", paymentMode: "neft", referenceNumber: null, notes: null },
+          ],
+        }),
+        "actor-1",
+        { withdrawalTransactions: port },
+      ),
+    ).rejects.toThrow(InvalidWithdrawalAmountError);
+    expect(port.batchCalls).toHaveLength(0);
+  });
+
+  it("validates an unrecognized paymentMode in any row with InvalidWithdrawalPaymentModeError", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+
+    await expect(
+      recordWithdrawalTransactionBatch(
+        "project-1",
+        "1000000" as Money,
+        partners,
+        {},
+        makeBatchInput({
+          rows: [{ amount: "150000", paymentMode: "bitcoin", referenceNumber: null, notes: null }],
+        }),
+        "actor-1",
+        { withdrawalTransactions: port },
+      ),
+    ).rejects.toThrow(InvalidWithdrawalPaymentModeError);
+  });
+
+  it("rejects a missing/blank idempotencyKey with MissingWithdrawalIdempotencyKeyError", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+
+    await expect(
+      recordWithdrawalTransactionBatch(
+        "project-1",
+        "1000000" as Money,
+        partners,
+        {},
+        makeBatchInput({ idempotencyKey: "   " }),
+        "actor-1",
+        { withdrawalTransactions: port },
+      ),
+    ).rejects.toThrow(MissingWithdrawalIdempotencyKeyError);
+  });
+
+  it("AC2 parity: accepts amount '0' in a row -- no forced withdrawal, mirrors the single-row rule", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+
+    await recordWithdrawalTransactionBatch(
+      "project-1",
+      "1000000" as Money,
+      partners,
+      {},
+      makeBatchInput({ rows: [{ amount: "0", paymentMode: "cash", referenceNumber: null, notes: null }] }),
+      "actor-1",
+      { withdrawalTransactions: port },
+    );
+
+    expect(port.batchCalls).toHaveLength(1);
+    expect(port.batchCalls[0]?.rows[0]?.amount).toBe("0");
+  });
+
+  it("accepts a batch whose summed amount exceeds Can Take -- no cap enforced by this function (Story 4.5's gate lives at the route)", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+    // Can Take here is ₹1,00,000; the batch's rows sum to ₹3,00,000, well over it.
+    const outcome = await recordWithdrawalTransactionBatch(
+      "project-1",
+      "100000" as Money,
+      partners,
+      {},
+      makeBatchInput({
+        rows: [
+          { amount: "150000", paymentMode: "cash", referenceNumber: null, notes: null },
+          { amount: "150000", paymentMode: "neft", referenceNumber: null, notes: null },
+        ],
+      }),
+      "actor-1",
+      { withdrawalTransactions: port },
+    );
+
+    expect(outcome.created).toBe(true);
+    expect(port.batchCalls[0]?.canTakeSnapshot).toBe("100000");
+  });
+
+  it("builds ONE Can Take snapshot, shared across every row in the batch", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+
+    await recordWithdrawalTransactionBatch(
+      "project-1",
+      "1000000" as Money,
+      partners,
+      {},
+      makeBatchInput(),
+      "actor-1",
+      { withdrawalTransactions: port },
+    );
+
+    const call = port.batchCalls[0];
+    expect(call?.sharePercentSnapshot).toBe("100");
+    // `canTakeSnapshot` is a single field on the batch input (not per-row) --
+    // structurally, it can only be "shared across every row" by construction.
+    expect(call?.canTakeSnapshot).toBeDefined();
+  });
+
+  it("passes every row's amount/paymentMode/referenceNumber/notes through, normalizing blank referenceNumber/notes to null", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+
+    await recordWithdrawalTransactionBatch(
+      "project-1",
+      "1000000" as Money,
+      partners,
+      {},
+      makeBatchInput({
+        rows: [
+          { amount: "150000", paymentMode: "cash", referenceNumber: "  ", notes: null },
+          { amount: "100000", paymentMode: "rtgs", referenceNumber: "UTR-123", notes: "  " },
+        ],
+      }),
+      "actor-1",
+      { withdrawalTransactions: port },
+    );
+
+    const rows = port.batchCalls[0]?.rows;
+    expect(rows).toHaveLength(2);
+    expect(rows?.[0]).toMatchObject({ amount: "150000", paymentMode: "cash", referenceNumber: null, notes: null });
+    expect(rows?.[1]).toMatchObject({ amount: "100000", paymentMode: "rtgs", referenceNumber: "UTR-123", notes: null });
+  });
+
+  it("propagates PartnerSharesNotFullyAllocatedError once every row's field validation passes, mirroring the single-row precondition ordering", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+    const underAllocated = [makePartner({ partnerId: "a", sharePercent: "50" as Percent })];
+
+    await expect(
+      recordWithdrawalTransactionBatch(
+        "project-1",
+        "1000000" as Money,
+        underAllocated,
+        {},
+        makeBatchInput(),
+        "actor-1",
+        { withdrawalTransactions: port },
+      ),
+    ).rejects.toThrow(PartnerSharesNotFullyAllocatedError);
+    expect(port.batchCalls).toHaveLength(0);
+  });
+
+  it("propagates CanTakeSubPartnerSharesOverAllocatedError once every row's field validation passes", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+    const overAllocated = [
+      makePartner({ partnerId: "a", name: "A", sharePercent: "50" as Percent }),
+      makePartner({ partnerId: "b", name: "B", sharePercent: "50" as Percent }),
+    ];
+    const subsByPartnerId = {
+      a: [makeSub({ subPartnerId: "sub1", partnerId: "a", sharePercent: "60" as Percent })],
+    };
+
+    await expect(
+      recordWithdrawalTransactionBatch(
+        "project-1",
+        "1000000" as Money,
+        overAllocated,
+        subsByPartnerId,
+        makeBatchInput(),
+        "actor-1",
+        { withdrawalTransactions: port },
+      ),
+    ).rejects.toThrow(CanTakeSubPartnerSharesOverAllocatedError);
+    expect(port.batchCalls).toHaveLength(0);
+  });
+
+  it("propagates WithdrawalShareNotFoundError when shareId doesn't match any current Partner/Sub-partner", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+
+    await expect(
+      recordWithdrawalTransactionBatch(
+        "project-1",
+        "1000000" as Money,
+        partners,
+        {},
+        makeBatchInput({ shareId: "does-not-exist" }),
+        "actor-1",
+        { withdrawalTransactions: port },
+      ),
+    ).rejects.toThrow(WithdrawalShareNotFoundError);
+  });
+
+  it("idempotent replay: calling with the same idempotencyKey twice returns the original batch's rows both times, via the port's own replay contract", async () => {
+    const port = createFakeWithdrawalTransactionPort();
+
+    const first = await recordWithdrawalTransactionBatch(
+      "project-1",
+      "1000000" as Money,
+      partners,
+      {},
+      makeBatchInput(),
+      "actor-1",
+      { withdrawalTransactions: port },
+    );
+    const second = await recordWithdrawalTransactionBatch(
+      "project-1",
+      "1000000" as Money,
+      partners,
+      {},
+      makeBatchInput(),
+      "actor-1",
+      { withdrawalTransactions: port },
+    );
+
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
+    expect(second.transactions.map((t) => t.id)).toEqual(first.transactions.map((t) => t.id));
+    expect(port.batchCalls).toHaveLength(2);
   });
 });
 

@@ -13,10 +13,12 @@ import { computeShouldPay } from "./should-pay";
 import type {
   CancelInvestmentTransactionInput,
   CancelTransactionResult,
+  CreateInvestmentTransactionBatchInput,
   CreateInvestmentTransactionInput,
   EditInvestmentTransactionInput,
   EditTransactionResult,
   InvestmentTransactionPort,
+  RecordTransactionBatchResult,
   RecordTransactionResult,
 } from "./investment-transaction-port";
 
@@ -155,6 +157,22 @@ export class AlreadyCancelledError extends Error {
   constructor() {
     super("This transaction has already been cancelled.");
     this.name = "AlreadyCancelledError";
+  }
+}
+
+/**
+ * Thrown by `recordInvestmentTransactionBatch` when `rows` is empty --
+ * recording a split payment with zero payment-method legs isn't a
+ * meaningful request. The UI never constructs an empty `rows` array (it
+ * always starts with one row and only allows adding, never removing below
+ * one), so this is a defense-in-depth guard against a direct API caller,
+ * mirroring this module's existing validate-everything-again-at-the-core-
+ * layer convention rather than trusting the route layer alone.
+ */
+export class EmptyTransactionBatchError extends Error {
+  constructor() {
+    super("At least one payment-method row is required.");
+    this.name = "EmptyTransactionBatchError";
   }
 }
 
@@ -313,6 +331,103 @@ export async function recordInvestmentTransaction(
   };
 
   return deps.investmentTransactions.recordTransaction(portInput);
+}
+
+/** One payment-method row within a split-payment batch -- the per-row fields `RecordInvestmentTransactionInput` carries, minus everything shared across the whole batch (`partyType`/`shareId`/`transactionDate`/`idempotencyKey`). */
+export interface RecordInvestmentTransactionBatchRowInput {
+  /** Raw, unvalidated -- `"0"` is explicitly accepted, mirroring `RecordInvestmentTransactionInput.amount`. */
+  amount: string;
+  /** Raw, unvalidated -- must match one of `PAYMENT_MODES` after normalization. */
+  paymentMode: string;
+  referenceNumber: string | null;
+  notes: string | null;
+}
+
+/**
+ * A split payment -- one real-world contribution recorded across multiple
+ * payment methods in a single submission (e.g. part cash, part bank
+ * transfer, part RTGS). `partyType`/`shareId`/`transactionDate` are shared
+ * across every row (one party's one contribution, recorded on one date) --
+ * only `amount`/`paymentMode`/`referenceNumber`/`notes` vary per row,
+ * mirroring `RecordInvestmentTransactionInput`'s per-field shape one row at
+ * a time. `idempotencyKey` identifies the whole batch, not any single row --
+ * see `InvestmentTransactionPort.recordTransactionBatch`'s own doc comment
+ * for how that's reconciled with `investment_transactions.idempotencyKey`
+ * staying a per-row DB-level UNIQUE column.
+ */
+export interface RecordInvestmentTransactionBatchInput {
+  partyType: "partner" | "sub_partner";
+  shareId: string;
+  /** Raw, unvalidated `YYYY-MM-DD` string. */
+  transactionDate: string;
+  rows: readonly RecordInvestmentTransactionBatchRowInput[];
+  /** Required, non-empty -- identifies this whole batch submission, mirroring `RecordInvestmentTransactionInput.idempotencyKey`'s exact role one level up. */
+  idempotencyKey: string;
+}
+
+/**
+ * Records a split payment -- one contribution paid across multiple payment
+ * methods -- as multiple `investment_transactions` rows sharing one
+ * `transactionDate`/party/Should-Pay-snapshot, inserted atomically (all rows
+ * or none). Mirrors `recordInvestmentTransaction`'s exact validation/
+ * snapshot/delegate shape, just validating every row in `input.rows` instead
+ * of one set of fields, and building the Should Pay snapshot exactly once
+ * (shared across every row in the batch, since they're all the same
+ * party's contribution against the same requirement at the same moment --
+ * identical to what `recordInvestmentTransaction` would compute for that
+ * party if called once at this same instant). Any row failing validation
+ * rejects the whole call before the port is ever reached, same as
+ * `recordInvestmentTransaction`'s own all-fields-or-nothing validation.
+ * Callers must run `authorize()` for `"investment_transactions:create"`
+ * exactly as `recordInvestmentTransaction` requires -- same permission, same
+ * gate, this is still one logical write action from the caller's
+ * perspective.
+ */
+export async function recordInvestmentTransactionBatch(
+  projectId: string,
+  requirementId: string,
+  requirement: InvestmentRequirement,
+  partnerShares: readonly PartnerShare[],
+  subPartnerSharesByPartnerId: Readonly<Record<string, readonly SubPartnerShare[]>>,
+  input: RecordInvestmentTransactionBatchInput,
+  actorUserId: string,
+  deps: InvestmentTransactionDeps,
+): Promise<RecordTransactionBatchResult> {
+  if (input.rows.length === 0) {
+    throw new EmptyTransactionBatchError();
+  }
+
+  const transactionDate = normalizeTransactionDate(input.transactionDate);
+  const idempotencyKey = normalizeIdempotencyKey(input.idempotencyKey);
+  const rows = input.rows.map((row) => ({
+    amount: normalizeAmount(row.amount),
+    paymentMode: normalizePaymentMode(row.paymentMode),
+    referenceNumber: normalizeOptionalText(row.referenceNumber),
+    notes: normalizeOptionalText(row.notes),
+  }));
+
+  const { sharePercentSnapshot, shouldPaySnapshot } = buildTransactionSnapshot(
+    requirement,
+    partnerShares,
+    subPartnerSharesByPartnerId,
+    input.partyType,
+    input.shareId,
+  );
+
+  const portInput: CreateInvestmentTransactionBatchInput = {
+    requirementId,
+    projectId,
+    partyType: input.partyType,
+    shareId: input.shareId,
+    sharePercentSnapshot,
+    shouldPaySnapshot,
+    transactionDate,
+    rows,
+    idempotencyKey,
+    actorUserId,
+  };
+
+  return deps.investmentTransactions.recordTransactionBatch(portInput);
 }
 
 /**

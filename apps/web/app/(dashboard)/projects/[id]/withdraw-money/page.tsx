@@ -64,6 +64,7 @@ import {
   editWithdrawalTransaction,
   listWithdrawalTransactions,
   recordWithdrawalTransaction,
+  recordWithdrawalTransactionBatch,
 } from "@/lib/withdrawal-transactions";
 import {
   cancelWithdrawalReallocation,
@@ -141,6 +142,25 @@ interface RecordWithdrawalTarget {
   partyType: "partner" | "sub_partner";
   shareId: string;
   personName: string;
+}
+
+/**
+ * One payment-method row within the Record Withdrawal dialog -- a single
+ * Take Now event paid out across multiple instruments (e.g. part cash, part
+ * bank transfer) is entered as several of these, each with its own Amount/
+ * Payment Mode/Reference Number. A lone row behaves exactly as this dialog
+ * always has (submits via the existing single-row `recordWithdrawalTransaction`,
+ * untouched) -- the multi-row/batch path only engages once a second row
+ * exists. Mirrors `add-money/page.tsx`'s `RecordPaymentRow` one ledger over.
+ */
+interface RecordWithdrawalRow {
+  amount: string;
+  paymentMode: PaymentMode;
+  referenceNumber: string;
+}
+
+function emptyRecordWithdrawalRow(): RecordWithdrawalRow {
+  return { amount: "", paymentMode: "cash", referenceNumber: "" };
 }
 
 /** One row in the "Distribute a Withdrawal" dialog -- see that dialog's own state block for why `basis` is `ownCanTake` for a Partner row and `canTake` for a Sub-partner row. */
@@ -293,6 +313,19 @@ export function formatScaledAmount(scaled: number): string {
   const whole = Math.trunc(scaled / 100);
   const fraction = scaled % 100;
   return fraction === 0 ? String(whole) : `${whole}.${String(fraction).padStart(2, "0")}`;
+}
+
+/**
+ * Live preview/Can-Take-check total across every row's Amount field in the
+ * Record Withdrawal dialog -- reuses this file's own `scaleMoneyForCompare`/
+ * `formatScaledAmount` pair (never `Number()`/`parseFloat` on the raw
+ * strings, AD-2), so a row that isn't yet a well-formed amount just scales
+ * to `0` rather than erroring (display-only; the actual save still goes
+ * through the server's own decimal-safe validation either way).
+ */
+export function sumRecordRowAmounts(rows: readonly RecordWithdrawalRow[]): string {
+  const total = rows.reduce((sum, row) => sum + scaleMoneyForCompare(row.amount), 0);
+  return formatScaledAmount(total);
 }
 
 /**
@@ -508,10 +541,8 @@ export default function WithdrawMoneyPage() {
   const [cancelReallocationSubmitting, setCancelReallocationSubmitting] = useState(false);
 
   const [recordTarget, setRecordTarget] = useState<RecordWithdrawalTarget | null>(null);
-  const [recordAmount, setRecordAmount] = useState("");
+  const [recordRows, setRecordRows] = useState<RecordWithdrawalRow[]>([emptyRecordWithdrawalRow()]);
   const [recordDate, setRecordDate] = useState("");
-  const [recordPaymentMode, setRecordPaymentMode] = useState<PaymentMode>("cash");
-  const [recordReferenceNumber, setRecordReferenceNumber] = useState("");
   const [recordNotes, setRecordNotes] = useState("");
   const [recordFormError, setRecordFormError] = useState<string | null>(null);
   const [recordSubmitting, setRecordSubmitting] = useState(false);
@@ -893,10 +924,8 @@ export default function WithdrawMoneyPage() {
     personName: string,
   ) {
     setRecordTarget({ partyType, shareId, personName });
-    setRecordAmount("");
+    setRecordRows([emptyRecordWithdrawalRow()]);
     setRecordDate("");
-    setRecordPaymentMode("cash");
-    setRecordReferenceNumber("");
     setRecordNotes("");
     setRecordFormError(null);
     setExtraWithdrawalOpen(false);
@@ -907,6 +936,19 @@ export default function WithdrawMoneyPage() {
   function closeRecordWithdrawalDialog() {
     setRecordTarget(null);
     setExtraWithdrawalOpen(false);
+  }
+
+  function addRecordRow() {
+    setRecordRows((prev) => [...prev, emptyRecordWithdrawalRow()]);
+  }
+
+  /** Never removes the last remaining row -- the dialog always has at least one payment-method row. */
+  function removeRecordRow(index: number) {
+    setRecordRows((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
+  }
+
+  function updateRecordRow(index: number, patch: Partial<RecordWithdrawalRow>) {
+    setRecordRows((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   }
 
   /** Closes just the Authorize Extra Withdrawal dialog (Story 4.5) -- the Record Withdrawal dialog underneath stays open, values untouched, so the user can adjust the amount and try again. No submission occurs. */
@@ -1289,42 +1331,84 @@ export default function WithdrawMoneyPage() {
    * whichever one is currently on screen, mirroring `add-money/page.tsx`'s
    * Cancel Payment dialog's identical stay-open-on-error convention.
    */
+  /**
+   * Exactly 1 row -> the existing single-row `recordWithdrawalTransaction`
+   * call, completely unchanged from before split-payment entry existed --
+   * including Story 4.7's destination-allocation prompt opening immediately
+   * after. 2+ rows (a split withdrawal across payment methods) -> the new
+   * `recordWithdrawalTransactionBatch`, which records every row atomically
+   * (all rows or none) under one shared `recordIdempotencyKey`.
+   *
+   * The destination-allocation prompt is deliberately NOT opened for a
+   * multi-row save -- that feature (`openAllocationDialog`) is built around
+   * exactly one `WithdrawalTransaction` and seeds its legs from that one
+   * row's own amount; extending it to atomically allocate a destination
+   * across N separate withdrawal rows is out of scope for split-payment
+   * entry (a real limitation, not an oversight -- flagged here so it's never
+   * mistaken for one). A multi-row withdrawal's destination can still be
+   * recorded the same way any other already-saved withdrawal's can.
+   */
   async function submitWithdrawal(authorized: boolean) {
     if (!recordTarget) return;
+    const firstRow = recordRows[0];
+    if (!firstRow) return;
 
     setRecordFormError(null);
     setRecordSubmitting(true);
-    let saved: WithdrawalTransaction;
     try {
-      saved = await recordWithdrawalTransaction(
-        projectId,
-        {
-          partyType: recordTarget.partyType,
-          shareId: recordTarget.shareId,
-          amount: recordAmount,
-          transactionDate: recordDate,
-          paymentMode: recordPaymentMode,
-          referenceNumber:
-            recordReferenceNumber.trim().length > 0 ? recordReferenceNumber.trim() : null,
-          notes: recordNotes.trim().length > 0 ? recordNotes.trim() : null,
-          extraWithdrawalAuthorized: authorized,
-        },
-        recordIdempotencyKey,
-      );
-      toast.success(`${formatAmount(recordAmount)} withdrawal recorded for ${recordTarget.personName}`);
+      if (recordRows.length === 1) {
+        const saved = await recordWithdrawalTransaction(
+          projectId,
+          {
+            partyType: recordTarget.partyType,
+            shareId: recordTarget.shareId,
+            amount: firstRow.amount,
+            transactionDate: recordDate,
+            paymentMode: firstRow.paymentMode,
+            referenceNumber:
+              firstRow.referenceNumber.trim().length > 0 ? firstRow.referenceNumber.trim() : null,
+            notes: recordNotes.trim().length > 0 ? recordNotes.trim() : null,
+            extraWithdrawalAuthorized: authorized,
+          },
+          recordIdempotencyKey,
+        );
+        toast.success(`${formatAmount(firstRow.amount)} withdrawal recorded for ${recordTarget.personName}`);
+        setRecordSubmitting(false);
+        setExtraWithdrawalOpen(false);
+        closeRecordWithdrawalDialog();
+        // Story 4.7 (FR27): the destination-allocation prompt is "the very
+        // next step in the same flow" (epic-4-context.md) -- single-row
+        // only, see this function's own doc comment above.
+        openAllocationDialog(saved);
+      } else {
+        await recordWithdrawalTransactionBatch(
+          projectId,
+          recordTarget.partyType,
+          recordTarget.shareId,
+          recordDate,
+          recordRows.map((row) => ({
+            amount: row.amount,
+            paymentMode: row.paymentMode,
+            referenceNumber: row.referenceNumber.trim().length > 0 ? row.referenceNumber.trim() : null,
+            notes: recordNotes.trim().length > 0 ? recordNotes.trim() : null,
+          })),
+          recordIdempotencyKey,
+          authorized,
+        );
+        const total = sumRecordRowAmounts(recordRows);
+        toast.success(
+          `${formatAmount(total)} withdrawal recorded for ${recordTarget.personName} across ${recordRows.length} payment methods`,
+        );
+        setRecordSubmitting(false);
+        setExtraWithdrawalOpen(false);
+        closeRecordWithdrawalDialog();
+      }
     } catch (err) {
       setRecordFormError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
       setRecordSubmitting(false);
       return;
     }
 
-    setRecordSubmitting(false);
-    setExtraWithdrawalOpen(false);
-    closeRecordWithdrawalDialog();
-    // Story 4.7 (FR27): the destination-allocation prompt is "the very next
-    // step in the same flow" (epic-4-context.md), not a separate screen --
-    // opened immediately once the Record Withdrawal dialog above closes.
-    openAllocationDialog(saved);
     // Best-effort, mirroring `add-money/page.tsx`'s identical convention --
     // the withdrawal is already saved server-side either way. Refreshing
     // adjustments here is what keeps Story 4.3's Withdrawal Adjustment chip
@@ -1339,14 +1423,17 @@ export default function WithdrawMoneyPage() {
 
   /**
    * The Record Withdrawal form's own submit (Story 4.2, extended by Story
-   * 4.5/FR25). Compares `recordAmount` against the target's *live* Can Take
+   * 4.5/FR25, extended again by split-payment entry). Compares the SUM of
+   * every row's amount against the target's *live* Can Take
    * (`canTakeForTarget`, sourced from this page's already-loaded `state` --
    * the exact same figure the server independently recomputes) via
-   * `exceedsCanTake`. Within Can Take (or Can Take not yet resolvable):
-   * submits immediately, exactly as before this story
-   * (`extraWithdrawalAuthorized: false`). Exceeds Can Take: intercepts the
-   * submit -- no API call here -- and opens the Authorize Extra Withdrawal
-   * confirmation dialog instead, deferring the actual save to
+   * `exceedsCanTake` -- the whole batch is one withdrawal event for Can Take
+   * purposes, per this feature's own Decisions, so a single row's amount
+   * alone would under-check a multi-row submission. Within Can Take (or Can
+   * Take not yet resolvable): submits immediately, exactly as before this
+   * story (`extraWithdrawalAuthorized: false`). Exceeds Can Take: intercepts
+   * the submit -- no API call here -- and opens the Authorize Extra
+   * Withdrawal confirmation dialog instead, deferring the actual save to
    * `handleAuthorizeExtraWithdrawalConfirm`.
    */
   async function handleRecordWithdrawalSubmit(event: FormEvent<HTMLFormElement>) {
@@ -1354,7 +1441,7 @@ export default function WithdrawMoneyPage() {
     if (!recordTarget) return;
 
     const targetCanTake = canTakeForTarget(recordTarget.partyType, recordTarget.shareId);
-    if (targetCanTake !== null && exceedsCanTake(recordAmount, targetCanTake)) {
+    if (targetCanTake !== null && exceedsCanTake(sumRecordRowAmounts(recordRows), targetCanTake)) {
       setRecordFormError(null);
       setExtraWithdrawalOpen(true);
       return;
@@ -2109,34 +2196,6 @@ export default function WithdrawMoneyPage() {
           </DialogDescription>
           <form onSubmit={handleRecordWithdrawalSubmit} className="mt-4">
             <Field>
-              <Label htmlFor="wtx-amount">Amount</Label>
-              <Input
-                id="wtx-amount"
-                name="amount"
-                inputMode="decimal"
-                value={recordAmount}
-                onChange={(event) => setRecordAmount(event.target.value)}
-                required
-                autoFocus
-              />
-              {/*
-                Combines two separate Add Money precedents, not one "identical
-                field" -- Add Money has no single Amount field carrying both
-                halves of this hint. The format-hint half ("e.g. 1000000 for
-                ₹10,00,000...") is New Requirement's Amount field's Helper
-                text (add-money/page.tsx); the "0 is accepted" half is Record
-                Payment's Amount field's Helper text, reworded here for
-                withdrawals ("no minimum payment enforced" -> "no forced
-                withdrawal").
-              */}
-              <Helper>
-                {amountHelperText(
-                  recordAmount,
-                  "e.g. 1000000 for ₹10,00,000 -- up to 2 decimal places are supported. 0 is accepted -- no forced withdrawal.",
-                )}
-              </Helper>
-            </Field>
-            <Field>
               <Label htmlFor="wtx-date">Date</Label>
               <Input
                 id="wtx-date"
@@ -2145,34 +2204,99 @@ export default function WithdrawMoneyPage() {
                 value={recordDate}
                 onChange={(event) => setRecordDate(event.target.value)}
                 required
+                autoFocus
               />
             </Field>
-            <Field>
-              <Label htmlFor="wtx-payment-mode">Payment Mode</Label>
-              <select
-                id="wtx-payment-mode"
-                name="paymentMode"
-                className="w-full rounded-el border border-border bg-surface px-3 py-2.5 text-[14px] text-ink focus:border-accent focus:outline focus:outline-2 focus:outline-accent-soft"
-                value={recordPaymentMode}
-                onChange={(event) => setRecordPaymentMode(event.target.value as PaymentMode)}
+
+            {recordRows.map((row, index) => (
+              <div
+                key={index}
+                className={recordRows.length > 1 ? "mb-4 rounded-el border border-border p-3" : "contents"}
               >
-                {PAYMENT_MODE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field>
-              <Label htmlFor="wtx-reference">Reference Number</Label>
-              <Input
-                id="wtx-reference"
-                name="referenceNumber"
-                value={recordReferenceNumber}
-                onChange={(event) => setRecordReferenceNumber(event.target.value)}
-              />
-              <Helper>Optional -- e.g. a cash withdrawal often has none.</Helper>
-            </Field>
+                {recordRows.length > 1 ? (
+                  <div className="mb-3 flex items-center justify-between">
+                    <span className="text-[12.6px] font-semibold text-ink-soft">
+                      Payment method {index + 1}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      tone="danger"
+                      onClick={() => removeRecordRow(index)}
+                      icon={<X size={12} />}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                ) : null}
+                <Field>
+                  <Label htmlFor={`wtx-amount-${index}`}>Amount</Label>
+                  <Input
+                    id={`wtx-amount-${index}`}
+                    inputMode="decimal"
+                    value={row.amount}
+                    onChange={(event) => updateRecordRow(index, { amount: event.target.value })}
+                    required
+                  />
+                  {/*
+                    Combines two separate Add Money precedents, not one
+                    "identical field" -- Add Money has no single Amount field
+                    carrying both halves of this hint. The format-hint half
+                    ("e.g. 1000000 for ₹10,00,000...") is New Requirement's
+                    Amount field's Helper text (add-money/page.tsx); the "0 is
+                    accepted" half is Record Payment's Amount field's Helper
+                    text, reworded here for withdrawals ("no minimum payment
+                    enforced" -> "no forced withdrawal").
+                  */}
+                  <Helper>
+                    {amountHelperText(
+                      row.amount,
+                      "e.g. 1000000 for ₹10,00,000 -- up to 2 decimal places are supported. 0 is accepted -- no forced withdrawal.",
+                    )}
+                  </Helper>
+                </Field>
+                <Field>
+                  <Label htmlFor={`wtx-payment-mode-${index}`}>Payment Mode</Label>
+                  <select
+                    id={`wtx-payment-mode-${index}`}
+                    className="w-full rounded-el border border-border bg-surface px-3 py-2.5 text-[14px] text-ink focus:border-accent focus:outline focus:outline-2 focus:outline-accent-soft"
+                    value={row.paymentMode}
+                    onChange={(event) => updateRecordRow(index, { paymentMode: event.target.value as PaymentMode })}
+                  >
+                    {PAYMENT_MODE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field>
+                  <Label htmlFor={`wtx-reference-${index}`}>Reference Number</Label>
+                  <Input
+                    id={`wtx-reference-${index}`}
+                    value={row.referenceNumber}
+                    onChange={(event) => updateRecordRow(index, { referenceNumber: event.target.value })}
+                  />
+                  <Helper>Optional -- e.g. a cash withdrawal often has none.</Helper>
+                </Field>
+              </div>
+            ))}
+
+            <div className="mb-4">
+              <Button type="button" variant="ghost" onClick={addRecordRow} icon={<Plus size={14} />}>
+                Add another payment method
+              </Button>
+              {recordRows.length > 1 ? (
+                <p className="mt-2 text-[12.6px] text-ink-soft">
+                  Total: {formatAmount(sumRecordRowAmounts(recordRows))}
+                  {amountInWords(sumRecordRowAmounts(recordRows))
+                    ? ` (${amountInWords(sumRecordRowAmounts(recordRows))})`
+                    : ""}{" "}
+                  across {recordRows.length} payment methods
+                </p>
+              ) : null}
+            </div>
+
             <Field>
               <Label htmlFor="wtx-notes">Notes</Label>
               <Input
@@ -2218,10 +2342,15 @@ export default function WithdrawMoneyPage() {
           <DialogDescription>
             {recordTarget && extraWithdrawalCanTake !== null ? (
               <>
-                <Amount value={recordAmount as Money} size="sm" /> exceeds {recordTarget.personName}
+                <Amount value={sumRecordRowAmounts(recordRows) as Money} size="sm" />
+                {recordRows.length > 1 ? ` (across ${recordRows.length} payment methods) ` : " "}
+                exceeds {recordTarget.personName}
                 &apos;s Can Take of <Amount value={extraWithdrawalCanTake} size="sm" /> by{" "}
-                <Amount value={excessOverCanTake(recordAmount, extraWithdrawalCanTake)} size="sm" />.
-                Only an Owner/Admin allowed to approve extra withdrawals can do this. Confirming
+                <Amount
+                  value={excessOverCanTake(sumRecordRowAmounts(recordRows), extraWithdrawalCanTake)}
+                  size="sm"
+                />
+                . Only an Owner/Admin allowed to approve extra withdrawals can do this. Confirming
                 records the full amount as Extra Taken; going back returns to the amount field with
                 nothing saved.
               </>

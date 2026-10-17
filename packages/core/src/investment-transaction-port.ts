@@ -38,6 +38,36 @@ export interface RecordTransactionResult {
   created: boolean;
 }
 
+/** One payment-method leg within `recordTransactionBatch` -- the per-row fields `CreateInvestmentTransactionInput` carries, minus everything shared across the whole batch. */
+export interface CreateInvestmentTransactionBatchRowInput {
+  amount: Money;
+  paymentMode: PaymentMode;
+  referenceNumber: string | null;
+  notes: string | null;
+}
+
+/** Split-payment batch input -- mirrors `CreateInvestmentTransactionInput`'s shape, with `amount`/`paymentMode`/`referenceNumber`/`notes` replaced by `rows` (one entry per payment method) and `idempotencyKey` identifying the whole batch rather than a single row. */
+export interface CreateInvestmentTransactionBatchInput {
+  requirementId: string;
+  projectId: string;
+  partyType: "partner" | "sub_partner";
+  shareId: string;
+  sharePercentSnapshot: Percent;
+  shouldPaySnapshot: Money;
+  transactionDate: string;
+  rows: readonly CreateInvestmentTransactionBatchRowInput[];
+  /** Identifies the whole batch -- see `recordTransactionBatch`'s own doc comment for how each row still gets its own DB-level-unique `idempotency_key`. */
+  idempotencyKey: string;
+  actorUserId: string;
+}
+
+export interface RecordTransactionBatchResult {
+  /** Every row this batch produced (or, on replay, every row it originally produced), in the same order as `CreateInvestmentTransactionBatchInput.rows`. */
+  transactions: InvestmentTransaction[];
+  /** Mirrors `RecordTransactionResult.created` exactly, one level up -- `true` only for a genuine first-time insert of the whole batch. */
+  created: boolean;
+}
+
 /**
  * The mutable-fields-only edit request (Story 3.7) -- deliberately excludes
  * every identity/snapshot field an edit must never touch:
@@ -158,6 +188,34 @@ export interface InvestmentTransactionPort {
    * instead of propagating the error.
    */
   recordTransaction(input: CreateInvestmentTransactionInput): Promise<RecordTransactionResult>;
+  /**
+   * Split-payment analog of `recordTransaction` -- records `input.rows.length`
+   * `investment_transactions` rows (plus one paired `audit_log` "create" row
+   * each, identical shape to `recordTransaction`'s own pairing) for the same
+   * party/requirement/transactionDate/Should-Pay-snapshot, inside ONE DB
+   * transaction: all rows succeed together, or none are written at all. No
+   * schema change was needed for this -- `investment_transactions.idempotencyKey`
+   * stays a per-row DB-level UNIQUE column; row *i* of the batch is stored
+   * with key `` `${input.idempotencyKey}:${i}` ``, deterministically derived
+   * from the one batch-level key the caller supplies, so a retry of the same
+   * batch reproduces the same per-row keys and hits the same replay logic
+   * below -- no row-count mismatch, no schema addition.
+   *
+   * Idempotency contract, mirroring `recordTransaction`'s exactly, just
+   * evaluated against the whole batch: if a row already exists at
+   * `` `${input.idempotencyKey}:0` ``, every row sharing that batch-key
+   * prefix is re-fetched and compared against `input.rows` (same length,
+   * same multiset of amount/paymentMode/referenceNumber/notes, order-
+   * independent) -- match returns those existing rows unchanged (`created:
+   * false`); mismatch throws `IdempotencyKeyConflictError`. This covers both
+   * the straightforward replay case (checked first) and the concurrent-
+   * double-submit race: if two calls both miss that first check and both
+   * attempt to insert, the loser's transaction fails against row 0's
+   * `idempotency_key` UNIQUE constraint, and the implementation recovers by
+   * re-reading and comparing against the winner's rows instead of
+   * propagating the error.
+   */
+  recordTransactionBatch(input: CreateInvestmentTransactionBatchInput): Promise<RecordTransactionBatchResult>;
   /** Every transaction recorded against one funding requirement, chronological (`createdAt` ascending). */
   listByRequirementId(requirementId: string): Promise<InvestmentTransaction[]>;
   /** The transaction with this id, or `null` if it doesn't exist (Story 3.7). */

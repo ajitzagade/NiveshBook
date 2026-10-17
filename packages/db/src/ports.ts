@@ -29,13 +29,16 @@ import {
   type InvestmentRequirementPort,
   type InvestmentTransactionPort,
   type CreateInvestmentTransactionInput,
+  type CreateInvestmentTransactionBatchInput,
   type EditInvestmentTransactionInput,
   type CancelInvestmentTransactionInput,
   type InvestmentAdjustmentPort,
   type RecommendedAmountPort,
   type WithdrawalTransactionPort,
   type CreateWithdrawalTransactionInput,
+  type CreateWithdrawalTransactionBatchInput,
   type RecordWithdrawalTransactionResult,
+  type RecordWithdrawalTransactionBatchResult,
   type EditWithdrawalTransactionInput,
   type CancelWithdrawalTransactionInput,
   type WithdrawalAdjustmentPort,
@@ -883,6 +886,48 @@ export function matchesRequest(
 }
 
 /**
+ * `true` if `existingRows` (every `investment_transactions` row already
+ * saved for one split-payment batch, found via its deterministic
+ * `` `${batchIdempotencyKey}:${index}` `` keys) represents the exact same
+ * set of payment-method rows as `input.rows` -- `recordTransactionBatch`'s
+ * analog of `matchesRequest` one level up, mirroring
+ * `matchesAllocationRequest`'s (`ports.ts`, withdrawal-destination-
+ * allocations) identical order-independent multiset-match shape. Every row
+ * must also share `input.requirementId`/`shareId`/`partyType` -- a
+ * legitimate batch is always one party's one contribution, so rows that
+ * don't would indicate a genuine cross-request key collision, never a
+ * legitimate replay. `amount` is compared via `moneyEquals` (decimal-safe),
+ * never `===`, mirroring `matchesRequest`'s identical rounding-safety
+ * rationale.
+ */
+export function matchesInvestmentBatchRequest(
+  existingRows: readonly InvestmentTransaction[],
+  input: Pick<CreateInvestmentTransactionBatchInput, "requirementId" | "shareId" | "partyType" | "rows">,
+): boolean {
+  if (existingRows.length !== input.rows.length) {
+    return false;
+  }
+  const remaining = [...existingRows];
+  for (const row of input.rows) {
+    const matchIndex = remaining.findIndex(
+      (existing) =>
+        existing.requirementId === input.requirementId &&
+        existing.shareId === input.shareId &&
+        existing.partyType === input.partyType &&
+        moneyEquals(existing.amount, row.amount) &&
+        existing.paymentMode === row.paymentMode &&
+        (existing.referenceNumber ?? null) === (row.referenceNumber ?? null) &&
+        (existing.notes ?? null) === (row.notes ?? null),
+    );
+    if (matchIndex === -1) {
+      return false;
+    }
+    remaining.splice(matchIndex, 1);
+  }
+  return true;
+}
+
+/**
  * `true` if `entry` (an `audit_log` row found by `idempotencyKey`) actually
  * represents the *same* logical edit request as `input` -- the
  * `editTransaction` analog of `matchesRequest` one level over. Since
@@ -977,6 +1022,39 @@ export function matchesWithdrawalRequest(
     existing.partyType === input.partyType &&
     moneyEquals(existing.amount, input.amount)
   );
+}
+
+/**
+ * Split-withdrawal analog of `matchesWithdrawalRequest` -- mirrors
+ * `matchesInvestmentBatchRequest` one ledger over (order-independent
+ * multiset match of every row's amount/paymentMode/referenceNumber/notes,
+ * plus a shared projectId/shareId/partyType check per row).
+ */
+export function matchesWithdrawalBatchRequest(
+  existingRows: readonly WithdrawalTransaction[],
+  input: Pick<CreateWithdrawalTransactionBatchInput, "projectId" | "shareId" | "partyType" | "rows">,
+): boolean {
+  if (existingRows.length !== input.rows.length) {
+    return false;
+  }
+  const remaining = [...existingRows];
+  for (const row of input.rows) {
+    const matchIndex = remaining.findIndex(
+      (existing) =>
+        existing.projectId === input.projectId &&
+        existing.shareId === input.shareId &&
+        existing.partyType === input.partyType &&
+        moneyEquals(existing.amount, row.amount) &&
+        existing.paymentMode === row.paymentMode &&
+        (existing.referenceNumber ?? null) === (row.referenceNumber ?? null) &&
+        (existing.notes ?? null) === (row.notes ?? null),
+    );
+    if (matchIndex === -1) {
+      return false;
+    }
+    remaining.splice(matchIndex, 1);
+  }
+  return true;
 }
 
 /**
@@ -1225,6 +1303,93 @@ export function createWithdrawalTransactionPort(
               throw new WithdrawalIdempotencyKeyConflictError();
             }
             return { transaction: winner, created: false };
+          }
+        }
+        throw error;
+      }
+    },
+    async recordTransactionBatch(input) {
+      const batchKeys = input.rows.map((_, index) => `${input.idempotencyKey}:${index}`);
+
+      /** Every row already saved under this batch's deterministic per-row keys, if any were ever written -- scoped to the same project/share/partyType too, mirroring `matchesWithdrawalBatchRequest`'s own reasoning. */
+      async function findExistingBatchRows(
+        executor: Pick<Database, "select">,
+      ): Promise<WithdrawalTransactionRow[]> {
+        return executor
+          .select()
+          .from(withdrawalTransactions)
+          .where(
+            and(
+              inArray(withdrawalTransactions.idempotencyKey, batchKeys),
+              eq(withdrawalTransactions.projectId, input.projectId),
+              eq(withdrawalTransactions.shareId, input.shareId),
+              eq(withdrawalTransactions.partyType, input.partyType),
+            ),
+          );
+      }
+
+      const existingRows = await findExistingBatchRows(database);
+      if (existingRows.length > 0) {
+        const existing = existingRows.map(toWithdrawalTransaction);
+        if (!matchesWithdrawalBatchRequest(existing, input)) {
+          throw new WithdrawalIdempotencyKeyConflictError();
+        }
+        return { transactions: existing, created: false };
+      }
+
+      try {
+        const inserted = await database.transaction(async (tx) => {
+          const results: WithdrawalTransactionRow[] = [];
+          for (let index = 0; index < input.rows.length; index++) {
+            const row = input.rows[index];
+            if (!row) continue;
+            const [transactionRow] = await tx
+              .insert(withdrawalTransactions)
+              .values({
+                id: uuidv7(),
+                projectId: input.projectId,
+                partyType: input.partyType,
+                shareId: input.shareId,
+                sharePercentSnapshot: input.sharePercentSnapshot,
+                canTakeSnapshot: input.canTakeSnapshot,
+                amount: row.amount,
+                transactionDate: input.transactionDate,
+                paymentMode: row.paymentMode,
+                referenceNumber: row.referenceNumber,
+                notes: row.notes,
+                idempotencyKey: `${input.idempotencyKey}:${index}`,
+              })
+              .returning();
+            if (!transactionRow) {
+              throw new Error("Failed to record withdrawal transaction batch row");
+            }
+
+            await tx.insert(auditLog).values({
+              id: uuidv7(),
+              entityType: "withdrawal_transaction",
+              entityId: transactionRow.id,
+              action: "create",
+              actorUserId: input.actorUserId,
+              oldValue: null,
+              newValue: transactionRow,
+              reason: null,
+            });
+
+            results.push(transactionRow);
+          }
+          return results;
+        });
+
+        return { transactions: inserted.map(toWithdrawalTransaction), created: true };
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          const winnerRows = await findExistingBatchRows(database);
+          if (winnerRows.length > 0) {
+            const winner = winnerRows.map(toWithdrawalTransaction);
+            if (!matchesWithdrawalBatchRequest(winner, input)) {
+              throw new WithdrawalIdempotencyKeyConflictError();
+            }
+            return { transactions: winner, created: false };
           }
         }
         throw error;
@@ -1808,6 +1973,94 @@ export function createInvestmentTransactionPort(
               throw new IdempotencyKeyConflictError();
             }
             return { transaction: winner, created: false };
+          }
+        }
+        throw error;
+      }
+    },
+    async recordTransactionBatch(input) {
+      const batchKeys = input.rows.map((_, index) => `${input.idempotencyKey}:${index}`);
+
+      /** Every row already saved under this batch's deterministic per-row keys, if any were ever written -- scoped to the same requirement/share/partyType too (defense in depth, mirrors `matchesInvestmentBatchRequest`'s own reasoning). */
+      async function findExistingBatchRows(
+        executor: Pick<Database, "select">,
+      ): Promise<InvestmentTransactionRow[]> {
+        return executor
+          .select()
+          .from(investmentTransactions)
+          .where(
+            and(
+              inArray(investmentTransactions.idempotencyKey, batchKeys),
+              eq(investmentTransactions.requirementId, input.requirementId),
+              eq(investmentTransactions.shareId, input.shareId),
+              eq(investmentTransactions.partyType, input.partyType),
+            ),
+          );
+      }
+
+      const existingRows = await findExistingBatchRows(database);
+      if (existingRows.length > 0) {
+        const existing = existingRows.map(toInvestmentTransaction);
+        if (!matchesInvestmentBatchRequest(existing, input)) {
+          throw new IdempotencyKeyConflictError();
+        }
+        return { transactions: existing, created: false };
+      }
+
+      try {
+        const inserted = await database.transaction(async (tx) => {
+          const results: InvestmentTransactionRow[] = [];
+          for (let index = 0; index < input.rows.length; index++) {
+            const row = input.rows[index];
+            if (!row) continue;
+            const [transactionRow] = await tx
+              .insert(investmentTransactions)
+              .values({
+                id: uuidv7(),
+                requirementId: input.requirementId,
+                projectId: input.projectId,
+                partyType: input.partyType,
+                shareId: input.shareId,
+                sharePercentSnapshot: input.sharePercentSnapshot,
+                shouldPaySnapshot: input.shouldPaySnapshot,
+                amount: row.amount,
+                transactionDate: input.transactionDate,
+                paymentMode: row.paymentMode,
+                referenceNumber: row.referenceNumber,
+                notes: row.notes,
+                idempotencyKey: `${input.idempotencyKey}:${index}`,
+              })
+              .returning();
+            if (!transactionRow) {
+              throw new Error("Failed to record investment transaction batch row");
+            }
+
+            await tx.insert(auditLog).values({
+              id: uuidv7(),
+              entityType: "investment_transaction",
+              entityId: transactionRow.id,
+              action: "create",
+              actorUserId: input.actorUserId,
+              oldValue: null,
+              newValue: transactionRow,
+              reason: null,
+            });
+
+            results.push(transactionRow);
+          }
+          return results;
+        });
+
+        return { transactions: inserted.map(toInvestmentTransaction), created: true };
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          const winnerRows = await findExistingBatchRows(database);
+          if (winnerRows.length > 0) {
+            const winner = winnerRows.map(toInvestmentTransaction);
+            if (!matchesInvestmentBatchRequest(winner, input)) {
+              throw new IdempotencyKeyConflictError();
+            }
+            return { transactions: winner, created: false };
           }
         }
         throw error;
@@ -3505,5 +3758,59 @@ export async function recordWithdrawalTransactionWithBonusConsumption(
     await createWithdrawalReallocationPort(tx).consumeAllocationLegs(plan);
 
     return createWithdrawalTransactionPort(tx).recordTransaction(input);
+  });
+}
+
+/**
+ * Split-withdrawal analog of `recordWithdrawalTransactionWithBonusConsumption`
+ * -- mirrors its exact shape, just inserting `input.rows.length` withdrawal
+ * rows (`createWithdrawalTransactionPort(tx).recordTransactionBatch(input)`)
+ * instead of one. `bonusToConsume` is computed ONCE by the caller (the
+ * route) against the batch's TOTAL requested amount (every row summed) --
+ * the whole split withdrawal is one Take Now event for Can Take/bonus
+ * purposes, matching Story 4.5's gate being evaluated against that same
+ * total. The FIFO leg-consumption plan and the N-row insert both happen
+ * inside this one `database.transaction()`, so a failed insert never leaves
+ * a leg partially consumed, and a successful consumption never leaves any
+ * row of the batch unrecorded.
+ */
+export async function recordWithdrawalTransactionBatchWithBonusConsumption(
+  input: CreateWithdrawalTransactionBatchInput,
+  bonusToConsume: Money,
+  database: Database = getDb(),
+): Promise<RecordWithdrawalTransactionBatchResult> {
+  if (isZeroMoney(bonusToConsume)) {
+    return createWithdrawalTransactionPort(database).recordTransactionBatch(input);
+  }
+
+  return database.transaction(async (tx) => {
+    const legRows = await tx
+      .select({ allocation: withdrawalReallocationAllocations })
+      .from(withdrawalReallocationAllocations)
+      .innerJoin(
+        withdrawalReallocations,
+        eq(withdrawalReallocationAllocations.reallocationId, withdrawalReallocations.id),
+      )
+      .where(
+        and(
+          eq(withdrawalReallocations.projectId, input.projectId),
+          eq(withdrawalReallocations.status, "active"),
+          eq(withdrawalReallocationAllocations.partyType, input.partyType),
+          eq(withdrawalReallocationAllocations.shareId, input.shareId),
+        ),
+      )
+      .orderBy(asc(withdrawalReallocationAllocations.createdAt))
+      .for("update");
+
+    const legs = legRows.map((row) => ({
+      id: row.allocation.id,
+      allocatedAmount: row.allocation.allocatedAmount as Money,
+      consumedAmount: row.allocation.consumedAmount as Money,
+    }));
+
+    const plan = planReallocationBonusConsumption(legs, bonusToConsume);
+    await createWithdrawalReallocationPort(tx).consumeAllocationLegs(plan);
+
+    return createWithdrawalTransactionPort(tx).recordTransactionBatch(input);
   });
 }

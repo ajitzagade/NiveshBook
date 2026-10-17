@@ -74,6 +74,9 @@ function createFakeInvestmentTransactionPort(): InvestmentTransactionPort & {
       };
       return { transaction, created: true };
     },
+    async recordTransactionBatch() {
+      throw new Error("not exercised by spendAvailableBalanceToProject");
+    },
     async listByRequirementId() {
       throw new Error("not exercised by spendAvailableBalanceToProject");
     },

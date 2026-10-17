@@ -28,12 +28,14 @@ vi.mock("@/lib/can-take", () => ({
 
 const listWithdrawalTransactions = vi.fn();
 const recordWithdrawalTransaction = vi.fn();
+const recordWithdrawalTransactionBatch = vi.fn();
 const editWithdrawalTransaction = vi.fn();
 const cancelWithdrawalTransaction = vi.fn();
 
 vi.mock("@/lib/withdrawal-transactions", () => ({
   listWithdrawalTransactions: (...args: unknown[]) => listWithdrawalTransactions(...args),
   recordWithdrawalTransaction: (...args: unknown[]) => recordWithdrawalTransaction(...args),
+  recordWithdrawalTransactionBatch: (...args: unknown[]) => recordWithdrawalTransactionBatch(...args),
   editWithdrawalTransaction: (...args: unknown[]) => editWithdrawalTransaction(...args),
   cancelWithdrawalTransaction: (...args: unknown[]) => cancelWithdrawalTransaction(...args),
 }));
@@ -1197,6 +1199,277 @@ describe("WithdrawMoneyPage -- Record Withdrawal dialog (Story 4.2)", () => {
     // The dialog itself stays open/rendered (the Save button is still present) --
     // the 404 surfaces as an inline error, not a page-level crash.
     expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+  });
+});
+
+/**
+ * Split withdrawal entry -- multi payment-method rows in the Record
+ * Withdrawal dialog. Mirrors `add-money/page.test.tsx`'s "Add Investment
+ * split-payment" describe block one ledger over, adapted for this page's own
+ * shape: no separate Confirm step (Save submits directly via
+ * `handleRecordWithdrawalSubmit`), and the Extra Withdrawal gate is
+ * evaluated against the batch's summed total (this feature's own Decisions).
+ */
+describe("WithdrawMoneyPage -- Record Withdrawal split-payment (multi payment-method) entry", () => {
+  beforeEach(() => {
+    getCanTake.mockReset();
+    listWithdrawalTransactions.mockReset().mockResolvedValue(EMPTY_WITHDRAWALS_RESPONSE);
+    recordWithdrawalTransaction.mockReset();
+    recordWithdrawalTransactionBatch.mockReset();
+    getWithdrawalAdjustments.mockReset().mockResolvedValue(EMPTY_ADJUSTMENTS_RESPONSE);
+    listProjects.mockReset().mockResolvedValue([]);
+    recordDestinationAllocation.mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("a single row (the default) still submits via the existing single-row recordWithdrawalTransaction, never the batch call", async () => {
+    recordWithdrawalTransaction.mockResolvedValue(makeWithdrawalTransaction({ amount: "100000" }));
+    const user = await renderAndReady();
+
+    await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
+    fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "100000" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(recordWithdrawalTransaction).toHaveBeenCalledTimes(1);
+    });
+    expect(recordWithdrawalTransactionBatch).not.toHaveBeenCalled();
+  });
+
+  it("'Add another payment method' reveals a second row with its own Amount/Payment Mode/Reference Number, and shows a live total", async () => {
+    const user = await renderAndReady();
+
+    await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
+    fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "100000" } });
+
+    await user.click(screen.getByRole("button", { name: "Add another payment method" }));
+
+    const amountInputs = screen.getAllByLabelText("Amount");
+    expect(amountInputs).toHaveLength(2);
+    fireEvent.change(amountInputs[1] as HTMLElement, { target: { value: "50000" } });
+
+    expect(await screen.findByText(/Total: ₹1,50,000/)).toBeInTheDocument();
+    expect(screen.getByText(/across 2 payment methods/)).toBeInTheDocument();
+    // A "Remove" control appears on EVERY row once there's more than one.
+    expect(screen.getAllByRole("button", { name: "Remove" })).toHaveLength(2);
+  });
+
+  it("removing a row drops back to one, and the 'Remove' controls disappear again", async () => {
+    const user = await renderAndReady();
+
+    await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
+    await screen.findByLabelText("Amount");
+    await user.click(screen.getByRole("button", { name: "Add another payment method" }));
+    expect(screen.getAllByLabelText("Amount")).toHaveLength(2);
+
+    await user.click(screen.getAllByRole("button", { name: "Remove" })[0] as HTMLElement);
+
+    expect(screen.getAllByLabelText("Amount")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+  });
+
+  it("2+ rows (summed within Can Take) submit via recordWithdrawalTransactionBatch with every row's amount/paymentMode/referenceNumber, sharing one date/idempotencyKey/notes -- no destination-allocation prompt opens", async () => {
+    recordWithdrawalTransactionBatch.mockResolvedValue([
+      makeWithdrawalTransaction({ id: "wtx-1", amount: "100000" }),
+      makeWithdrawalTransaction({ id: "wtx-2", amount: "50000", paymentMode: "rtgs", referenceNumber: "UTR-9" }),
+    ]);
+    const user = await renderAndReady();
+
+    await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
+    fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "100000" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+
+    await user.click(screen.getByRole("button", { name: "Add another payment method" }));
+    const amountInputs = screen.getAllByLabelText("Amount");
+    fireEvent.change(amountInputs[1] as HTMLElement, { target: { value: "50000" } });
+    const paymentModeSelects = screen.getAllByLabelText("Payment Mode");
+    fireEvent.change(paymentModeSelects[1] as HTMLElement, { target: { value: "rtgs" } });
+    const referenceInputs = screen.getAllByLabelText("Reference Number");
+    fireEvent.change(referenceInputs[1] as HTMLElement, { target: { value: "UTR-9" } });
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(recordWithdrawalTransactionBatch).toHaveBeenCalledTimes(1);
+    });
+    expect(recordWithdrawalTransaction).not.toHaveBeenCalled();
+
+    const [projectId, partyType, shareId, transactionDate, rows, idempotencyKey, extraWithdrawalAuthorized] =
+      recordWithdrawalTransactionBatch.mock.calls[0] as [
+        string,
+        string,
+        string,
+        string,
+        Array<{ amount: string; paymentMode: string; referenceNumber: string | null; notes: string | null }>,
+        string,
+        boolean,
+      ];
+    expect(projectId).toBe("project-1");
+    expect(partyType).toBe("partner");
+    expect(shareId).toBe("a");
+    expect(transactionDate).toBe("2026-10-05");
+    expect(rows).toEqual([
+      { amount: "100000", paymentMode: "cash", referenceNumber: null, notes: null },
+      { amount: "50000", paymentMode: "rtgs", referenceNumber: "UTR-9", notes: null },
+    ]);
+    expect(typeof idempotencyKey).toBe("string");
+    expect(idempotencyKey.length).toBeGreaterThan(0);
+    expect(extraWithdrawalAuthorized).toBe(false);
+
+    // Story 4.7's destination-allocation prompt is single-row only --
+    // deliberately never opened for a multi-row save (this feature's own
+    // documented scope limitation).
+    await waitFor(() => {
+      expect(recordWithdrawalTransaction).not.toHaveBeenCalled();
+    });
+    expect(screen.queryByText("Where did this money go?")).not.toBeInTheDocument();
+  });
+
+  it("a validation error on the batch submit keeps the Record Withdrawal dialog open with the error shown inline", async () => {
+    recordWithdrawalTransactionBatch.mockRejectedValue(new Error("Something went wrong. Please try again."));
+    const user = await renderAndReady();
+
+    await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
+    fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "100000" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+    await user.click(screen.getByRole("button", { name: "Add another payment method" }));
+    fireEvent.change(screen.getAllByLabelText("Amount")[1] as HTMLElement, { target: { value: "50000" } });
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong. Please try again.");
+    expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+  });
+
+  describe("Story 4.5's Extra Withdrawal gate, evaluated against the batch's summed total", () => {
+    // Partner A's Can Take is 2,50,000 throughout (`PARTNER_WITH_SUBS`).
+
+    it("a batch whose individual rows each stay under Can Take, but whose SUM exceeds it, opens the Authorize Extra Withdrawal dialog -- no API call yet", async () => {
+      const user = await renderAndReady();
+
+      await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
+      fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "150000" } });
+      fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+      await user.click(screen.getByRole("button", { name: "Add another payment method" }));
+      fireEvent.change(screen.getAllByLabelText("Amount")[1] as HTMLElement, { target: { value: "150000" } });
+
+      await user.click(screen.getByRole("button", { name: "Save" }));
+
+      expect(await screen.findByText("Authorize Extra Withdrawal?")).toBeInTheDocument();
+      expect(recordWithdrawalTransactionBatch).not.toHaveBeenCalled();
+    });
+
+    it("the Authorize Extra Withdrawal dialog shows the SUMMED total and '(across N payment methods)' phrasing for a multi-row batch", async () => {
+      const user = await renderAndReady();
+
+      await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
+      fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "150000" } });
+      fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+      await user.click(screen.getByRole("button", { name: "Add another payment method" }));
+      fireEvent.change(screen.getAllByLabelText("Amount")[1] as HTMLElement, { target: { value: "150000" } });
+
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      await screen.findByText("Authorize Extra Withdrawal?");
+
+      // Scoped to the Authorize dialog specifically -- the Record Withdrawal
+      // dialog's own live-total line underneath ALSO renders "₹3,00,000" and
+      // "across 2 payment methods" (both dialogs are legitimately mounted at
+      // once, the established pattern), so an unscoped `screen` query would
+      // be ambiguous.
+      const authorizeDialog = screen
+        .getAllByRole("dialog")
+        .find((dialog) => within(dialog).queryByText("Authorize Extra Withdrawal?")) as HTMLElement;
+      const description = within(authorizeDialog).getByText((_, element) => element?.tagName === "P");
+      expect(description).toHaveTextContent("₹3,00,000");
+      expect(description).toHaveTextContent("across 2 payment methods");
+      // Can Take is ₹2,50,000, the batch's summed total is ₹3,00,000 --
+      // excessOverCanTake computes exactly ₹50,000.
+      expect(description).toHaveTextContent("by ₹50,000");
+    });
+
+    it("over-cap batch total -> confirm dialog -> confirm -> success (extraWithdrawalAuthorized: true, full batch recorded)", async () => {
+      recordWithdrawalTransactionBatch.mockResolvedValue([
+        makeWithdrawalTransaction({ id: "wtx-1", amount: "150000" }),
+        makeWithdrawalTransaction({ id: "wtx-2", amount: "150000" }),
+      ]);
+      const user = await renderAndReady();
+
+      await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
+      fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "150000" } });
+      fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+      await user.click(screen.getByRole("button", { name: "Add another payment method" }));
+      fireEvent.change(screen.getAllByLabelText("Amount")[1] as HTMLElement, { target: { value: "150000" } });
+
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      await screen.findByText("Authorize Extra Withdrawal?");
+      await user.click(screen.getByRole("button", { name: "Confirm Authorization" }));
+
+      await waitFor(() => {
+        expect(recordWithdrawalTransactionBatch).toHaveBeenCalledTimes(1);
+      });
+      const [, , , , rows, , extraWithdrawalAuthorized] = recordWithdrawalTransactionBatch.mock.calls[0] as [
+        string,
+        string,
+        string,
+        string,
+        Array<{ amount: string }>,
+        string,
+        boolean,
+      ];
+      expect(rows.map((row) => row.amount)).toEqual(["150000", "150000"]);
+      expect(extraWithdrawalAuthorized).toBe(true);
+      await waitFor(() => {
+        expect(screen.queryByText("Authorize Extra Withdrawal?")).not.toBeInTheDocument();
+      });
+    });
+
+    it("over-cap batch total -> confirm dialog -> cancel (Back) -> no submission, Record Withdrawal dialog stays open with both rows intact", async () => {
+      const user = await renderAndReady();
+
+      await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
+      fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "150000" } });
+      fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+      await user.click(screen.getByRole("button", { name: "Add another payment method" }));
+      fireEvent.change(screen.getAllByLabelText("Amount")[1] as HTMLElement, { target: { value: "150000" } });
+
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      await screen.findByText("Authorize Extra Withdrawal?");
+      await user.click(screen.getByRole("button", { name: "Back" }));
+
+      await waitFor(() => {
+        expect(screen.queryByText("Authorize Extra Withdrawal?")).not.toBeInTheDocument();
+      });
+      expect(recordWithdrawalTransactionBatch).not.toHaveBeenCalled();
+      const amountInputs = screen.getAllByLabelText("Amount");
+      expect(amountInputs).toHaveLength(2);
+      expect(amountInputs[0]).toHaveValue("150000");
+      expect(amountInputs[1]).toHaveValue("150000");
+    });
+
+    it("a batch whose rows sum to exactly Can Take submits immediately -- no confirmation dialog", async () => {
+      recordWithdrawalTransactionBatch.mockResolvedValue([
+        makeWithdrawalTransaction({ id: "wtx-1", amount: "150000" }),
+        makeWithdrawalTransaction({ id: "wtx-2", amount: "100000" }),
+      ]);
+      const user = await renderAndReady();
+
+      await user.click(screen.getAllByRole("button", { name: "Withdraw Money" })[0] as HTMLElement);
+      fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "150000" } });
+      fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+      await user.click(screen.getByRole("button", { name: "Add another payment method" }));
+      fireEvent.change(screen.getAllByLabelText("Amount")[1] as HTMLElement, { target: { value: "100000" } });
+
+      await user.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => {
+        expect(recordWithdrawalTransactionBatch).toHaveBeenCalledTimes(1);
+      });
+      expect(screen.queryByText("Authorize Extra Withdrawal?")).not.toBeInTheDocument();
+    });
   });
 });
 

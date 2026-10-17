@@ -11,9 +11,11 @@ import { computeCanTake } from "./can-take";
 import type {
   CancelWithdrawalTransactionInput,
   CancelWithdrawalTransactionResult,
+  CreateWithdrawalTransactionBatchInput,
   CreateWithdrawalTransactionInput,
   EditWithdrawalTransactionInput,
   EditWithdrawalTransactionResult,
+  RecordWithdrawalTransactionBatchResult,
   RecordWithdrawalTransactionResult,
   WithdrawalTransactionPort,
 } from "./withdrawal-transaction-port";
@@ -248,6 +250,21 @@ export function assertAmountEditable(hasExistingLegs: boolean, amountChanged: bo
   }
 }
 
+/**
+ * Thrown by `recordWithdrawalTransactionBatch` when `rows` is empty --
+ * mirrors `investment-transaction.ts`'s `EmptyTransactionBatchError` exactly
+ * one ledger over (named distinctly, not reused, so `packages/core/src/index.ts`'s
+ * two `export *` statements never produce an ambiguous barrel export for
+ * this symbol -- mirrors `InvalidWithdrawalAmountError`'s identical
+ * local-error-renaming precedent).
+ */
+export class EmptyWithdrawalTransactionBatchError extends Error {
+  constructor() {
+    super("At least one payment-method row is required.");
+    this.name = "EmptyWithdrawalTransactionBatchError";
+  }
+}
+
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 function normalizeAmount(raw: string): Money {
@@ -402,6 +419,95 @@ export async function recordWithdrawalTransaction(
   };
 
   return deps.withdrawalTransactions.recordTransaction(portInput);
+}
+
+/** One payment-method row within a split withdrawal -- mirrors `RecordInvestmentTransactionBatchRowInput` one ledger over. */
+export interface RecordWithdrawalTransactionBatchRowInput {
+  /** Raw, unvalidated -- `"0"` is explicitly accepted, mirroring the single-row rule. */
+  amount: string;
+  paymentMode: string;
+  referenceNumber: string | null;
+  notes: string | null;
+}
+
+/**
+ * A split withdrawal -- one Take Now event recorded across multiple payment
+ * methods in a single submission. Mirrors `RecordInvestmentTransactionBatchInput`
+ * one ledger over: `partyType`/`shareId`/`transactionDate` shared across
+ * every row, `idempotencyKey` identifies the whole batch.
+ */
+export interface RecordWithdrawalTransactionBatchInput {
+  partyType: "partner" | "sub_partner";
+  shareId: string;
+  /** Raw, unvalidated `YYYY-MM-DD` string. */
+  transactionDate: string;
+  rows: readonly RecordWithdrawalTransactionBatchRowInput[];
+  /** Required, non-empty -- identifies this whole batch submission. */
+  idempotencyKey: string;
+}
+
+/**
+ * Records a split withdrawal -- one Take Now event paid across multiple
+ * payment methods -- as multiple `withdrawal_transactions` rows sharing one
+ * `transactionDate`/party/Can-Take-snapshot, inserted atomically (all rows
+ * or none). Mirrors `recordWithdrawalTransaction`'s exact validation/
+ * snapshot/delegate shape, just validating every row in `input.rows` instead
+ * of one set of fields, and building the Can Take snapshot exactly once
+ * (shared across every row, identical to what `recordWithdrawalTransaction`
+ * would compute for that party at this same instant). Any row failing
+ * validation rejects the whole call before the port is ever reached.
+ *
+ * Like `recordWithdrawalTransaction`, this function never caps the batch's
+ * total amount against `canTakeSnapshot`/Can Take itself -- Story 4.5's
+ * Extra Withdrawal gate (`assertExtraWithdrawalAuthorized`) lives one layer
+ * up, at the route, evaluated against the SUM of `input.rows`' amounts (the
+ * whole batch is one withdrawal event for Can Take purposes) -- this
+ * function's contract is unchanged by that gate's existence, mirroring
+ * `recordWithdrawalTransaction`'s own documented Open/Closed boundary.
+ */
+export async function recordWithdrawalTransactionBatch(
+  projectId: string,
+  availableToWithdraw: Money,
+  partnerShares: readonly PartnerShare[],
+  subPartnerSharesByPartnerId: Readonly<Record<string, readonly SubPartnerShare[]>>,
+  input: RecordWithdrawalTransactionBatchInput,
+  actorUserId: string,
+  deps: WithdrawalTransactionDeps,
+): Promise<RecordWithdrawalTransactionBatchResult> {
+  if (input.rows.length === 0) {
+    throw new EmptyWithdrawalTransactionBatchError();
+  }
+
+  const transactionDate = normalizeTransactionDate(input.transactionDate);
+  const idempotencyKey = normalizeIdempotencyKey(input.idempotencyKey);
+  const rows = input.rows.map((row) => ({
+    amount: normalizeAmount(row.amount),
+    paymentMode: normalizePaymentMode(row.paymentMode),
+    referenceNumber: normalizeOptionalText(row.referenceNumber),
+    notes: normalizeOptionalText(row.notes),
+  }));
+
+  const { sharePercentSnapshot, canTakeSnapshot } = buildWithdrawalSnapshot(
+    availableToWithdraw,
+    partnerShares,
+    subPartnerSharesByPartnerId,
+    input.partyType,
+    input.shareId,
+  );
+
+  const portInput: CreateWithdrawalTransactionBatchInput = {
+    projectId,
+    partyType: input.partyType,
+    shareId: input.shareId,
+    sharePercentSnapshot,
+    canTakeSnapshot,
+    transactionDate,
+    rows,
+    idempotencyKey,
+    actorUserId,
+  };
+
+  return deps.withdrawalTransactions.recordTransactionBatch(portInput);
 }
 
 /**

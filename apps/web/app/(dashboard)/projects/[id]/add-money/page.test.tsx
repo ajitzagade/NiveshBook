@@ -36,12 +36,14 @@ vi.mock("@/lib/should-pay", () => ({
 
 const listInvestmentTransactions = vi.fn();
 const recordInvestmentTransaction = vi.fn();
+const recordInvestmentTransactionBatch = vi.fn();
 const editInvestmentTransaction = vi.fn();
 const cancelInvestmentTransaction = vi.fn();
 
 vi.mock("@/lib/investment-transactions", () => ({
   listInvestmentTransactions: (...args: unknown[]) => listInvestmentTransactions(...args),
   recordInvestmentTransaction: (...args: unknown[]) => recordInvestmentTransaction(...args),
+  recordInvestmentTransactionBatch: (...args: unknown[]) => recordInvestmentTransactionBatch(...args),
   editInvestmentTransaction: (...args: unknown[]) => editInvestmentTransaction(...args),
   cancelInvestmentTransaction: (...args: unknown[]) => cancelInvestmentTransaction(...args),
 }));
@@ -408,6 +410,159 @@ describe("AddMoneyPage -- Record Payment idempotency key reuse across a retry (r
     const firstCallKey = recordInvestmentTransaction.mock.calls[0]?.[3] as string;
     const secondCallKey = recordInvestmentTransaction.mock.calls[1]?.[3] as string;
     expect(secondCallKey).not.toBe(firstCallKey);
+  });
+});
+
+describe("AddMoneyPage -- Add Investment split-payment (multi payment-method) entry", () => {
+  beforeEach(() => {
+    listInvestmentRequirements.mockReset().mockResolvedValue({ requirements: [REQUIREMENT] });
+    getShouldPay.mockReset().mockResolvedValue(SHOULD_PAY_RESPONSE);
+    listInvestmentTransactions
+      .mockReset()
+      .mockResolvedValue({ transactions: [] } satisfies InvestmentTransactionsResponse);
+    recordInvestmentTransaction.mockReset();
+    recordInvestmentTransactionBatch.mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("a single row (the default) still submits via the existing single-row recordInvestmentTransaction, never the batch call", async () => {
+    recordInvestmentTransaction.mockResolvedValue(makeTransaction());
+
+    const user = await renderAndExpand();
+    await expandAllPersonCards();
+
+    await user.click(screen.getAllByRole("button", { name: "Add Investment" })[0] as HTMLElement);
+    fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "700000" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Confirm Payment");
+    await user.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => {
+      expect(recordInvestmentTransaction).toHaveBeenCalledTimes(1);
+    });
+    expect(recordInvestmentTransactionBatch).not.toHaveBeenCalled();
+  });
+
+  it("'Add another payment method' reveals a second row with its own Amount/Payment Mode/Reference Number, and shows a live total", async () => {
+    const user = await renderAndExpand();
+    await expandAllPersonCards();
+
+    await user.click(screen.getAllByRole("button", { name: "Add Investment" })[0] as HTMLElement);
+    fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "500000" } });
+
+    await user.click(screen.getByRole("button", { name: "Add another payment method" }));
+
+    const amountInputs = screen.getAllByLabelText("Amount");
+    expect(amountInputs).toHaveLength(2);
+    fireEvent.change(amountInputs[1] as HTMLElement, { target: { value: "200000" } });
+
+    expect(await screen.findByText(/Total: ₹7,00,000/)).toBeInTheDocument();
+    expect(screen.getByText(/across 2 payment methods/)).toBeInTheDocument();
+    // A "Remove" control appears on EVERY row once there's more than one.
+    expect(screen.getAllByRole("button", { name: "Remove" })).toHaveLength(2);
+  });
+
+  it("removing a row drops back to one, and the 'Remove' controls disappear again (never removes the last row)", async () => {
+    const user = await renderAndExpand();
+    await expandAllPersonCards();
+
+    await user.click(screen.getAllByRole("button", { name: "Add Investment" })[0] as HTMLElement);
+    await screen.findByLabelText("Amount");
+    await user.click(screen.getByRole("button", { name: "Add another payment method" }));
+    expect(screen.getAllByLabelText("Amount")).toHaveLength(2);
+
+    await user.click(screen.getAllByRole("button", { name: "Remove" })[0] as HTMLElement);
+
+    expect(screen.getAllByLabelText("Amount")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+  });
+
+  it("2+ rows submit via recordInvestmentTransactionBatch with every row's amount/paymentMode/referenceNumber, sharing one date/idempotencyKey/notes", async () => {
+    recordInvestmentTransactionBatch.mockResolvedValue([makeTransaction(), makeTransaction({ id: "tx-2" })]);
+
+    const user = await renderAndExpand();
+    await expandAllPersonCards();
+
+    await user.click(screen.getAllByRole("button", { name: "Add Investment" })[0] as HTMLElement);
+    fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "500000" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+
+    await user.click(screen.getByRole("button", { name: "Add another payment method" }));
+    const amountInputs = screen.getAllByLabelText("Amount");
+    fireEvent.change(amountInputs[1] as HTMLElement, { target: { value: "200000" } });
+    const paymentModeSelects = screen.getAllByLabelText("Payment Mode");
+    fireEvent.change(paymentModeSelects[1] as HTMLElement, { target: { value: "rtgs" } });
+    const referenceInputs = screen.getAllByLabelText("Reference Number");
+    fireEvent.change(referenceInputs[1] as HTMLElement, { target: { value: "UTR-9" } });
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Confirm Payment");
+    // The multi-row confirm step lists each row's own amount/payment mode --
+    // scoped to the dialog's list items specifically, since the entry form's
+    // own live-total helper text ALSO contains "across 2 payment methods"
+    // and both are legitimately on screen at once (the entry dialog stays
+    // mounted underneath the confirm step, matching the established
+    // two-dialog-at-once pattern).
+    const confirmListItems = screen.getAllByRole("listitem");
+    expect(confirmListItems).toHaveLength(2);
+    expect(confirmListItems[0]).toHaveTextContent("₹5,00,000");
+    expect(confirmListItems[0]).toHaveTextContent("Cash");
+    expect(confirmListItems[1]).toHaveTextContent("₹2,00,000");
+    expect(confirmListItems[1]).toHaveTextContent("RTGS");
+    expect(confirmListItems[1]).toHaveTextContent("UTR-9");
+
+    await user.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => {
+      expect(recordInvestmentTransactionBatch).toHaveBeenCalledTimes(1);
+    });
+    expect(recordInvestmentTransaction).not.toHaveBeenCalled();
+
+    const [projectId, requirementId, partyType, shareId, transactionDate, rows, idempotencyKey] =
+      recordInvestmentTransactionBatch.mock.calls[0] as [
+        string,
+        string,
+        string,
+        string,
+        string,
+        Array<{ amount: string; paymentMode: string; referenceNumber: string | null; notes: string | null }>,
+        string,
+      ];
+    expect(projectId).toBe("project-1");
+    expect(requirementId).toBe("req-1");
+    expect(partyType).toBe("partner");
+    expect(shareId).toBe("a");
+    expect(transactionDate).toBe("2026-10-05");
+    expect(rows).toEqual([
+      { amount: "500000", paymentMode: "cash", referenceNumber: null, notes: null },
+      { amount: "200000", paymentMode: "rtgs", referenceNumber: "UTR-9", notes: null },
+    ]);
+    expect(typeof idempotencyKey).toBe("string");
+    expect(idempotencyKey.length).toBeGreaterThan(0);
+  });
+
+  it("a validation error on the batch submit keeps the confirm dialog open with the error shown inline, mirroring the single-row stay-open-on-error convention", async () => {
+    recordInvestmentTransactionBatch.mockRejectedValue(new Error("Something went wrong. Please try again."));
+
+    const user = await renderAndExpand();
+    await expandAllPersonCards();
+
+    await user.click(screen.getAllByRole("button", { name: "Add Investment" })[0] as HTMLElement);
+    fireEvent.change(await screen.findByLabelText("Amount"), { target: { value: "500000" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-10-05" } });
+    await user.click(screen.getByRole("button", { name: "Add another payment method" }));
+    fireEvent.change(screen.getAllByLabelText("Amount")[1] as HTMLElement, { target: { value: "200000" } });
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Confirm Payment");
+    await user.click(screen.getByRole("button", { name: "Confirm" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong. Please try again.");
+    expect(screen.getByText("Confirm Payment")).toBeInTheDocument();
   });
 });
 

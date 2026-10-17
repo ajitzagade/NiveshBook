@@ -13,6 +13,7 @@ import { computeInvestmentAdjustment, shareKey } from "./investment-adjustment";
 import { sumMoney } from "./decimal-math";
 import type {
   CancelInvestmentTransactionInput,
+  CreateInvestmentTransactionBatchInput,
   CreateInvestmentTransactionInput,
   EditInvestmentTransactionInput,
   InvestmentTransactionPort,
@@ -22,6 +23,7 @@ import {
   buildTransactionSnapshot,
   cancelInvestmentTransaction,
   editInvestmentTransaction,
+  EmptyTransactionBatchError,
   filterActiveTransactions,
   InvalidPaymentModeError,
   InvalidTransactionAmountError,
@@ -30,9 +32,11 @@ import {
   listInvestmentTransactions,
   MissingIdempotencyKeyError,
   recordInvestmentTransaction,
+  recordInvestmentTransactionBatch,
   ShareNotFoundError,
   type CancelInvestmentTransactionRequest,
   type EditInvestmentTransactionRequest,
+  type RecordInvestmentTransactionBatchInput,
   type RecordInvestmentTransactionInput,
 } from "./investment-transaction";
 
@@ -91,6 +95,22 @@ function makeInput(overrides: Partial<RecordInvestmentTransactionInput> = {}): R
   };
 }
 
+function makeBatchInput(
+  overrides: Partial<RecordInvestmentTransactionBatchInput> = {},
+): RecordInvestmentTransactionBatchInput {
+  return {
+    partyType: "partner",
+    shareId: "a",
+    transactionDate: "2026-10-05",
+    rows: [
+      { amount: "500000", paymentMode: "cash", referenceNumber: null, notes: null },
+      { amount: "200000", paymentMode: "neft", referenceNumber: "REF-2", notes: null },
+    ],
+    idempotencyKey: "batch-key-1",
+    ...overrides,
+  };
+}
+
 /**
  * An InvestmentTransactionPort backed by a mutable in-memory array --
  * mirrors `investment-requirement.test.ts`'s `createFakeInvestmentRequirementPort`
@@ -142,16 +162,19 @@ function makeInput(overrides: Partial<RecordInvestmentTransactionInput> = {}): R
  */
 function createFakeInvestmentTransactionPort(): InvestmentTransactionPort & {
   calls: CreateInvestmentTransactionInput[];
+  batchCalls: CreateInvestmentTransactionBatchInput[];
   editCalls: EditInvestmentTransactionInput[];
   cancelCalls: CancelInvestmentTransactionInput[];
   rows: InvestmentTransaction[];
   auditEntries: AuditLogEntry[];
 } {
   const calls: CreateInvestmentTransactionInput[] = [];
+  const batchCalls: CreateInvestmentTransactionBatchInput[] = [];
   const editCalls: EditInvestmentTransactionInput[] = [];
   const cancelCalls: CancelInvestmentTransactionInput[] = [];
   const rows: InvestmentTransaction[] = [];
   const auditEntries: AuditLogEntry[] = [];
+  const batchRowsByIdempotencyKey = new Map<string, InvestmentTransaction[]>();
   const appliedEditsByIdempotencyKey = new Map<string, InvestmentTransaction>();
   const appliedCancelsByIdempotencyKey = new Map<
     string,
@@ -159,10 +182,52 @@ function createFakeInvestmentTransactionPort(): InvestmentTransactionPort & {
   >();
   return {
     calls,
+    batchCalls,
     editCalls,
     cancelCalls,
     rows,
     auditEntries,
+    async recordTransactionBatch(input) {
+      batchCalls.push(input);
+      const existing = batchRowsByIdempotencyKey.get(input.idempotencyKey);
+      if (existing) {
+        return { transactions: existing, created: false };
+      }
+      const transactions = input.rows.map((row) => {
+        const transaction: InvestmentTransaction = {
+          id: `tx-${rows.length + 1}`,
+          requirementId: input.requirementId,
+          projectId: input.projectId,
+          partyType: input.partyType,
+          shareId: input.shareId,
+          sharePercentSnapshot: input.sharePercentSnapshot,
+          shouldPaySnapshot: input.shouldPaySnapshot,
+          amount: row.amount,
+          transactionDate: input.transactionDate,
+          paymentMode: row.paymentMode,
+          referenceNumber: row.referenceNumber,
+          notes: row.notes,
+          status: "active",
+          reversalOfTransactionId: null,
+          createdAt: new Date().toISOString(),
+        };
+        rows.push(transaction);
+        auditEntries.push({
+          id: `audit-${auditEntries.length + 1}`,
+          entityType: "investment_transaction",
+          entityId: transaction.id,
+          action: "create",
+          actorUserId: input.actorUserId,
+          oldValue: null,
+          newValue: transaction,
+          reason: null,
+          createdAt: new Date().toISOString(),
+        });
+        return transaction;
+      });
+      batchRowsByIdempotencyKey.set(input.idempotencyKey, transactions);
+      return { transactions, created: true };
+    },
     async recordTransaction(input) {
       calls.push(input);
       const transaction: InvestmentTransaction = {
@@ -657,6 +722,217 @@ describe("recordInvestmentTransaction — validation", () => {
 
     expect(port.calls[0]?.referenceNumber).toBeNull();
     expect(port.calls[0]?.notes).toBeNull();
+  });
+});
+
+describe("recordInvestmentTransactionBatch", () => {
+  const requirement = makeRequirement();
+  const partners = [makePartner({ partnerId: "a", name: "A", sharePercent: "100" as Percent })];
+
+  it("rejects an empty rows array with EmptyTransactionBatchError, before ever calling the port", async () => {
+    const port = createFakeInvestmentTransactionPort();
+
+    await expect(
+      recordInvestmentTransactionBatch(
+        "project-1",
+        "req-1",
+        requirement,
+        partners,
+        {},
+        makeBatchInput({ rows: [] }),
+        "actor-1",
+        { investmentTransactions: port },
+      ),
+    ).rejects.toThrow(EmptyTransactionBatchError);
+    expect(port.batchCalls).toHaveLength(0);
+  });
+
+  it("validates every row -- an invalid amount in the SECOND row rejects the whole batch before the port is ever called", async () => {
+    const port = createFakeInvestmentTransactionPort();
+
+    await expect(
+      recordInvestmentTransactionBatch(
+        "project-1",
+        "req-1",
+        requirement,
+        partners,
+        {},
+        makeBatchInput({
+          rows: [
+            { amount: "500000", paymentMode: "cash", referenceNumber: null, notes: null },
+            { amount: "not-a-number", paymentMode: "neft", referenceNumber: null, notes: null },
+          ],
+        }),
+        "actor-1",
+        { investmentTransactions: port },
+      ),
+    ).rejects.toThrow(InvalidTransactionAmountError);
+    expect(port.batchCalls).toHaveLength(0);
+  });
+
+  it("validates an unrecognized paymentMode in any row with InvalidPaymentModeError", async () => {
+    const port = createFakeInvestmentTransactionPort();
+
+    await expect(
+      recordInvestmentTransactionBatch(
+        "project-1",
+        "req-1",
+        requirement,
+        partners,
+        {},
+        makeBatchInput({
+          rows: [{ amount: "500000", paymentMode: "bitcoin", referenceNumber: null, notes: null }],
+        }),
+        "actor-1",
+        { investmentTransactions: port },
+      ),
+    ).rejects.toThrow(InvalidPaymentModeError);
+  });
+
+  it("rejects a missing/blank idempotencyKey with MissingIdempotencyKeyError", async () => {
+    const port = createFakeInvestmentTransactionPort();
+
+    await expect(
+      recordInvestmentTransactionBatch(
+        "project-1",
+        "req-1",
+        requirement,
+        partners,
+        {},
+        makeBatchInput({ idempotencyKey: "   " }),
+        "actor-1",
+        { investmentTransactions: port },
+      ),
+    ).rejects.toThrow(MissingIdempotencyKeyError);
+  });
+
+  it("AC2 parity: accepts amount '0' in a row -- no minimum payment enforced, mirrors the single-row rule", async () => {
+    const port = createFakeInvestmentTransactionPort();
+
+    await recordInvestmentTransactionBatch(
+      "project-1",
+      "req-1",
+      requirement,
+      partners,
+      {},
+      makeBatchInput({ rows: [{ amount: "0", paymentMode: "cash", referenceNumber: null, notes: null }] }),
+      "actor-1",
+      { investmentTransactions: port },
+    );
+
+    expect(port.batchCalls).toHaveLength(1);
+    expect(port.batchCalls[0]?.rows[0]?.amount).toBe("0");
+  });
+
+  it("builds ONE Should Pay snapshot, shared across every row in the batch", async () => {
+    const port = createFakeInvestmentTransactionPort();
+
+    await recordInvestmentTransactionBatch(
+      "project-1",
+      "req-1",
+      requirement,
+      partners,
+      {},
+      makeBatchInput(),
+      "actor-1",
+      { investmentTransactions: port },
+    );
+
+    const call = port.batchCalls[0];
+    expect(call?.sharePercentSnapshot).toBe("100");
+    // `shouldPaySnapshot` is a single field on the batch input (not per-row) --
+    // structurally, it can only be "shared across every row" by construction.
+    expect(call?.shouldPaySnapshot).toBeDefined();
+  });
+
+  it("passes every row's amount/paymentMode/referenceNumber/notes through, normalizing blank referenceNumber/notes to null", async () => {
+    const port = createFakeInvestmentTransactionPort();
+
+    await recordInvestmentTransactionBatch(
+      "project-1",
+      "req-1",
+      requirement,
+      partners,
+      {},
+      makeBatchInput({
+        rows: [
+          { amount: "500000", paymentMode: "cash", referenceNumber: "  ", notes: null },
+          { amount: "200000", paymentMode: "rtgs", referenceNumber: "UTR-123", notes: "  " },
+        ],
+      }),
+      "actor-1",
+      { investmentTransactions: port },
+    );
+
+    const rows = port.batchCalls[0]?.rows;
+    expect(rows).toHaveLength(2);
+    expect(rows?.[0]).toMatchObject({ amount: "500000", paymentMode: "cash", referenceNumber: null, notes: null });
+    expect(rows?.[1]).toMatchObject({ amount: "200000", paymentMode: "rtgs", referenceNumber: "UTR-123", notes: null });
+  });
+
+  it("propagates SharesNotFullyAllocatedError once every row's field validation passes, mirroring the single-row precondition ordering", async () => {
+    const port = createFakeInvestmentTransactionPort();
+    const underAllocated = [makePartner({ partnerId: "a", sharePercent: "50" as Percent })];
+
+    await expect(
+      recordInvestmentTransactionBatch(
+        "project-1",
+        "req-1",
+        requirement,
+        underAllocated,
+        {},
+        makeBatchInput(),
+        "actor-1",
+        { investmentTransactions: port },
+      ),
+    ).rejects.toThrow(SharesNotFullyAllocatedError);
+  });
+
+  it("propagates ShareNotFoundError when shareId doesn't match any current Partner/Sub-partner", async () => {
+    const port = createFakeInvestmentTransactionPort();
+
+    await expect(
+      recordInvestmentTransactionBatch(
+        "project-1",
+        "req-1",
+        requirement,
+        partners,
+        {},
+        makeBatchInput({ shareId: "does-not-exist" }),
+        "actor-1",
+        { investmentTransactions: port },
+      ),
+    ).rejects.toThrow(ShareNotFoundError);
+  });
+
+  it("idempotent replay: calling with the same idempotencyKey twice returns the original batch's rows both times, via the port's own replay contract", async () => {
+    const port = createFakeInvestmentTransactionPort();
+
+    const first = await recordInvestmentTransactionBatch(
+      "project-1",
+      "req-1",
+      requirement,
+      partners,
+      {},
+      makeBatchInput(),
+      "actor-1",
+      { investmentTransactions: port },
+    );
+    const second = await recordInvestmentTransactionBatch(
+      "project-1",
+      "req-1",
+      requirement,
+      partners,
+      {},
+      makeBatchInput(),
+      "actor-1",
+      { investmentTransactions: port },
+    );
+
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
+    expect(second.transactions.map((t) => t.id)).toEqual(first.transactions.map((t) => t.id));
+    expect(port.batchCalls).toHaveLength(2);
   });
 });
 

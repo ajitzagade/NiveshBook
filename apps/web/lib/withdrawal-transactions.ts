@@ -87,6 +87,60 @@ export async function recordWithdrawalTransaction(
   return (await response.json()) as WithdrawalTransaction;
 }
 
+/** One payment-method row within `recordWithdrawalTransactionBatch` -- mirrors `RecordWithdrawalTransactionInput`'s per-field shape, minus everything shared across the whole batch. */
+export interface RecordWithdrawalTransactionBatchRowInput {
+  /** `"0"` is explicitly allowed, mirroring the single-row rule. */
+  amount: string;
+  paymentMode: string;
+  referenceNumber: string | null;
+  notes: string | null;
+}
+
+/** `POST .../withdrawal-transactions/batch`'s response shape. */
+export interface WithdrawalTransactionBatchResponse {
+  transactions: WithdrawalTransaction[];
+}
+
+/**
+ * Records a split withdrawal -- one Take Now event paid across multiple
+ * payment methods -- as multiple `withdrawal_transactions` rows in one
+ * atomic call. `idempotencyKey` mirrors `recordWithdrawalTransaction`'s
+ * exact lifecycle contract one level up: one fresh key per *logical*
+ * submission attempt, reused across a retry of that same attempt -- it
+ * identifies the whole batch, not any single row. `extraWithdrawalAuthorized`
+ * mirrors `RecordWithdrawalTransactionInput`'s identical field one level up
+ * -- Story 4.5's gate is evaluated against the SUM of every row's amount,
+ * not a single row (the whole batch is one withdrawal event for Can Take
+ * purposes).
+ */
+export async function recordWithdrawalTransactionBatch(
+  projectId: string,
+  partyType: "partner" | "sub_partner",
+  shareId: string,
+  transactionDate: string,
+  rows: RecordWithdrawalTransactionBatchRowInput[],
+  idempotencyKey: string,
+  extraWithdrawalAuthorized?: boolean,
+): Promise<WithdrawalTransaction[]> {
+  const response = await fetch(`/api/projects/${projectId}/withdrawal-transactions/batch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      partyType,
+      shareId,
+      transactionDate,
+      rows,
+      idempotencyKey,
+      extraWithdrawalAuthorized,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  const body = (await response.json()) as WithdrawalTransactionBatchResponse;
+  return body.transactions;
+}
+
 export interface EditWithdrawalTransactionInput {
   /** `"0"` is explicitly allowed -- no forced withdrawal, mirrors create's rule. */
   amount: string;

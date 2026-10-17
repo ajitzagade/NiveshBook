@@ -83,6 +83,54 @@ export async function recordInvestmentTransaction(
   return (await response.json()) as InvestmentTransaction;
 }
 
+/** One payment-method row within `recordInvestmentTransactionBatch` -- mirrors `RecordInvestmentTransactionInput`'s per-field shape, minus everything shared across the whole batch. */
+export interface RecordInvestmentTransactionBatchRowInput {
+  /** `"0"` is explicitly allowed, mirroring the single-row rule. */
+  amount: string;
+  paymentMode: string;
+  referenceNumber: string | null;
+  notes: string | null;
+}
+
+/** `POST .../transactions/batch`'s response shape. */
+export interface InvestmentTransactionBatchResponse {
+  transactions: InvestmentTransaction[];
+}
+
+/**
+ * Records a split payment -- one contribution paid across multiple payment
+ * methods -- as multiple `investment_transactions` rows in one atomic call
+ * (Story: multi-payment-method entry). `idempotencyKey` mirrors
+ * `recordInvestmentTransaction`'s exact lifecycle contract one level up: one
+ * fresh key per *logical* submission attempt (minted when the dialog opens),
+ * reused across a retry of that same attempt -- it identifies the whole
+ * batch, not any single row (the server derives each row's own unique key
+ * from it).
+ */
+export async function recordInvestmentTransactionBatch(
+  projectId: string,
+  requirementId: string,
+  partyType: "partner" | "sub_partner",
+  shareId: string,
+  transactionDate: string,
+  rows: RecordInvestmentTransactionBatchRowInput[],
+  idempotencyKey: string,
+): Promise<InvestmentTransaction[]> {
+  const response = await fetch(
+    `/api/projects/${projectId}/investment-requirements/${requirementId}/transactions/batch`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ partyType, shareId, transactionDate, rows, idempotencyKey }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  const body = (await response.json()) as InvestmentTransactionBatchResponse;
+  return body.transactions;
+}
+
 export interface EditInvestmentTransactionInput {
   /** `"0"` is explicitly allowed -- no minimum payment enforced, mirrors create's rule. */
   amount: string;

@@ -65,6 +65,7 @@ import {
   editInvestmentTransaction,
   listInvestmentTransactions,
   recordInvestmentTransaction,
+  recordInvestmentTransactionBatch,
 } from "@/lib/investment-transactions";
 import { getInvestmentAdjustments } from "@/lib/investment-adjustments";
 import { listMoneyMovements } from "@/lib/money-movements";
@@ -100,6 +101,48 @@ interface RecordPaymentTarget {
   partyType: "partner" | "sub_partner";
   shareId: string;
   personName: string;
+}
+
+/**
+ * One payment-method row within the Add Investment dialog -- a single
+ * contribution paid across multiple instruments (e.g. part cash, part bank
+ * transfer) is entered as several of these, each with its own Amount/
+ * Payment Mode/Reference Number. A lone row behaves exactly as this dialog
+ * always has (submits via the existing single-row `recordInvestmentTransaction`,
+ * untouched) -- the multi-row/batch path only engages once a second row
+ * exists.
+ */
+interface RecordPaymentRow {
+  amount: string;
+  paymentMode: PaymentMode;
+  referenceNumber: string;
+}
+
+function emptyRecordPaymentRow(): RecordPaymentRow {
+  return { amount: "", paymentMode: "cash", referenceNumber: "" };
+}
+
+/**
+ * Live preview total across every row's Amount field -- display-only (the
+ * actual save still goes through the server's own decimal-safe validation
+ * either way), so this intentionally skips rows that aren't yet a
+ * well-formed amount (mid-typing) rather than erroring. BigInt paise
+ * arithmetic, never `Number()`/`parseFloat` -- this file is a `"use client"`
+ * component, which can't import `@niveshbook/core`'s own `toMoney`/`sumMoney`
+ * at runtime (pulls in `argon2` via the barrel, breaks `next build` -- see
+ * this repo's own documented gotcha).
+ */
+function sumRecordRowAmounts(rows: readonly RecordPaymentRow[]): string {
+  let totalPaise = 0n;
+  for (const row of rows) {
+    const trimmed = row.amount.trim();
+    if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) continue;
+    const [intPart, decPart = ""] = trimmed.split(".");
+    totalPaise += BigInt(intPart) * 100n + BigInt(decPart.padEnd(2, "0"));
+  }
+  const rupees = totalPaise / 100n;
+  const paise = totalPaise % 100n;
+  return paise === 0n ? `${rupees}` : `${rupees}.${paise.toString().padStart(2, "0")}`;
 }
 
 /**
@@ -251,10 +294,8 @@ export default function AddMoneyPage() {
   }
 
   const [recordPaymentTarget, setRecordPaymentTarget] = useState<RecordPaymentTarget | null>(null);
-  const [recordAmount, setRecordAmount] = useState("");
+  const [recordRows, setRecordRows] = useState<RecordPaymentRow[]>([emptyRecordPaymentRow()]);
   const [recordDate, setRecordDate] = useState("");
-  const [recordPaymentMode, setRecordPaymentMode] = useState<PaymentMode>("cash");
-  const [recordReferenceNumber, setRecordReferenceNumber] = useState("");
   const [recordNotes, setRecordNotes] = useState("");
   const [recordFormError, setRecordFormError] = useState<string | null>(null);
   const [recordSubmitting, setRecordSubmitting] = useState(false);
@@ -518,10 +559,8 @@ export default function AddMoneyPage() {
     personName: string,
   ) {
     setRecordPaymentTarget({ requirementId, partyType, shareId, personName });
-    setRecordAmount("");
+    setRecordRows([emptyRecordPaymentRow()]);
     setRecordDate("");
-    setRecordPaymentMode("cash");
-    setRecordReferenceNumber("");
     setRecordNotes("");
     setRecordFormError(null);
     setRecordConfirmOpen(false);
@@ -531,6 +570,19 @@ export default function AddMoneyPage() {
 
   function closeRecordPaymentDialog() {
     setRecordPaymentTarget(null);
+  }
+
+  function addRecordRow() {
+    setRecordRows((prev) => [...prev, emptyRecordPaymentRow()]);
+  }
+
+  /** Never removes the last remaining row -- the dialog always has at least one payment-method row. */
+  function removeRecordRow(index: number) {
+    setRecordRows((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
+  }
+
+  function updateRecordRow(index: number, patch: Partial<RecordPaymentRow>) {
+    setRecordRows((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   }
 
   /**
@@ -552,33 +604,63 @@ export default function AddMoneyPage() {
    * the recorded-payments list for this requirement so the new payment shows
    * up immediately in the same panel.
    *
+   * Exactly one row -> the existing single-row `recordInvestmentTransaction`
+   * call, completely unchanged from before split-payment entry existed. Two
+   * or more rows (a split payment across payment methods) -> the new
+   * `recordInvestmentTransactionBatch`, which records every row atomically
+   * (all rows or none) under one shared `recordIdempotencyKey`.
+   *
    * Passes `recordIdempotencyKey` through unchanged -- it's minted once, when
    * the dialog opens (`openRecordPaymentDialog`), not here. A retry of a
    * failed submission (the user re-confirming with the dialog still open)
    * reuses that same key, so a real double-submit is deduped server-side
-   * rather than creating two rows.
+   * rather than creating two rows (or, for a split payment, duplicating the
+   * whole batch).
    */
   async function handleConfirmRecordPayment() {
     if (!recordPaymentTarget) return;
+    const firstRow = recordRows[0];
+    if (!firstRow) return;
 
     setRecordFormError(null);
     setRecordSubmitting(true);
     try {
-      await recordInvestmentTransaction(
-        projectId,
-        recordPaymentTarget.requirementId,
-        {
-          partyType: recordPaymentTarget.partyType,
-          shareId: recordPaymentTarget.shareId,
-          amount: recordAmount,
-          transactionDate: recordDate,
-          paymentMode: recordPaymentMode,
-          referenceNumber: recordReferenceNumber.trim().length > 0 ? recordReferenceNumber.trim() : null,
-          notes: recordNotes.trim().length > 0 ? recordNotes.trim() : null,
-        },
-        recordIdempotencyKey,
-      );
-      toast.success(`${formatAmount(recordAmount)} recorded for ${recordPaymentTarget.personName}`);
+      if (recordRows.length === 1) {
+        await recordInvestmentTransaction(
+          projectId,
+          recordPaymentTarget.requirementId,
+          {
+            partyType: recordPaymentTarget.partyType,
+            shareId: recordPaymentTarget.shareId,
+            amount: firstRow.amount,
+            transactionDate: recordDate,
+            paymentMode: firstRow.paymentMode,
+            referenceNumber: firstRow.referenceNumber.trim().length > 0 ? firstRow.referenceNumber.trim() : null,
+            notes: recordNotes.trim().length > 0 ? recordNotes.trim() : null,
+          },
+          recordIdempotencyKey,
+        );
+        toast.success(`${formatAmount(firstRow.amount)} recorded for ${recordPaymentTarget.personName}`);
+      } else {
+        await recordInvestmentTransactionBatch(
+          projectId,
+          recordPaymentTarget.requirementId,
+          recordPaymentTarget.partyType,
+          recordPaymentTarget.shareId,
+          recordDate,
+          recordRows.map((row) => ({
+            amount: row.amount,
+            paymentMode: row.paymentMode,
+            referenceNumber: row.referenceNumber.trim().length > 0 ? row.referenceNumber.trim() : null,
+            notes: recordNotes.trim().length > 0 ? recordNotes.trim() : null,
+          })),
+          recordIdempotencyKey,
+        );
+        const total = sumRecordRowAmounts(recordRows);
+        toast.success(
+          `${formatAmount(total)} recorded for ${recordPaymentTarget.personName} across ${recordRows.length} payment methods`,
+        );
+      }
     } catch (err) {
       setRecordFormError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
       setRecordSubmitting(false);
@@ -1259,21 +1341,6 @@ export default function AddMoneyPage() {
           </DialogDescription>
           <form onSubmit={handleRecordPaymentSubmit} className="mt-4">
             <Field>
-              <Label htmlFor="tx-amount">Amount</Label>
-              <Input
-                id="tx-amount"
-                name="amount"
-                inputMode="decimal"
-                value={recordAmount}
-                onChange={(event) => setRecordAmount(event.target.value)}
-                required
-                autoFocus
-              />
-              <Helper>
-                {amountHelperText(recordAmount, "0 is accepted -- no minimum payment enforced.")}
-              </Helper>
-            </Field>
-            <Field>
               <Label htmlFor="tx-date">Date</Label>
               <Input
                 id="tx-date"
@@ -1282,34 +1349,88 @@ export default function AddMoneyPage() {
                 value={recordDate}
                 onChange={(event) => setRecordDate(event.target.value)}
                 required
+                autoFocus
               />
             </Field>
-            <Field>
-              <Label htmlFor="tx-payment-mode">Payment Mode</Label>
-              <select
-                id="tx-payment-mode"
-                name="paymentMode"
-                className="w-full rounded-el border border-border bg-surface px-3 py-2.5 text-[14px] text-ink focus:border-accent focus:outline focus:outline-2 focus:outline-accent-soft"
-                value={recordPaymentMode}
-                onChange={(event) => setRecordPaymentMode(event.target.value as PaymentMode)}
+
+            {recordRows.map((row, index) => (
+              <div
+                key={index}
+                className={
+                  recordRows.length > 1
+                    ? "mb-4 rounded-el border border-border p-3"
+                    : "contents"
+                }
               >
-                {PAYMENT_MODE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field>
-              <Label htmlFor="tx-reference">Reference Number</Label>
-              <Input
-                id="tx-reference"
-                name="referenceNumber"
-                value={recordReferenceNumber}
-                onChange={(event) => setRecordReferenceNumber(event.target.value)}
-              />
-              <Helper>Optional -- e.g. a cash payment often has none.</Helper>
-            </Field>
+                {recordRows.length > 1 ? (
+                  <div className="mb-3 flex items-center justify-between">
+                    <span className="text-[12.6px] font-semibold text-ink-soft">
+                      Payment method {index + 1}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      tone="danger"
+                      onClick={() => removeRecordRow(index)}
+                      icon={<X size={12} />}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                ) : null}
+                <Field>
+                  <Label htmlFor={`tx-amount-${index}`}>Amount</Label>
+                  <Input
+                    id={`tx-amount-${index}`}
+                    inputMode="decimal"
+                    value={row.amount}
+                    onChange={(event) => updateRecordRow(index, { amount: event.target.value })}
+                    required
+                  />
+                  <Helper>{amountHelperText(row.amount, "0 is accepted -- no minimum payment enforced.")}</Helper>
+                </Field>
+                <Field>
+                  <Label htmlFor={`tx-payment-mode-${index}`}>Payment Mode</Label>
+                  <select
+                    id={`tx-payment-mode-${index}`}
+                    className="w-full rounded-el border border-border bg-surface px-3 py-2.5 text-[14px] text-ink focus:border-accent focus:outline focus:outline-2 focus:outline-accent-soft"
+                    value={row.paymentMode}
+                    onChange={(event) => updateRecordRow(index, { paymentMode: event.target.value as PaymentMode })}
+                  >
+                    {PAYMENT_MODE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field>
+                  <Label htmlFor={`tx-reference-${index}`}>Reference Number</Label>
+                  <Input
+                    id={`tx-reference-${index}`}
+                    value={row.referenceNumber}
+                    onChange={(event) => updateRecordRow(index, { referenceNumber: event.target.value })}
+                  />
+                  <Helper>Optional -- e.g. a cash payment often has none.</Helper>
+                </Field>
+              </div>
+            ))}
+
+            <div className="mb-4">
+              <Button type="button" variant="ghost" onClick={addRecordRow} icon={<Plus size={14} />}>
+                Add another payment method
+              </Button>
+              {recordRows.length > 1 ? (
+                <p className="mt-2 text-[12.6px] text-ink-soft">
+                  Total: {formatAmount(sumRecordRowAmounts(recordRows))}
+                  {amountInWords(sumRecordRowAmounts(recordRows))
+                    ? ` (${amountInWords(sumRecordRowAmounts(recordRows))})`
+                    : ""}{" "}
+                  across {recordRows.length} payment methods
+                </p>
+              ) : null}
+            </div>
+
             <Field>
               <Label htmlFor="tx-notes">Notes</Label>
               <Input
@@ -1352,18 +1473,42 @@ export default function AddMoneyPage() {
       >
         <DialogContent>
           <DialogTitle>Confirm Payment</DialogTitle>
-          <DialogDescription>
-            Record <strong>{formatAmount(recordAmount)}</strong> for{" "}
-            <strong>{recordPaymentTarget?.personName}</strong>, paid on{" "}
-            <strong>{formatDate(recordDate)}</strong> via <strong>{PAYMENT_MODE_LABELS[recordPaymentMode]}</strong>
-            {recordReferenceNumber.trim() ? (
-              <>
-                {" "}
-                (Ref: <strong>{recordReferenceNumber.trim()}</strong>)
-              </>
-            ) : null}
-            ? This is saved as a record -- a past payment is never edited here.
-          </DialogDescription>
+          {recordRows.length === 1 && recordRows[0] ? (
+            <DialogDescription>
+              Record <strong>{formatAmount(recordRows[0].amount)}</strong> for{" "}
+              <strong>{recordPaymentTarget?.personName}</strong>, paid on{" "}
+              <strong>{formatDate(recordDate)}</strong> via{" "}
+              <strong>{PAYMENT_MODE_LABELS[recordRows[0].paymentMode]}</strong>
+              {recordRows[0].referenceNumber.trim() ? (
+                <>
+                  {" "}
+                  (Ref: <strong>{recordRows[0].referenceNumber.trim()}</strong>)
+                </>
+              ) : null}
+              ? This is saved as a record -- a past payment is never edited here.
+            </DialogDescription>
+          ) : (
+            <>
+              <DialogDescription>
+                Record <strong>{formatAmount(sumRecordRowAmounts(recordRows))}</strong> for{" "}
+                <strong>{recordPaymentTarget?.personName}</strong>, paid on{" "}
+                <strong>{formatDate(recordDate)}</strong>, across {recordRows.length} payment methods:
+              </DialogDescription>
+              {/* A `<ul>` can't nest inside `DialogDescription` (renders as `<p>`, invalid HTML) -- a sibling element instead. */}
+              <ul className="mt-2 list-disc pl-5 text-[13px] text-ink-soft">
+                {recordRows.map((row, index) => (
+                  <li key={index}>
+                    <strong>{formatAmount(row.amount)}</strong> via{" "}
+                    <strong>{PAYMENT_MODE_LABELS[row.paymentMode]}</strong>
+                    {row.referenceNumber.trim() ? ` (Ref: ${row.referenceNumber.trim()})` : ""}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-[13px] text-ink-soft">
+                This is saved as a record -- a past payment is never edited here.
+              </p>
+            </>
+          )}
 
           {recordFormError ? (
             <p role="alert" className="mt-4 text-[13.4px] text-danger">

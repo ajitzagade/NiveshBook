@@ -37,6 +37,35 @@ export interface RecordWithdrawalTransactionResult {
   created: boolean;
 }
 
+/** One payment-method leg within `recordTransactionBatch` -- mirrors `CreateInvestmentTransactionBatchRowInput` one ledger over. */
+export interface CreateWithdrawalTransactionBatchRowInput {
+  amount: Money;
+  paymentMode: PaymentMode;
+  referenceNumber: string | null;
+  notes: string | null;
+}
+
+/** Split-payment batch input -- mirrors `CreateInvestmentTransactionBatchInput`'s shape one ledger over (`canTakeSnapshot` instead of `shouldPaySnapshot`, no `requirementId` -- a withdrawal is Project-scoped, not per-requirement, matching `CreateWithdrawalTransactionInput`'s own shape above). */
+export interface CreateWithdrawalTransactionBatchInput {
+  projectId: string;
+  partyType: "partner" | "sub_partner";
+  shareId: string;
+  sharePercentSnapshot: Percent;
+  canTakeSnapshot: Money;
+  transactionDate: string;
+  rows: readonly CreateWithdrawalTransactionBatchRowInput[];
+  /** Identifies the whole batch -- see `recordTransactionBatch`'s own doc comment for how each row still gets its own DB-level-unique `idempotency_key`. */
+  idempotencyKey: string;
+  actorUserId: string;
+}
+
+export interface RecordWithdrawalTransactionBatchResult {
+  /** Every row this batch produced (or, on replay, every row it originally produced), in the same order as `CreateWithdrawalTransactionBatchInput.rows`. */
+  transactions: WithdrawalTransaction[];
+  /** Mirrors `RecordWithdrawalTransactionResult.created` exactly, one level up. */
+  created: boolean;
+}
+
 /**
  * The mutable-fields-only edit request (Story 4.11) -- mirrors
  * `EditInvestmentTransactionInput`'s exact shape one ledger over,
@@ -164,6 +193,34 @@ export interface WithdrawalTransactionPort {
    * winner).
    */
   recordTransaction(input: CreateWithdrawalTransactionInput): Promise<RecordWithdrawalTransactionResult>;
+  /**
+   * Split-payment analog of `recordTransaction` -- mirrors
+   * `InvestmentTransactionPort.recordTransactionBatch`'s exact atomicity/
+   * idempotency contract one ledger over: records `input.rows.length`
+   * `withdrawal_transactions` rows (plus one paired `audit_log` "create" row
+   * each) for the same party/Project/transactionDate/Can-Take-snapshot,
+   * inside ONE DB transaction (all rows or none). Row *i* is stored with
+   * `idempotency_key` `` `${input.idempotencyKey}:${i}` ``, deterministically
+   * derived from the caller-supplied batch key -- no schema change needed,
+   * `withdrawal_transactions.idempotencyKey` stays a per-row DB-level UNIQUE
+   * column.
+   *
+   * Idempotency contract, mirroring `recordTransaction`'s exactly, evaluated
+   * against the whole batch: if a row already exists at
+   * `` `${input.idempotencyKey}:0` ``, every row sharing that batch-key
+   * prefix is re-fetched and compared against `input.rows` (same length,
+   * same multiset of amount/paymentMode/referenceNumber/notes,
+   * order-independent) -- match returns those existing rows unchanged
+   * (`created: false`); mismatch throws `WithdrawalIdempotencyKeyConflictError`.
+   * Also covers the concurrent-double-submit race via the same
+   * catch-unique-violation-and-recover pattern `recordTransaction` uses.
+   *
+   * Note: this method does NOT itself perform withdrawal-reallocation bonus
+   * consumption or the Extra Withdrawal Can-Take gate -- exactly like
+   * `recordTransaction`, those live one layer up (the route, via
+   * `packages/db`'s `recordWithdrawalTransactionBatchWithBonusConsumption`).
+   */
+  recordTransactionBatch(input: CreateWithdrawalTransactionBatchInput): Promise<RecordWithdrawalTransactionBatchResult>;
   /** Every withdrawal recorded against one Project, chronological (`createdAt` ascending) -- mirrors `InvestmentTransactionPort.listByRequirementId`'s identical shape one ledger over. */
   listByProjectId(projectId: string): Promise<WithdrawalTransaction[]>;
   /**
